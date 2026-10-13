@@ -32,6 +32,8 @@ UnitInstanceGroup::UnitInstanceGroup(
 	country { new_country },
 	location { new_location } {
 		new_country.add_unit_instance_group(*this);
+		// The province keeps the list of the unit groups in it, which is used to draw them and for combat
+		new_location.add_unit_instance_group(*this);
 	}
 
 void UnitInstanceGroup::update_gamestate() {
