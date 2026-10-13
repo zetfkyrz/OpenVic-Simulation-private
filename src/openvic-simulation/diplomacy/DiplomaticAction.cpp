@@ -43,7 +43,7 @@ bool DiplomaticActionManager::add_cancelable_diplomatic_action(
 DiplomaticActionTickCache DiplomaticActionManager::create_diplomatic_action_tick(
 	std::string_view identifier, CountryInstance* sender, CountryInstance* receiver, std::any context_data,
 	InstanceManager& instance_manager
-) {
+) const {
 	auto type = diplomatic_action_types.get_item_by_identifier(identifier);
 
 	DiplomaticActionTickCache result { { instance_manager, sender, receiver, context_data }, type };
@@ -67,6 +67,48 @@ DiplomaticActionTickCache DiplomaticActionManager::create_diplomatic_action_tick
 	});
 
 	return result;
+}
+
+bool DiplomaticActionManager::execute_diplomatic_action(
+	const std::size_t action_type_index, CountryInstance* const sender, CountryInstance* const receiver,
+	std::any context_data, InstanceManager& instance_manager
+) const {
+	if (OV_unlikely(sender == nullptr || receiver == nullptr || sender == receiver)) {
+		spdlog::error_s("Diplomatic action requires two distinct countries!");
+		return false;
+	}
+
+	DiplomaticActionTypeStorage const* type = get_diplomatic_action_type_by_index(action_type_index);
+	if (OV_unlikely(type == nullptr)) {
+		spdlog::error_s("Invalid diplomatic action type index: {}", action_type_index);
+		return false;
+	}
+
+	DiplomaticActionTickCache cache =
+		create_diplomatic_action_tick(type->get_identifier(), sender, receiver, std::move(context_data), instance_manager);
+
+	if (!cache.allowed_to_commit) {
+		return false;
+	}
+
+	// Receiver response policy.
+	// TODO: replace with real AI/human decision making based on cache.acceptance, relations, opinions, etc.
+	// For now every receiver accepts every action that is allowed to be committed.
+	const bool receiver_accepts = true;
+	if (!receiver_accepts) {
+		return false;
+	}
+
+	try {
+		type->visit([&cache](auto const& action_type) -> void {
+			action_type.commit_action(cache.argument);
+		});
+	} catch (std::bad_any_cast const&) {
+		spdlog::error_s("Diplomatic action \"{}\" was sent without the context data it requires!", type->get_identifier());
+		return false;
+	}
+
+	return true;
 }
 
 bool DiplomaticActionManager::setup_diplomatic_actions() {
@@ -129,7 +171,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 			.commit =
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().set_has_military_access_to( //
-						arg.sender, arg.receiver, true
+						arg.receiver, arg.sender, true
 					);
 				},
 		}
@@ -145,7 +187,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 				},
 			.allowed =
 				[](Argument const& arg) {
-					return false;
+					return true;
 				},
 		}
 	);
@@ -160,7 +202,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 				},
 			.allowed =
 				[](Argument const& arg) {
-					return false;
+					return true;
 				},
 		}
 	);
