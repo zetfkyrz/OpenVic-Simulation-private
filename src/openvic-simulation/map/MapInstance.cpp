@@ -4,6 +4,10 @@
 #include <optional>
 #include <tuple>
 
+#include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/DefinitionManager.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/economy/trading/MarketInstance.hpp"
 #include "openvic-simulation/history/ProvinceHistory.hpp"
 #include "openvic-simulation/map/MapDefinition.hpp"
 #include "openvic-simulation/politics/Reform.hpp"
@@ -180,7 +184,39 @@ void MapInstance::map_tick() {
 	//state tick will update pop employment via factories
 }
 
+void MapInstance::factory_tick(MarketInstance& market_instance, const Date today) {
+	for (StateSet& state_set : state_manager.get_mutable_state_sets()) {
+		for (State& state : state_set.get_mutable_states()) {
+			for (FactoryInstance& factory : state.get_mutable_factories()) {
+				factory.tick(state, market_instance, today);
+			}
+		}
+	}
+}
+
 void MapInstance::initialise_for_new_game(InstanceManager const& instance_manager) {
 	update_gamestate(instance_manager);
+
+	// Add the factories of the province history to the states they are in
+	BuildingTypeManager const& building_type_manager =
+		instance_manager.definition_manager.get_economy_manager().get_building_type_manager();
+
+	for (ProvinceInstance& province : get_province_instances()) {
+		State* const state = province.get_state();
+		if (state != nullptr && province.get_owner() != nullptr) {
+			for (auto const& [building_type_index, level] : province.get_pending_state_buildings()) {
+				BuildingType const* building_type = building_type_manager.get_building_type_by_index(building_type_index);
+				if (building_type == nullptr || building_type->production_type == nullptr) {
+					continue;
+				}
+
+				if (state->add_factory(*building_type, level) == nullptr) {
+					spdlog::warn_s("Could not add factory {} to state {}", *building_type, *state);
+				}
+			}
+		}
+		province.get_pending_state_buildings().clear();
+	}
+
 	thread_pool.process_province_initialise_for_new_game();
 }

@@ -1,0 +1,405 @@
+#include "FactoryInstance.hpp"
+
+#include <algorithm>
+
+#include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/economy/GoodDefinition.hpp"
+#include "openvic-simulation/economy/GoodInstance.hpp"
+#include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/economy/trading/BuyResult.hpp"
+#include "openvic-simulation/economy/trading/BuyUpToOrder.hpp"
+#include "openvic-simulation/economy/trading/MarketInstance.hpp"
+#include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
+#include "openvic-simulation/economy/trading/SellResult.hpp"
+#include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/population/Pop.hpp"
+#include "openvic-simulation/utility/Logger.hpp"
+
+using namespace OpenVic;
+
+namespace {
+	// Time it takes to build a level when the building type does not specify it
+	constexpr int64_t DEFAULT_CONSTRUCTION_DAYS = 180;
+	// Days of inputs the factory is funded with when it starts operating
+	constexpr int32_t FOUNDING_CAPITAL_DAYS = 15;
+	// Days of input consumption the factory tries to keep in its stockpile
+	constexpr int32_t STOCKPILE_TARGET_DAYS = 2;
+	// Days of consecutive profit before the owners consider expanding the factory
+	constexpr uint32_t DAYS_OF_PROFIT_BEFORE_EXPANSION = 45;
+	// Days of consecutive loss (at minimum throttle) after which the factory closes
+	constexpr uint32_t DAYS_OF_LOSS_BEFORE_CLOSING = 90;
+}
+
+FactoryInstance::Input::Input(GoodDefinition const& new_good, const fixed_point_t new_quantity_per_level)
+	: good { new_good }, quantity_per_level { new_quantity_per_level } {}
+
+FactoryInstance::FactoryInstance(
+	BuildingType const& new_building_type, ProductionType const& new_production_type, const building_level_t new_level
+) : level { new_level },
+	efficiency { fixed_point_t::_1 },
+	throttle { fixed_point_t::_1 },
+	building_type { new_building_type },
+	production_type { new_production_type } {
+	inputs.reserve(production_type.input_goods.size());
+	for (auto const& [good, quantity] : production_type.input_goods) {
+		inputs.emplace_back(*good, quantity);
+	}
+}
+
+fixed_point_t FactoryInstance::calculate_construction_cost(
+	BuildingType const& building_type, MarketInstance const& market_instance
+) {
+	fixed_point_t cost = building_type.cost;
+	for (auto const& [good, quantity] : building_type.goods_cost) {
+		cost += quantity * market_instance.get_good_instance(good->index).get_price();
+	}
+	return cost;
+}
+
+Timespan FactoryInstance::calculate_construction_time(BuildingType const& building_type) {
+	const Timespan::value_t days = building_type.build_time.to_int();
+	return Timespan::from_days(days > 0 ? days : DEFAULT_CONSTRUCTION_DAYS);
+}
+
+bool FactoryInstance::can_be_expanded() const {
+	return !is_under_construction() && level < building_type.max_level;
+}
+
+fixed_point_t FactoryInstance::get_construction_progress(const Date today) const {
+	if (!construction_start.has_value() || !construction_end.has_value()) {
+		return 0;
+	}
+
+	const int32_t total = static_cast<int32_t>((*construction_end - *construction_start).to_int());
+	if (total <= 0) {
+		return 1;
+	}
+
+	const int32_t elapsed = std::clamp<int32_t>(static_cast<int32_t>((today - *construction_start).to_int()), 0, total);
+	return fp::from_fraction(elapsed, total);
+}
+
+void FactoryInstance::start_construction(const Date today) {
+	if (is_under_construction()) {
+		return;
+	}
+
+	construction_start = today;
+	construction_end = today + calculate_construction_time(building_type);
+}
+
+void FactoryInstance::set_open(const bool new_open) {
+	open = new_open;
+	if (open) {
+		unprofitable_days = 0;
+		throttle = fixed_point_t::_1;
+	}
+}
+
+void FactoryInstance::after_buy(void* actor, BuyResult const& buy_result) {
+	FactoryInstance& factory = *static_cast<FactoryInstance*>(actor);
+
+	// Each order of a factory is for a different good, so each callback only writes to its own input
+	for (Input& input : factory.inputs) {
+		if (input.good.index == buy_result.good_index) {
+			input.bought_today += buy_result.quantity_bought;
+			input.spent_today += buy_result.money_spent_total;
+			return;
+		}
+	}
+}
+
+void FactoryInstance::after_sell(
+	void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector
+) {
+	FactoryInstance& factory = *static_cast<FactoryInstance*>(actor);
+
+	factory.revenue_today += sell_result.money_gained;
+	factory.sold_quantity_today += sell_result.quantity_sold;
+}
+
+void FactoryInstance::top_up_budget(MarketInstance const& market_instance) {
+	if (level <= building_level_t(0)) {
+		return;
+	}
+
+	fixed_point_t daily_input_value = 0;
+	for (Input const& input : inputs) {
+		daily_input_value += input.quantity_per_level * static_cast<int32_t>(type_safe::get(level)) *
+			market_instance.get_good_instance(input.good.index).get_price();
+	}
+
+	const fixed_point_t founding_capital = daily_input_value * FOUNDING_CAPITAL_DAYS;
+	if (budget < founding_capital) {
+		budget = founding_capital;
+	}
+}
+
+void FactoryInstance::settle(State& state, MarketInstance const& market_instance) {
+	// Goods bought yesterday
+	fixed_point_t spent = 0;
+	for (Input& input : inputs) {
+		input.stockpile += input.bought_today;
+		spent += input.spent_today;
+		input.bought_today = 0;
+		input.spent_today = 0;
+	}
+
+	const fixed_point_t revenue = revenue_today;
+	sold_quantity_yesterday = sold_quantity_today;
+	revenue_today = 0;
+	sold_quantity_today = 0;
+
+	budget += revenue;
+	budget -= spent;
+	if (budget < 0) {
+		budget = 0;
+	}
+
+	const bool operated = produced_quantity_pending > 0 || revenue > 0;
+	output_quantity_yesterday = produced_quantity_pending;
+	input_cost_yesterday = consumed_value_pending;
+
+	// Workers are paid half of the value they added, as long as the budget covers it. A factory that sells its goods
+	// for less than its inputs cost does not pay wages, it is the market that decides if it keeps running.
+	const fixed_point_t value_added = revenue - consumed_value_pending;
+	fixed_point_t wages = value_added > 0 ? std::min(value_added * fixed_point_t::_0_50, budget) : fixed_point_t { 0 };
+
+	if (wages > 0 && !workers.empty()) {
+		pop_size_t total_workers { 0 };
+		for (Worker const& worker : workers) {
+			total_workers += worker.size;
+		}
+
+		if (total_workers > pop_size_t(0)) {
+			for (Worker const& worker : workers) {
+				worker.pop->add_factory_worker_income(
+					wages * type_safe::get(worker.size) / type_safe::get(total_workers)
+				);
+			}
+		} else {
+			wages = 0;
+		}
+	} else {
+		wages = 0;
+	}
+	budget -= wages;
+
+	// Owners take a part of the profit
+	const fixed_point_t profit = revenue - consumed_value_pending - wages;
+	fixed_point_t owner_income = 0;
+
+	if (profit > 0 && production_type.owner.has_value()) {
+		memory::vector<std::reference_wrapper<Pop>> const& owner_pops =
+			state.get_pops_cache_by_type()[production_type.owner->pop_type_index];
+
+		int32_t total_owner_size = 0;
+		for (Pop const& pop : owner_pops) {
+			total_owner_size += type_safe::get(pop.get_size());
+		}
+
+		if (total_owner_size > 0) {
+			owner_income = std::min(profit * fixed_point_t::_0_25, budget);
+			for (Pop& pop : owner_pops) {
+				pop.add_factory_owner_income(owner_income * type_safe::get(pop.get_size()) / total_owner_size);
+			}
+			budget -= owner_income;
+		} else {
+			owner_income = 0;
+		}
+	}
+
+	revenue_yesterday = revenue;
+	wages_yesterday = wages;
+	owner_income_yesterday = owner_income;
+	profit_yesterday = profit;
+
+	produced_quantity_pending = 0;
+	consumed_value_pending = 0;
+
+	if (!operated) {
+		return;
+	}
+
+	// Adapt to the market
+	if (profit > 0) {
+		profitable_days++;
+		unprofitable_days = 0;
+		efficiency = std::min(efficiency + fixed_point_t::epsilon * 65, fixed_point_t::_1 + fixed_point_t::_0_50);
+		throttle = std::min(throttle + fixed_point_t::_0_10 / 2, fixed_point_t::_1);
+	} else {
+		unprofitable_days++;
+		profitable_days = 0;
+		efficiency = std::max(efficiency - fixed_point_t::epsilon * 130, fixed_point_t::_0_50 + fixed_point_t::_0_10);
+		throttle = std::max(throttle - fixed_point_t::_0_10, fixed_point_t::_0_20);
+
+		if (unprofitable_days >= DAYS_OF_LOSS_BEFORE_CLOSING && throttle <= fixed_point_t::_0_20) {
+			SPDLOG_INFO("Closing unprofitable factory {} in {}", building_type, state);
+			open = false;
+		}
+	}
+}
+
+void FactoryInstance::advance_construction(const Date today, MarketInstance const& market_instance) {
+	if (!construction_end.has_value() || today < *construction_end) {
+		return;
+	}
+
+	level += building_level_t(1);
+	construction_start.reset();
+	construction_end.reset();
+	top_up_budget(market_instance);
+	is_funded = true;
+}
+
+void FactoryInstance::try_private_expansion(const Date today, MarketInstance const& market_instance) {
+	if (!open || !can_be_expanded() || profitable_days < DAYS_OF_PROFIT_BEFORE_EXPANSION) {
+		return;
+	}
+
+	const fixed_point_t cost = FactoryInstance::calculate_construction_cost(building_type, market_instance);
+	if (budget < cost * 3 / 2) {
+		return;
+	}
+
+	budget -= cost;
+	profitable_days = 0;
+	start_construction(today);
+}
+
+void FactoryInstance::hire(State& state) {
+	workers.clear();
+	employee_count = pop_size_t(0);
+	max_employee_count = pop_size_t(0);
+
+	if (level <= building_level_t(0)) {
+		return;
+	}
+
+	const int32_t workforce = static_cast<int32_t>(type_safe::get(production_type.base_workforce_size)) *
+		static_cast<int32_t>(type_safe::get(level));
+
+	for (Job const& job : production_type.get_jobs()) {
+		const int32_t max_for_job = (job.amount * workforce).floor<int32_t>();
+		if (max_for_job <= 0) {
+			continue;
+		}
+
+		max_employee_count += pop_size_t(static_cast<int32_t>(max_for_job));
+
+		memory::vector<std::reference_wrapper<Pop>> const& pops = state.get_pops_cache_by_type()[job.pop_type_index];
+
+		int32_t available = 0;
+		for (Pop const& pop : pops) {
+			available += type_safe::get(pop.get_unemployed());
+		}
+		if (available <= 0) {
+			continue;
+		}
+
+		// Everyone is hired when there are enough jobs, otherwise jobs are shared proportionally between pops
+		const fixed_point_t proportion = max_for_job >= available
+			? fixed_point_t::_1
+			: fp::from_fraction(max_for_job, available);
+
+		for (Pop& pop : pops) {
+			const int32_t unemployed = type_safe::get(pop.get_unemployed());
+			const int32_t to_hire = (proportion * unemployed).floor<int32_t>();
+			if (to_hire <= 0) {
+				continue;
+			}
+
+			pop.hire(pop_size_t(to_hire));
+			workers.push_back({ &pop, pop_size_t(to_hire) });
+			employee_count += pop_size_t(to_hire);
+		}
+	}
+}
+
+void FactoryInstance::tick(State& state, MarketInstance& market_instance, const Date today) {
+	settle(state, market_instance);
+	advance_construction(today, market_instance);
+
+	if (!is_funded && level > building_level_t(0)) {
+		top_up_budget(market_instance);
+		is_funded = true;
+	}
+
+	workers.clear();
+	employee_count = pop_size_t(0);
+
+	CountryInstance* const owner = state.get_owner();
+	if (owner == nullptr || level <= building_level_t(0) || !open) {
+		return;
+	}
+
+	try_private_expansion(today, market_instance);
+
+	hire(state);
+
+	const int32_t max_employees = type_safe::get(max_employee_count);
+	const fixed_point_t workforce_fraction = max_employees > 0
+		? fp::from_fraction(static_cast<int32_t>(type_safe::get(employee_count)), max_employees)
+		: fixed_point_t { 0 };
+
+	const int32_t level_value = static_cast<int32_t>(type_safe::get(level));
+
+	// How much of the possible production the inputs in the stockpile allow
+	fixed_point_t input_fraction = fixed_point_t::_1;
+	for (Input const& input : inputs) {
+		const fixed_point_t needed = input.quantity_per_level * level_value * workforce_fraction * throttle;
+		if (needed > 0) {
+			input_fraction = std::min(input_fraction, std::min(fixed_point_t::_1, input.stockpile / needed));
+		}
+	}
+
+	const fixed_point_t production_fraction = workforce_fraction * throttle * input_fraction;
+
+	fixed_point_t consumed_value = 0;
+	if (production_fraction > 0) {
+		for (Input& input : inputs) {
+			const fixed_point_t consumed = std::min(
+				input.quantity_per_level * level_value * production_fraction, input.stockpile
+			);
+			input.stockpile -= consumed;
+			consumed_value += consumed * market_instance.get_good_instance(input.good.index).get_price();
+		}
+	}
+
+	const std::optional<country_index_t> country_index = owner->index;
+
+	const fixed_point_t output = production_type.base_output_quantity * level_value * production_fraction * efficiency;
+	produced_quantity_pending = output;
+	consumed_value_pending = consumed_value;
+
+	if (output > 0) {
+		// The callback is not called with a vector of its own as it does not need one
+		memory::vector<fixed_point_t> reusable_vector;
+		market_instance.place_market_sell_order(
+			{ production_type.output_good.index, country_index, output, this, after_sell }, reusable_vector
+		);
+	}
+
+	// Buy the inputs for the next days, only spending what the factory's own budget can afford
+	fixed_point_t budget_left = budget;
+	for (Input& input : inputs) {
+		const fixed_point_t target = input.quantity_per_level * level_value * throttle * STOCKPILE_TARGET_DAYS;
+		const fixed_point_t wanted = target - input.stockpile;
+		if (wanted <= 0 || budget_left <= 0 || !market_instance.get_is_available(input.good.index)) {
+			continue;
+		}
+
+		const fixed_point_t money_to_spend = std::min(
+			budget_left, market_instance.get_max_money_to_allocate_to_buy_quantity(input.good.index, wanted)
+		);
+		if (money_to_spend <= 0) {
+			continue;
+		}
+
+		budget_left -= money_to_spend;
+		market_instance.place_buy_up_to_order(
+			{ input.good.index, country_index, wanted, money_to_spend, this, after_buy }
+		);
+	}
+}

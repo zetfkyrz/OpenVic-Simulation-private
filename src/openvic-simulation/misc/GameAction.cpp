@@ -4,6 +4,10 @@
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/economy/production/FactoryInstance.hpp"
+#include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 
 using namespace OpenVic;
@@ -337,4 +341,110 @@ bool GameActionManager::VariantVisitor::operator() (diplomatic_action_argument_t
 		{},
 		instance_manager
 	);
+}
+
+// Factories
+namespace {
+	// Finds the factory building type and the state to build in, null if the action is not valid
+	struct FactoryActionTarget {
+		State* state = nullptr;
+		BuildingType const* building_type = nullptr;
+	};
+
+	FactoryActionTarget find_factory_action_target(
+		InstanceManager& instance_manager, CountryInstance& country, const province_index_t province_index,
+		const building_type_index_t building_type_index
+	) {
+		FactoryActionTarget target;
+
+		ProvinceInstance* province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (OV_unlikely(province == nullptr)) {
+			spdlog::error_s("Factory game action called with invalid province index: {}", province_index);
+			return target;
+		}
+
+		State* state = province->get_state();
+		if (state == nullptr || state->get_owner() != &country) {
+			return target;
+		}
+
+		BuildingType const* building_type = instance_manager.definition_manager.get_economy_manager()
+			.get_building_type_manager()
+			.get_building_type_by_index(building_type_index);
+		if (OV_unlikely(building_type == nullptr)) {
+			spdlog::error_s("Factory game action called with invalid building type index: {}", building_type_index);
+			return target;
+		}
+
+		ProductionType const* production_type = building_type->production_type;
+		if (production_type == nullptr || production_type->template_type != ProductionType::template_type_t::FACTORY) {
+			return target;
+		}
+
+		target.state = state;
+		target.building_type = building_type;
+		return target;
+	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	State& state = *target.state;
+	BuildingType const& building_type = *target.building_type;
+
+	if (!country.is_building_type_unlocked(building_type) || !building_type.production_type->is_valid_for_factory_in(state)) {
+		return false;
+	}
+
+	FactoryInstance* factory = state.find_factory(building_type);
+	if (factory != nullptr) {
+		if (!factory->can_be_expanded()) {
+			return false;
+		}
+	} else if (!state.has_free_factory_slot()) {
+		return false;
+	}
+
+	const fixed_point_t cost = FactoryInstance::calculate_construction_cost(
+		building_type, instance_manager.get_market_instance()
+	);
+	if (country.get_cash_stockpile().load() < cost) {
+		return false;
+	}
+
+	if (factory == nullptr) {
+		factory = state.add_factory(building_type, building_level_t(0));
+		if (factory == nullptr) {
+			return false;
+		}
+	}
+
+	country.spend_cash(cost);
+	factory->start_construction(instance_manager.get_today());
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, new_open] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	FactoryInstance* factory = target.state->find_factory(*target.building_type);
+	if (factory == nullptr || factory->is_open() == new_open) {
+		return false;
+	}
+
+	factory->set_open(new_open);
+	return true;
 }

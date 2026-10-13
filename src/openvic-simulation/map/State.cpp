@@ -1,5 +1,7 @@
 #include "State.hpp"
 
+#include "openvic-simulation/economy/BuildingType.hpp"
+
 #include "openvic-simulation/core/error/ErrorMacros.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
@@ -231,4 +233,34 @@ void StateManager::update_gamestate() {
 
 fmt::format_context::iterator fmt::formatter<State>::format(State const& state, fmt::format_context& ctx) const {
 	return formatter<string_view>::format(state.get_identifier(), ctx);
+}
+
+FactoryInstance* State::find_factory(BuildingType const& building_type) {
+	for (FactoryInstance& factory : factories) {
+		if (&factory.building_type == &building_type) {
+			return &factory;
+		}
+	}
+	return nullptr;
+}
+
+FactoryInstance const* State::find_factory(BuildingType const& building_type) const {
+	for (FactoryInstance const& factory : factories) {
+		if (&factory.building_type == &building_type) {
+			return &factory;
+		}
+	}
+	return nullptr;
+}
+
+bool State::has_free_factory_slot() const {
+	return factories.size() < FactoryInstance::MAX_FACTORIES_PER_STATE;
+}
+
+FactoryInstance* State::add_factory(BuildingType const& building_type, const building_level_t level) {
+	if (building_type.production_type == nullptr || find_factory(building_type) != nullptr || !has_free_factory_slot()) {
+		return nullptr;
+	}
+
+	return &*factories.emplace(building_type, *building_type.production_type, level);
 }

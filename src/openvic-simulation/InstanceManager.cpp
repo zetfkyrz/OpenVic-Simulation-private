@@ -190,6 +190,7 @@ void InstanceManager::tick() {
 	// Tick...
 	country_instance_manager.country_manager_tick_before_map();
 	map_instance.map_tick();
+	map_instance.factory_tick(market_instance, today);
 	market_instance.execute_orders();
 	country_instance_manager.country_manager_tick_after_map();
 	unit_instance_manager.tick();

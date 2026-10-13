@@ -79,6 +79,8 @@ namespace OpenVic {
 		life_rating_t PROPERTY(life_rating, life_rating_t { 0 });
 		colony_status_t PROPERTY(colony_status, colony_status_t::STATE);
 		State* PROPERTY_PTR(state, nullptr);
+		// Factories of the province history, they are added to the state when the new game is initialised
+		ordered_map<building_type_index_t, building_level_t> PROPERTY_REF(pending_state_buildings);
 
 		CountryInstance* PROPERTY_PTR(owner, nullptr);
 		ModifierSum const& get_owner_modifier_sum() const;

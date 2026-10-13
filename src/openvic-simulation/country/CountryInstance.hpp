@@ -533,6 +533,10 @@ namespace OpenVic {
 		bool add_reform(Reform const& new_reform);
 
 		void set_strata_tax_rate_slider_value(Strata const& strata, const fixed_point_t new_value);
+		// Takes money out of the national stockpile, e.g. to pay for construction
+		void spend_cash(const fixed_point_t amount) {
+			cash_stockpile -= amount;
+		}
 		void set_army_spending_slider_value(const fixed_point_t new_value);
 		void set_navy_spending_slider_value(const fixed_point_t new_value);
 		void set_construction_spending_slider_value(const fixed_point_t new_value);

@@ -95,7 +95,7 @@ namespace OpenVic {
 		bool get_is_farm_for_tech() const;
 		bool get_is_mine_for_non_tech() const;
 		bool is_valid_for_artisan_in(ProvinceInstance& province) const;
-		bool is_valid_for_factory_in(State& state) const;
+		bool is_valid_for_factory_in(State const& state) const;
 		ProductionType(ProductionType&&) = default;
 	};
 
