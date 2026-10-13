@@ -732,10 +732,16 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			const bool friendly = owner != nullptr
 				&& (owner == &army.get_country() || army.get_country().has_alliance_with(*owner));
 
+			// Armies the national stockpile cannot supply recover more slowly, and get no new men below half supplies
+			// (only at war, and never below a quarter, so that a country with an empty stockpile still can recover)
+			fixed_point_t supply = fixed_point_t::_1;
+			if (army.get_country().is_at_war()) {
+				supply = std::max(army.get_country().get_army_supply_ratio(), fixed_point_t::_0_25);
+			}
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
 				regiment.recover(
-					regiment.get_max_organisation() * organisation_recovery,
-					friendly ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
+					regiment.get_max_organisation() * organisation_recovery * supply,
+					friendly && supply >= fixed_point_t::_0_50 ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
 				);
 			}
 		}

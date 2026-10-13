@@ -1,5 +1,8 @@
 #include "CountryInstance.hpp"
 
+#include "openvic-simulation/economy/production/FactoryInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -2143,7 +2146,12 @@ void CountryInstance::country_tick_before_map(
 }
 
 void CountryInstance::calculate_government_good_needs() {
-	//TODO calculate government_needs, max_government_consumption, army_needs & navy_needs
+	// Days of supplies the government tries to keep in the national stockpile
+	constexpr int32_t DAYS_OF_SUPPLY = 10;
+
+	// Army and navy: every unit uses a share (its supply_consumption) of its supply_cost goods per day, scaled by the
+	// army/navy spending slider. The goods come out of the national stockpile and the government keeps a reserve of them.
+	// TODO - construction (buildings, factories, recruitment) should add its goods needs here as well, see the pseudocode:
 	//for each construction/recruitment
 	//	for each good
 	//		remainder = resources_total - already_consumed
@@ -2152,6 +2160,75 @@ void CountryInstance::calculate_government_good_needs() {
 	//			: min(1, slider * days_since_start / spread_cost_days) * resources_total
 	//		government_needs += daily_needs
 	//		max_government_consumption += remainder
+	const auto add_unit_needs = [this](
+		UnitType const& unit_type, const fixed_point_t slider, const bool is_army
+	) -> void {
+		if (slider <= fixed_point_t::_0) {
+			return;
+		}
+		for (auto const& [good, quantity] : unit_type.get_supply_cost()) {
+			good_data_t& good_data = goods_data.at_index(good->index);
+			const fixed_point_t daily_need = quantity * unit_type.supply_consumption * slider;
+			(is_army ? good_data.army_needs : good_data.navy_needs) += daily_need;
+		}
+	};
+
+	const fixed_point_t army_slider = army_spending_slider_value.get_value_untracked();
+	const fixed_point_t navy_slider = navy_spending_slider_value.get_value_untracked();
+
+	for (ArmyInstance const& army : armies) {
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			add_unit_needs(regiment.unit_type, army_slider, true);
+		}
+	}
+	for (NavyInstance const& navy : navies) {
+		for (ShipInstance const& ship : navy.get_ship_instances()) {
+			add_unit_needs(ship.unit_type, navy_slider, false);
+		}
+	}
+
+	// Factories under construction use goods of the stockpile while the construction slider lets them work
+	const fixed_point_t construction_slider = construction_spending_slider_value.get_value_untracked();
+	if (construction_slider > fixed_point_t::_0) {
+		for (State const* state : states) {
+			for (FactoryInstance const& factory : state->get_factories()) {
+				if (!factory.is_construction_using_stockpile()) {
+					continue;
+				}
+				for (auto const& [good, quantity] : factory.building_type.goods_cost) {
+					good_data_t& good_data = goods_data.at_index(good->index);
+					// Consumed by the factory when it builds, so it only has to be kept in the stockpile
+					const fixed_point_t daily_need = factory.get_daily_construction_goods(*good) * construction_slider;
+					good_data.government_needs += daily_need * 5;
+					good_data.max_government_consumption += daily_need * 5;
+				}
+			}
+		}
+	}
+
+	fixed_point_t army_needed_total = 0;
+	fixed_point_t army_supplied_total = 0;
+
+	for (auto [good_instance, good_data] : goods_data) {
+		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
+		if (daily_need <= fixed_point_t::_0) {
+			continue;
+		}
+
+		// Today's supplies are used up
+		const fixed_point_t consumed = std::min(daily_need, good_data.stockpile_amount);
+		good_data.stockpile_amount -= consumed;
+		good_data.stockpile_change_yesterday -= consumed;
+
+		// What the armies got of what they needed
+		army_needed_total += good_data.army_needs;
+		army_supplied_total += consumed * good_data.army_needs / daily_need;
+
+		good_data.government_needs += daily_need * DAYS_OF_SUPPLY;
+		good_data.max_government_consumption += daily_need * DAYS_OF_SUPPLY;
+	}
+
+	army_supply_ratio = army_needed_total > fixed_point_t::_0 ? army_supplied_total / army_needed_total : fixed_point_t::_1;
 }
 
 void CountryInstance::manage_national_stockpile(

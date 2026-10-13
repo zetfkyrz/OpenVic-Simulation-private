@@ -378,6 +378,8 @@ namespace OpenVic {
 		// The current war exhaustion value should only ever be modified via change_war_exhaustion(delta) which also
 		// clamps the result in the range [0, war_exhaustion_max] straight away, matching the base game's behaviour.
 		fixed_point_t PROPERTY(war_exhaustion);
+		// Share of the supplies the armies needed yesterday that the national stockpile could give (1 = fully supplied)
+		fixed_point_t PROPERTY(army_supply_ratio, fixed_point_t::_1);
 		fixed_point_t PROPERTY(war_exhaustion_max);
 		bool PROPERTY_RW_CUSTOM_NAME(mobilised, is_mobilised, set_mobilised, false);
 		bool PROPERTY_CUSTOM_PREFIX(disarmed, is, false);

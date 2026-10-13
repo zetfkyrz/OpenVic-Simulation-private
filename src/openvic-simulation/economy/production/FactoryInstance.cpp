@@ -80,13 +80,25 @@ fixed_point_t FactoryInstance::get_construction_progress(const Date today) const
 	return fp::from_fraction(elapsed, total);
 }
 
-void FactoryInstance::start_construction(const Date today) {
+void FactoryInstance::start_construction(const Date today, const bool uses_stockpile) {
 	if (is_under_construction()) {
 		return;
 	}
 
+	const Timespan time = calculate_construction_time(building_type);
 	construction_start = today;
-	construction_end = today + calculate_construction_time(building_type);
+	construction_end = today + time;
+	construction_uses_stockpile = uses_stockpile;
+	construction_pace = fixed_point_t::_0;
+	construction_total_days = std::max<int32_t>(1, static_cast<int32_t>(time.to_int()));
+}
+
+fixed_point_t FactoryInstance::get_daily_construction_goods(GoodDefinition const& good) const {
+	const auto it = building_type.goods_cost.find(&good);
+	if (it == building_type.goods_cost.end()) {
+		return fixed_point_t::_0;
+	}
+	return it->second / construction_total_days;
 }
 
 void FactoryInstance::set_open(const bool new_open) {
@@ -246,10 +258,48 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	}
 }
 
-void FactoryInstance::advance_construction(const Date today, MarketInstance const& market_instance) {
+void FactoryInstance::advance_construction(State& state, const Date today, MarketInstance const& market_instance) {
+	if (construction_end.has_value() && construction_uses_stockpile && today < *construction_end) {
+		CountryInstance* const owner = state.get_owner();
+		bool worked = false;
+
+		if (owner != nullptr) {
+			construction_pace += owner->get_construction_spending_slider_value().get_value_untracked();
+			if (construction_pace >= fixed_point_t::_1) {
+				// All the goods of the day have to be in the stockpile
+				bool goods_available = true;
+				for (auto const& [good, quantity] : building_type.goods_cost) {
+					if (owner->get_good_data(market_instance.get_good_instance(good->index)).stockpile_amount
+						< get_daily_construction_goods(*good)) {
+						goods_available = false;
+						break;
+					}
+				}
+
+				if (goods_available) {
+					for (auto const& [good, quantity] : building_type.goods_cost) {
+						CountryInstance::good_data_t& good_data = owner->get_good_data(market_instance.get_good_instance(good->index));
+						const fixed_point_t used = get_daily_construction_goods(*good);
+						good_data.stockpile_amount -= used;
+						good_data.stockpile_change_yesterday -= used;
+					}
+					construction_pace -= fixed_point_t::_1;
+					worked = true;
+				}
+			}
+		}
+
+		if (!worked) {
+			// Nothing was built today
+			construction_end = *construction_end + Timespan::from_days(1);
+		}
+	}
+
 	if (!construction_end.has_value() || today < *construction_end) {
 		return;
 	}
+
+	construction_uses_stockpile = false;
 
 	level += building_level_t(1);
 	construction_start.reset();
@@ -324,7 +374,7 @@ void FactoryInstance::hire(State& state) {
 
 void FactoryInstance::tick(State& state, MarketInstance& market_instance, const Date today) {
 	settle(state, market_instance);
-	advance_construction(today, market_instance);
+	advance_construction(state, today, market_instance);
 
 	if (!is_funded && level > building_level_t(0)) {
 		top_up_budget(market_instance);

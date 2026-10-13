@@ -66,6 +66,13 @@ namespace OpenVic {
 		bool is_funded = false;
 		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
 		CountryInstance* tariff_collector = nullptr;
+		// Construction ordered by the player is paid with money (the building type's cost) and with the goods of the
+		// national stockpile, which are used up day by day while it is built. The pace accumulates the construction
+		// spending slider: a day of construction is only worked when it reaches 1 and the goods of the day are there,
+		// otherwise the end of the construction moves one day back.
+		bool construction_uses_stockpile = false;
+		fixed_point_t construction_pace;
+		int32_t construction_total_days = 1;
 
 		memory::vector<Input> SPAN_PROPERTY(inputs);
 		memory::vector<Worker> SPAN_PROPERTY(workers);
@@ -93,7 +100,7 @@ namespace OpenVic {
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 
 		void settle(State& state, MarketInstance const& market_instance);
-		void advance_construction(const Date today, MarketInstance const& market_instance);
+		void advance_construction(State& state, const Date today, MarketInstance const& market_instance);
 		void try_private_expansion(const Date today, MarketInstance const& market_instance);
 		void hire(State& state);
 		void top_up_budget(MarketInstance const& market_instance);
@@ -119,7 +126,13 @@ namespace OpenVic {
 		);
 		[[nodiscard]] static Timespan calculate_construction_time(BuildingType const& building_type);
 
-		void start_construction(const Date today);
+		// With uses_stockpile the goods of the building type are taken from the national stockpile during the construction
+		void start_construction(const Date today, bool uses_stockpile = false);
+		[[nodiscard]] bool is_construction_using_stockpile() const {
+			return construction_uses_stockpile && construction_end.has_value();
+		}
+		// Quantity of the good used up on a day when the construction is worked
+		[[nodiscard]] fixed_point_t get_daily_construction_goods(GoodDefinition const& good) const;
 		void set_open(const bool new_open);
 
 		void tick(State& state, MarketInstance& market_instance, const Date today);

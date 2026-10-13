@@ -571,9 +571,8 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 		return false;
 	}
 
-	const fixed_point_t cost = FactoryInstance::calculate_construction_cost(
-		building_type, instance_manager.get_market_instance()
-	);
+	// The player pays the money part of the cost at once, the goods are taken from the national stockpile while building
+	const fixed_point_t cost = building_type.cost;
 	if (country.get_cash_stockpile().load() < cost) {
 		return false;
 	}
@@ -586,7 +585,7 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 	}
 
 	country.spend_cash(cost);
-	factory->start_construction(instance_manager.get_today());
+	factory->start_construction(instance_manager.get_today(), true);
 	return true;
 }
 
