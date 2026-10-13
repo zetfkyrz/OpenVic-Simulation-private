@@ -8,6 +8,8 @@
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
+#include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 
 using namespace OpenVic;
@@ -341,6 +343,133 @@ bool GameActionManager::VariantVisitor::operator() (diplomatic_action_argument_t
 		{},
 		instance_manager
 	);
+}
+
+// Wars and armies
+namespace {
+	CountryInstance& war_action_country(InstanceManager& instance_manager, const country_index_t index) {
+		return instance_manager.get_country_instance_manager().get_country_instance_by_index(index);
+	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& argument) const {
+	const auto [unique_id, province_index] = argument;
+
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
+	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+		spdlog::error_s("GAME_ACTION_MOVE_ARMY called with invalid army unique id: {}", unique_id);
+		return false;
+	}
+
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_MOVE_ARMY called with invalid province index: {}", province_index);
+		return false;
+	}
+
+	// A manual order takes the army off its front so that the front does not send it back
+	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+		if (front.country == &group->get_country()) {
+			instance_manager.get_war_manager().set_front_army(
+				instance_manager, group->get_country(), front.id, unique_id, false
+			);
+			break;
+		}
+	}
+
+	return instance_manager.get_unit_instance_manager().order_move(
+		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance()
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (stop_army_argument_t const& argument) const {
+	const unique_id_t unique_id = type_safe::get(argument);
+
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
+	if (OV_unlikely(group == nullptr)) {
+		spdlog::error_s("GAME_ACTION_STOP_ARMY called with invalid army unique id: {}", unique_id);
+		return false;
+	}
+
+	if (!group->is_moving()) {
+		return false;
+	}
+	group->clear_path();
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (propose_peace_argument_t const& argument) const {
+	const auto [country_index, war_id, peace_type] = argument;
+
+	if (OV_unlikely(peace_type > static_cast<std::uint32_t>(WarManager::peace_type_t::GIVE_STATES))) {
+		spdlog::error_s("GAME_ACTION_PROPOSE_PEACE called with invalid peace type: {}", peace_type);
+		return false;
+	}
+
+	return instance_manager.get_war_manager().propose_peace(
+		instance_manager, war_id, war_action_country(instance_manager, country_index),
+		static_cast<WarManager::peace_type_t>(peace_type)
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (create_front_argument_t const& argument) const {
+	const auto [country_index, enemy_index] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	CountryInstance& enemy = war_action_country(instance_manager, enemy_index);
+
+	// The same country as the enemy creates an empty front to draw by hand
+	return instance_manager.get_war_manager().create_front(
+		instance_manager, country, &enemy != &country ? &enemy : nullptr
+	) != 0;
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_front_argument_t const& argument) const {
+	const auto [country_index, front_id] = argument;
+	return instance_manager.get_war_manager().delete_front(war_action_country(instance_manager, country_index), front_id);
+}
+
+bool GameActionManager::VariantVisitor::operator() (toggle_front_province_argument_t const& argument) const {
+	const auto [country_index, front_id, province_index] = argument;
+
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_TOGGLE_FRONT_PROVINCE called with invalid province index: {}", province_index);
+		return false;
+	}
+
+	return instance_manager.get_war_manager().toggle_front_province(
+		war_action_country(instance_manager, country_index), front_id, *province
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_front_mode_argument_t const& argument) const {
+	const auto [country_index, front_id, mode] = argument;
+	return instance_manager.get_war_manager().set_front_mode(
+		war_action_country(instance_manager, country_index), front_id, static_cast<Front::mode_t>(mode)
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_front_army_argument_t const& argument) const {
+	const auto [country_index, front_id, army_id, assigned] = argument;
+	return instance_manager.get_war_manager().set_front_army(
+		instance_manager, war_action_country(instance_manager, country_index), front_id, army_id, assigned
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (assign_free_armies_argument_t const& argument) const {
+	const auto [country_index, front_id] = argument;
+	return instance_manager.get_war_manager().assign_free_armies(
+		instance_manager, war_action_country(instance_manager, country_index), front_id
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_auto_plan_argument_t const& argument) const {
+	const auto [country_index, enabled] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+
+	const bool old_enabled = instance_manager.get_war_manager().is_auto_plan_enabled(country);
+	instance_manager.get_war_manager().set_auto_plan(country, enabled);
+	return old_enabled != enabled;
 }
 
 // Factories

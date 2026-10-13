@@ -1,5 +1,9 @@
 #include "UnitInstanceGroup.hpp"
 
+#include <algorithm>
+#include <queue>
+#include <unordered_map>
+
 #include <fmt/std.h>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
@@ -44,8 +48,85 @@ void UnitInstanceGroup::update_gamestate() {
 	}
 }
 
-void UnitInstanceGroup::tick() {
+namespace {
+	// Movement points gained per day = slowest unit's maximum_speed * this scale. A typical province-to-province
+	// distance is a few tens of map units, so infantry (speed ~4) needs a handful of days per province.
+	constexpr int32_t MOVEMENT_SPEED_SCALE = 3;
+}
 
+bool UnitInstanceGroup::can_country_enter(CountryInstance const& country, ProvinceInstance const& province) {
+	CountryInstance const* const owner = province.get_owner();
+	CountryInstance const* const controller = province.get_controller();
+
+	if (owner == nullptr || owner == &country || controller == &country) {
+		return true;
+	}
+	if (country.has_alliance_with(*owner) || country.has_military_access_to(*owner)) {
+		return true;
+	}
+	if (country.is_at_war_with(*owner) || (controller != nullptr && country.is_at_war_with(*controller))) {
+		return true;
+	}
+	return controller != nullptr && country.has_alliance_with(*controller);
+}
+
+void UnitInstanceGroup::set_path(memory::vector<std::reference_wrapper<ProvinceInstance>>&& new_path) {
+	if (new_path.empty() || path.empty() || &new_path.front().get() != &path.front().get()) {
+		movement_progress = fixed_point_t::_0;
+	}
+	path = std::move(new_path);
+}
+
+void UnitInstanceGroup::clear_path() {
+	path.clear();
+	movement_progress = fixed_point_t::_0;
+}
+
+void UnitInstanceGroup::tick() {
+	if (path.empty() || units.empty()) {
+		return;
+	}
+
+	// A group fighting a battle stays where it is
+	if (in_combat) {
+		return;
+	}
+
+	ProvinceInstance& next = path.front();
+
+	if (!can_country_enter(country.get(), next)) {
+		// Access was lost (peace, alliance ended...), stop
+		clear_path();
+		return;
+	}
+
+	ProvinceDefinition::adjacency_t const* const adjacency =
+		location.get().province_definition.get_adjacency_to(next.province_definition);
+	if (OV_unlikely(adjacency == nullptr)) {
+		clear_path();
+		return;
+	}
+
+	fixed_point_t speed = units.front().get().unit_type.maximum_speed;
+	for (UnitInstance const& unit : units) {
+		if (unit.unit_type.maximum_speed < speed) {
+			speed = unit.unit_type.maximum_speed;
+		}
+	}
+	if (speed <= fixed_point_t::_0) {
+		speed = fixed_point_t::_1;
+	}
+
+	movement_progress += speed * MOVEMENT_SPEED_SCALE;
+
+	if (movement_progress >= adjacency->get_distance()) {
+		movement_progress -= adjacency->get_distance();
+		set_location(next);
+		path.erase(path.begin());
+		if (path.empty()) {
+			movement_progress = fixed_point_t::_0;
+		}
+	}
 }
 
 size_t UnitInstanceGroup::get_unit_count() const {
@@ -228,11 +309,6 @@ ProvinceInstance const* UnitInstanceGroup::get_movement_destination_province() c
 Date UnitInstanceGroup::get_movement_arrival_date() const {
 	// TODO - calculate today + remaining movement cost / unit speed
 	return {};
-}
-
-bool UnitInstanceGroup::is_in_combat() const {
-	// TODO - check if in combat
-	return false;
 }
 
 UnitInstanceGroupBranched<LAND>::UnitInstanceGroupBranched(
@@ -496,6 +572,135 @@ UnitInstanceGroup* UnitInstanceManager::get_unit_instance_group_by_unique_id(uni
 		return &it->second.get();
 	} else {
 		return nullptr;
+	}
+}
+
+bool UnitInstanceManager::order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance) {
+	if (destination.province_definition.is_water() || army.empty()) {
+		return false;
+	}
+
+	ProvinceInstance& start = army.get_location();
+	if (&start == &destination) {
+		army.clear_path();
+		return true;
+	}
+
+	CountryInstance const& country = army.get_country();
+	if (!UnitInstanceGroup::can_country_enter(country, destination)) {
+		return false;
+	}
+
+	// Dijkstra over land adjacencies by distance
+	using entry_t = std::pair<fixed_point_t, ProvinceInstance*>;
+	struct entry_greater {
+		bool operator()(entry_t const& lhs, entry_t const& rhs) const {
+			return lhs.first > rhs.first;
+		}
+	};
+	std::priority_queue<entry_t, std::vector<entry_t>, entry_greater> queue;
+	std::unordered_map<ProvinceInstance*, fixed_point_t> cost;
+	std::unordered_map<ProvinceInstance*, ProvinceInstance*> previous;
+
+	cost[&start] = fixed_point_t::_0;
+	queue.emplace(fixed_point_t::_0, &start);
+
+	while (!queue.empty()) {
+		const auto [current_cost, current] = queue.top();
+		queue.pop();
+
+		if (current == &destination) {
+			break;
+		}
+
+		const auto cost_it = cost.find(current);
+		if (cost_it != cost.end() && current_cost > cost_it->second) {
+			continue;
+		}
+
+		for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
+				continue;
+			}
+			ProvinceDefinition const& to_definition = adjacency.get_to();
+			if (to_definition.is_water()) {
+				continue;
+			}
+			ProvinceInstance& to = map_instance.get_province_instance_by_definition(to_definition);
+			if (!UnitInstanceGroup::can_country_enter(country, to)) {
+				continue;
+			}
+			const fixed_point_t new_cost = current_cost + adjacency.get_distance();
+			const auto it = cost.find(&to);
+			if (it == cost.end() || new_cost < it->second) {
+				cost[&to] = new_cost;
+				previous[&to] = current;
+				queue.emplace(new_cost, &to);
+			}
+		}
+	}
+
+	if (!previous.contains(&destination)) {
+		return false;
+	}
+
+	memory::vector<std::reference_wrapper<ProvinceInstance>> path;
+	for (ProvinceInstance* step = &destination; step != &start; step = previous.at(step)) {
+		path.emplace_back(*step);
+	}
+	std::reverse(path.begin(), path.end());
+
+	army.set_path(std::move(path));
+	return true;
+}
+
+void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& group) {
+	group.remove_unit(unit);
+	unit_instance_map.erase(unit.unique_id);
+
+	if (unit.get_branch() == LAND) {
+		RegimentInstance& regiment = static_cast<RegimentInstance&>(unit);
+		regiments.erase(regiments.get_iterator(&regiment));
+	} else {
+		ShipInstance& ship = static_cast<ShipInstance&>(unit);
+		ships.erase(ships.get_iterator(&ship));
+	}
+
+	if (group.empty()) {
+		destroy_group(group);
+	}
+}
+
+void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
+	// Delete the units first, copy the list since destroying a unit edits the group
+	memory::vector<UnitInstance*> group_units;
+	for (UnitInstance& unit : group.get_units()) {
+		group_units.push_back(&unit);
+	}
+
+	for (UnitInstance* unit : group_units) {
+		group.remove_unit(*unit);
+		unit_instance_map.erase(unit->unique_id);
+		if (unit->get_branch() == LAND) {
+			RegimentInstance& regiment = static_cast<RegimentInstance&>(*unit);
+			regiments.erase(regiments.get_iterator(&regiment));
+		} else {
+			ShipInstance& ship = static_cast<ShipInstance&>(*unit);
+			ships.erase(ships.get_iterator(&ship));
+		}
+	}
+
+	group.set_leader(nullptr);
+	group.get_location().remove_unit_instance_group(group);
+	group.get_country().remove_unit_instance_group(group);
+	unit_instance_group_map.erase(group.unique_id);
+
+	if (group.branch == LAND) {
+		ArmyInstance& army = static_cast<ArmyInstance&>(group);
+		armies.erase(armies.get_iterator(&army));
+	} else {
+		NavyInstance& navy = static_cast<NavyInstance&>(group);
+		navies.erase(navies.get_iterator(&navy));
 	}
 }
 

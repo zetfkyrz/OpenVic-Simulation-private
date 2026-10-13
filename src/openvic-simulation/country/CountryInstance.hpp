@@ -549,6 +549,11 @@ namespace OpenVic {
 		// Adds delta to the current war exhaustion value and clamps it to the range [0, war_exhaustion_max].
 		void change_war_exhaustion(fixed_point_t delta);
 
+		// Changes the capital (used when the old one is lost in a peace deal)
+		void set_capital(ProvinceInstance* new_capital) {
+			capital = new_capital;
+		}
+
 		bool add_unit_instance_group(UnitInstanceGroup& group);
 		bool remove_unit_instance_group(UnitInstanceGroup const& group);
 

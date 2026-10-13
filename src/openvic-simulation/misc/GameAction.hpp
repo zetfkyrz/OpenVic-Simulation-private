@@ -88,9 +88,20 @@ X(set_use_leader, unique_id_t, bool) \
 X(set_auto_create_leaders, country_index_t, bool) \
 X(set_auto_assign_leaders, country_index_t, bool) \
 X(set_mobilise, country_index_t, bool) \
-X(start_land_unit_recruitment, regiment_type_index_t, province_index_t, pop_id_in_province_t) X(diplomatic_action, country_index_t, country_index_t, std::uint32_t) \
+X(start_land_unit_recruitment, regiment_type_index_t, province_index_t, pop_id_in_province_t) \
+X(diplomatic_action, country_index_t, country_index_t, std::uint32_t) \
 X(build_factory, country_index_t, province_index_t, building_type_index_t) \
-X(set_factory_open, country_index_t, province_index_t, building_type_index_t, bool)
+X(set_factory_open, country_index_t, province_index_t, building_type_index_t, bool) \
+X(move_army, unique_id_t, province_index_t) \
+X(stop_army, unique_id_t) \
+X(propose_peace, country_index_t, std::uint32_t, std::uint32_t) \
+X(create_front, country_index_t, country_index_t) \
+X(delete_front, country_index_t, std::uint32_t) \
+X(toggle_front_province, country_index_t, std::uint32_t, province_index_t) \
+X(set_front_mode, country_index_t, std::uint32_t, std::uint32_t) \
+X(set_front_army, country_index_t, std::uint32_t, unique_id_t, bool) \
+X(assign_free_armies, country_index_t, std::uint32_t) \
+X(set_auto_plan, country_index_t, bool)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

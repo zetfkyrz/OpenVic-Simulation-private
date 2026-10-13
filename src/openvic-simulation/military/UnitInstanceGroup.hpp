@@ -23,8 +23,8 @@ namespace OpenVic {
 		memory::string PROPERTY(name);
 		memory::vector<std::reference_wrapper<UnitInstance>> SPAN_PROPERTY(units);
 		LeaderInstance* PROPERTY_PTR(leader, nullptr);
-		std::reference_wrapper<ProvinceInstance> PROPERTY(location);
-		std::reference_wrapper<CountryInstance> PROPERTY(country);
+		std::reference_wrapper<ProvinceInstance> location;
+		std::reference_wrapper<CountryInstance> country;
 
 		fixed_point_t PROPERTY(total_organisation);
 		fixed_point_t PROPERTY(total_max_organisation);
@@ -38,6 +38,9 @@ namespace OpenVic {
 		// Measured in distance travelled, increases each day by unit speed (after modifiers have been applied) until
 		// it reaches the required distance/movement cost to move to the next province in the path.
 		fixed_point_t PROPERTY(movement_progress);
+
+		// Set every day by the war manager, a group in combat does not move
+		bool PROPERTY_RW_CUSTOM_NAME(in_combat, is_in_combat, set_in_combat, false);
 
 	protected:
 		UnitInstanceGroup(
@@ -58,6 +61,20 @@ namespace OpenVic {
 		UnitInstanceGroup(UnitInstanceGroup&&) = default;
 		UnitInstanceGroup(UnitInstanceGroup const&) = delete;
 
+		// Mutable access to the references held by the group
+		ProvinceInstance& get_location() {
+			return location.get();
+		}
+		ProvinceInstance const& get_location() const {
+			return location.get();
+		}
+		CountryInstance& get_country() {
+			return country.get();
+		}
+		CountryInstance const& get_country() const {
+			return country.get();
+		}
+
 		size_t get_unit_count() const;
 		bool empty() const;
 		size_t get_unit_category_count(UnitType::unit_category_t unit_category) const;
@@ -77,12 +94,17 @@ namespace OpenVic {
 		fixed_point_t get_average_organisation() const;
 		fixed_point_t get_average_max_organisation() const;
 
+		// Replaces the path (front province must be adjacent to the current location), resets progress if the first step changed
+		void set_path(memory::vector<std::reference_wrapper<ProvinceInstance>>&& new_path);
+		void clear_path();
+
+		// Whether a group of the given country may enter the province (own/allied/access/hostile land)
+		static bool can_country_enter(CountryInstance const& country, ProvinceInstance const& province);
+
 		bool is_moving() const;
 		// The adjacent province that the unit will arrive in next, not necessarily the final destination of its current path
 		ProvinceInstance const* get_movement_destination_province() const;
 		Date get_movement_arrival_date() const;
-
-		bool is_in_combat() const;
 
 		constexpr bool operator==(UnitInstanceGroup const& rhs) const {
 			return unique_id == rhs.unique_id;
@@ -213,6 +235,15 @@ namespace OpenVic {
 
 		void update_gamestate();
 		void tick();
+
+		// Finds the shortest land path for the army and starts moving it, false if the destination is unreachable
+		bool order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance);
+
+		// Removes a unit from its group and deletes it, the group is deleted too if it becomes empty.
+		// The unit and, possibly, its group must not be used after this call.
+		void destroy_unit(UnitInstance& unit, UnitInstanceGroup& group);
+		// Deletes a group and all of its units, the group must not be used after this call.
+		void destroy_group(UnitInstanceGroup& group);
 
 		LeaderInstance* get_leader_instance_by_unique_id(unique_id_t unique_id);
 		UnitInstance* get_unit_instance_by_unique_id(unique_id_t unique_id);

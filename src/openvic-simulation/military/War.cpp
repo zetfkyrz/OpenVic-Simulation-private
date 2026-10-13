@@ -1,0 +1,777 @@
+#include "War.hpp"
+
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
+
+#include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/economy/BuildingInstance.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/map/MapInstance.hpp"
+#include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
+#include "openvic-simulation/utility/Logger.hpp"
+
+using namespace OpenVic;
+
+namespace {
+	bool contains_country(memory::vector<CountryInstance*> const& countries, CountryInstance const* country) {
+		return std::find(countries.begin(), countries.end(), country) != countries.end();
+	}
+
+	// Armies of the province copied to a plain vector, so that armies can be moved or destroyed while it is processed
+	std::vector<ArmyInstance*> copy_armies(ProvinceInstance& province) {
+		std::vector<ArmyInstance*> result;
+		for (ArmyInstance& army : province.get_armies()) {
+			result.push_back(&army);
+		}
+		return result;
+	}
+
+	struct BattleSide {
+		std::vector<ArmyInstance*> armies;
+		fixed_point_t power;
+		fixed_point_t organisation;
+		fixed_point_t max_organisation;
+		size_t regiment_count = 0;
+
+		fixed_point_t get_organisation_ratio() const {
+			return max_organisation > fixed_point_t::_0 ? organisation / max_organisation : fixed_point_t::_0;
+		}
+	};
+
+	void calculate_side(BattleSide& side) {
+		const fixed_point_t min_org_factor = fixed_point_t(3) / 10;
+
+		side.power = fixed_point_t::_0;
+		side.organisation = fixed_point_t::_0;
+		side.max_organisation = fixed_point_t::_0;
+		side.regiment_count = 0;
+
+		for (ArmyInstance* army : side.armies) {
+			for (RegimentInstance& regiment : army->get_regiment_instances()) {
+				const fixed_point_t max_strength = regiment.get_max_strength();
+				const fixed_point_t max_organisation = regiment.get_max_organisation();
+				if (max_strength <= fixed_point_t::_0 || regiment.get_strength() <= fixed_point_t::_0) {
+					continue;
+				}
+
+				const fixed_point_t strength_factor = regiment.get_strength() / max_strength;
+				fixed_point_t organisation_factor = max_organisation > fixed_point_t::_0
+					? regiment.get_organisation() / max_organisation
+					: fixed_point_t::_0;
+				if (organisation_factor < min_org_factor) {
+					organisation_factor = min_org_factor;
+				}
+
+				side.power += (regiment.get_regiment_type().attack + fixed_point_t::_1) * strength_factor * organisation_factor;
+				side.organisation += regiment.get_organisation();
+				side.max_organisation += max_organisation;
+				side.regiment_count++;
+			}
+		}
+	}
+
+	// Each regiment of the target takes the same share of the damage
+	void apply_damage(BattleSide& target, fixed_point_t enemy_power) {
+		if (target.regiment_count == 0) {
+			return;
+		}
+
+		const fixed_point_t organisation_damage = fixed_point_t(5) / 100;
+		const fixed_point_t strength_damage = fixed_point_t(1) / 100;
+
+		const fixed_point_t average_power = enemy_power / static_cast<int32_t>(target.regiment_count);
+
+		for (ArmyInstance* army : target.armies) {
+			for (RegimentInstance& regiment : army->get_regiment_instances()) {
+				if (regiment.get_strength() <= fixed_point_t::_0) {
+					continue;
+				}
+				// Regiments without organisation are routing and lose men much faster
+				const int32_t rout_factor = regiment.get_organisation() > fixed_point_t::_0 ? 1 : 3;
+				regiment.take_damage(
+					regiment.get_max_organisation() * average_power * organisation_damage,
+					regiment.get_max_strength() * average_power * strength_damage * rout_factor
+				);
+			}
+		}
+	}
+
+	// A province next to `from` the army can retreat to, nullptr if there is none
+	ProvinceInstance* find_retreat_province(ProvinceInstance const& from, ArmyInstance const& army, MapInstance& map_instance) {
+		CountryInstance const& country = army.get_country();
+		ProvinceInstance* fallback = nullptr;
+
+		for (ProvinceDefinition::adjacency_t const& adjacency : from.province_definition.get_adjacencies()) {
+			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
+				continue;
+			}
+			ProvinceInstance& candidate = map_instance.get_province_instance_by_definition(adjacency.get_to());
+			if (!UnitInstanceGroup::can_country_enter(country, candidate)) {
+				continue;
+			}
+
+			bool enemy_present = false;
+			for (ArmyInstance const& other : candidate.get_armies()) {
+				if (other.get_country().is_at_war_with(country)) {
+					enemy_present = true;
+					break;
+				}
+			}
+			if (enemy_present) {
+				continue;
+			}
+
+			CountryInstance const* const owner = candidate.get_owner();
+			if (owner == &country || (owner != nullptr && country.has_alliance_with(*owner))) {
+				return &candidate;
+			}
+			if (fallback == nullptr) {
+				fallback = &candidate;
+			}
+		}
+
+		return fallback;
+	}
+}
+
+bool War::is_attacker(CountryInstance const& country) const {
+	return contains_country(attackers, &country);
+}
+
+bool War::is_defender(CountryInstance const& country) const {
+	return contains_country(defenders, &country);
+}
+
+War* WarManager::find_war(const std::uint32_t id) {
+	for (War& war : wars) {
+		if (war.id == id) {
+			return &war;
+		}
+	}
+	return nullptr;
+}
+
+War const* WarManager::get_war_by_id(const std::uint32_t id) const {
+	for (War const& war : wars) {
+		if (war.id == id) {
+			return &war;
+		}
+	}
+	return nullptr;
+}
+
+War* WarManager::find_war_between(CountryInstance const& first, CountryInstance const& second) {
+	for (War& war : wars) {
+		if ((war.is_attacker(first) && war.is_defender(second)) || (war.is_defender(first) && war.is_attacker(second))) {
+			return &war;
+		}
+	}
+	return nullptr;
+}
+
+memory::vector<War const*> WarManager::get_wars_of(CountryInstance const& country) const {
+	memory::vector<War const*> result;
+	for (War const& war : wars) {
+		if (war.has_participant(country)) {
+			result.push_back(&war);
+		}
+	}
+	return result;
+}
+
+bool WarManager::has_truce(CountryInstance const& first, CountryInstance const& second, const Date today) const {
+	for (Truce const& truce : truces) {
+		if (truce.until > today
+			&& ((truce.first == &first && truce.second == &second) || (truce.first == &second && truce.second == &first))) {
+			return true;
+		}
+	}
+	return false;
+}
+
+WarManager::Siege const* WarManager::get_siege(ProvinceInstance const& province) const {
+	const auto it = sieges.find(&province);
+	return it != sieges.end() ? &it->second : nullptr;
+}
+
+std::int32_t WarManager::get_province_weight(ProvinceInstance const& province) {
+	CountryInstance const* const owner = province.get_owner();
+	if (owner != nullptr && owner->get_capital() == &province) {
+		return CAPITAL_PROVINCE_WEIGHT;
+	}
+	return 1;
+}
+
+std::int32_t WarManager::get_siege_days_required(ProvinceInstance const& province) {
+	std::int32_t fort_levels = 0;
+	for (BuildingInstance const& building : province.get_buildings()) {
+		fort_levels += static_cast<std::int32_t>(type_safe::get(building.get_level()))
+			* static_cast<std::int32_t>(type_safe::get(building.building_type.fort_level));
+	}
+	return SIEGE_BASE_DAYS + fort_levels * SIEGE_DAYS_PER_FORT_LEVEL;
+}
+
+bool WarManager::can_declare_war(CountryInstance const& attacker, CountryInstance const& defender, const Date today) const {
+	if (&attacker == &defender || !attacker.exists() || !defender.exists()) {
+		return false;
+	}
+	if (attacker.is_rebel_country() || defender.is_rebel_country()) {
+		return false;
+	}
+	if (attacker.is_at_war_with(defender) || attacker.has_alliance_with(defender)) {
+		return false;
+	}
+	return !has_truce(attacker, defender, today);
+}
+
+bool WarManager::declare_war(InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender) {
+	if (!can_declare_war(attacker, defender, instance_manager.get_today())) {
+		return false;
+	}
+
+	War war;
+	war.id = next_war_id++;
+	war.start_date = instance_manager.get_today();
+	war.attackers.push_back(&attacker);
+	war.defenders.push_back(&defender);
+
+	// Allies join the side of their ally, unless they are allied to both sides or already fight their ally
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&country == &attacker || &country == &defender || !country.exists() || country.is_rebel_country()) {
+			continue;
+		}
+
+		const bool allied_to_attacker = country.has_alliance_with(attacker);
+		const bool allied_to_defender = country.has_alliance_with(defender);
+		if (allied_to_attacker == allied_to_defender) {
+			continue;
+		}
+
+		if (allied_to_attacker) {
+			if (!country.is_at_war_with(attacker)) {
+				war.attackers.push_back(&country);
+			}
+		} else if (!country.is_at_war_with(defender)) {
+			war.defenders.push_back(&country);
+		}
+	}
+
+	for (CountryInstance* attacking : war.attackers) {
+		for (CountryInstance* defending : war.defenders) {
+			attacking->set_at_war_with(*defending, true);
+		}
+	}
+
+	SPDLOG_INFO(
+		"War {} started: {} (+{} allies) attacks {} (+{} allies)",
+		war.id, attacker.get_identifier(), war.attackers.size() - 1, defender.get_identifier(), war.defenders.size() - 1
+	);
+
+	wars.push_back(std::move(war));
+	return true;
+}
+
+bool WarManager::would_accept_peace(
+	InstanceManager const& instance_manager, War const& war, const bool proposer_is_attacker, const peace_type_t peace_type
+) const {
+	const std::int32_t days = (instance_manager.get_today() - war.start_date).to_int();
+	const fixed_point_t proposer_score = war.get_score(proposer_is_attacker);
+	const fixed_point_t other_score = war.get_score(!proposer_is_attacker);
+
+	switch (peace_type) {
+	case peace_type_t::WHITE_PEACE:
+		// The side that is clearly winning refuses, unless the war has dragged on for years
+		return other_score - proposer_score < 15 || days > 3 * 365;
+	case peace_type_t::TAKE_STATES: {
+		if (proposer_score >= 40) {
+			return true;
+		}
+		// Surrender when the capital of the leader has fallen
+		memory::vector<CountryInstance*> const& other_side = war.get_side(!proposer_is_attacker);
+		memory::vector<CountryInstance*> const& proposer_side = war.get_side(proposer_is_attacker);
+		if (!other_side.empty()) {
+			CountryInstance const* const leader = other_side.front();
+			ProvinceInstance const* const capital = leader->get_capital();
+			if (capital != nullptr && proposer_score >= 25 && contains_country(proposer_side, capital->get_controller())) {
+				return true;
+			}
+		}
+		return days > 5 * 365 && proposer_score >= 20;
+	}
+	case peace_type_t::GIVE_STATES:
+		return true;
+	}
+
+	return false;
+}
+
+bool WarManager::propose_peace(
+	InstanceManager& instance_manager, const std::uint32_t war_id, CountryInstance& proposer, const peace_type_t peace_type
+) {
+	War const* const war = find_war(war_id);
+	if (war == nullptr || !war->has_participant(proposer)) {
+		return false;
+	}
+
+	const bool proposer_is_attacker = war->is_attacker(proposer);
+
+	if (!would_accept_peace(instance_manager, *war, proposer_is_attacker, peace_type)) {
+		return false;
+	}
+
+	switch (peace_type) {
+	case peace_type_t::WHITE_PEACE:
+		break;
+	case peace_type_t::TAKE_STATES:
+		transfer_states(instance_manager, *war, proposer_is_attacker);
+		break;
+	case peace_type_t::GIVE_STATES:
+		transfer_states(instance_manager, *war, !proposer_is_attacker);
+		break;
+	}
+
+	end_war(instance_manager, war_id);
+	return true;
+}
+
+void WarManager::transfer_states(InstanceManager& instance_manager, War const& war, const bool winners_are_attackers) {
+	memory::vector<CountryInstance*> const& winners = war.get_side(winners_are_attackers);
+	memory::vector<CountryInstance*> const& losers = war.get_side(!winners_are_attackers);
+
+	struct Candidate {
+		State* state;
+		CountryInstance* old_owner;
+		CountryInstance* recipient;
+		fixed_point_t cost;
+	};
+	std::vector<Candidate> candidates;
+
+	for (CountryInstance* loser : losers) {
+		std::int32_t total_weight = 0;
+		for (ProvinceInstance const* province : loser->get_owned_provinces()) {
+			total_weight += get_province_weight(*province);
+		}
+		if (total_weight <= 0) {
+			continue;
+		}
+
+		std::unordered_set<State*> seen_states;
+		for (ProvinceInstance* province : loser->get_owned_provinces()) {
+			State* const state = province->get_state();
+			if (state == nullptr || !seen_states.insert(state).second) {
+				continue;
+			}
+
+			// The state can be taken if the winners hold at least one of its provinces
+			CountryInstance* recipient = nullptr;
+			std::int32_t state_weight = 0;
+			for (ProvinceInstance& state_province : state->get_provinces()) {
+				state_weight += get_province_weight(state_province);
+				CountryInstance* const controller = state_province.get_controller();
+				if (recipient == nullptr && controller != loser && contains_country(winners, controller)) {
+					recipient = controller;
+				}
+			}
+			if (recipient == nullptr) {
+				continue;
+			}
+
+			candidates.push_back({ state, loser, recipient, fixed_point_t(state_weight) / total_weight * 100 });
+		}
+	}
+
+	// Cheap states first so that the score is spent on as many states as possible
+	std::stable_sort(candidates.begin(), candidates.end(), [](Candidate const& lhs, Candidate const& rhs) -> bool {
+		return lhs.cost < rhs.cost;
+	});
+
+	fixed_point_t budget = war.get_score(winners_are_attackers);
+	std::unordered_set<CountryInstance*> changed_countries;
+
+	for (Candidate const& candidate : candidates) {
+		if (candidate.cost > budget) {
+			continue;
+		}
+		budget -= candidate.cost;
+
+		for (ProvinceInstance& province : candidate.state->get_provinces()) {
+			province.set_owner(candidate.recipient);
+			province.set_controller(candidate.recipient);
+		}
+		changed_countries.insert(candidate.old_owner);
+	}
+
+	// A country that lost its capital moves it to one of its remaining provinces
+	for (CountryInstance* country : changed_countries) {
+		ProvinceInstance* const capital = country->get_capital();
+		if (capital != nullptr && capital->get_owner() == country) {
+			continue;
+		}
+		ProvinceInstance* new_capital = nullptr;
+		for (ProvinceInstance* province : country->get_owned_provinces()) {
+			new_capital = province;
+			break;
+		}
+		country->set_capital(new_capital);
+	}
+}
+
+void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t war_id) {
+	const auto war_it = std::find_if(wars.begin(), wars.end(), [war_id](War const& war) -> bool {
+		return war.id == war_id;
+	});
+	if (war_it == wars.end()) {
+		return;
+	}
+
+	const War war = *war_it;
+	wars.erase(war_it);
+
+	const Date today = instance_manager.get_today();
+
+	for (CountryInstance* attacker : war.attackers) {
+		for (CountryInstance* defender : war.defenders) {
+			truces.push_back({ attacker, defender, today + Timespan::from_days(TRUCE_DAYS) });
+			// Still enemies if another war keeps them apart
+			if (find_war_between(*attacker, *defender) == nullptr) {
+				attacker->set_at_war_with(*defender, false);
+			}
+		}
+	}
+
+	truces.erase(
+		std::remove_if(truces.begin(), truces.end(), [today](Truce const& truce) -> bool {
+			return truce.until <= today;
+		}),
+		truces.end()
+	);
+
+	SPDLOG_INFO("War {} ended", war_id);
+
+	MapInstance& map_instance = instance_manager.get_map_instance();
+
+	// Occupied provinces return to their owners unless the occupier still fights the owner
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		CountryInstance* const owner = province.get_owner();
+		CountryInstance* const controller = province.get_controller();
+		if (owner != nullptr && controller != nullptr && controller != owner && !controller->is_at_war_with(*owner)) {
+			province.set_controller(owner);
+		}
+	}
+
+	// Armies that no longer have the right to stand in a province go home
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		if (province.get_armies().empty()) {
+			continue;
+		}
+		for (ArmyInstance* army : copy_armies(province)) {
+			CountryInstance& country = army->get_country();
+			if (UnitInstanceGroup::can_country_enter(country, province)) {
+				continue;
+			}
+
+			ProvinceInstance* home = country.get_capital();
+			if (home == nullptr || home->get_owner() != &country) {
+				home = nullptr;
+				for (ProvinceInstance* owned : country.get_owned_provinces()) {
+					home = owned;
+					break;
+				}
+			}
+
+			army->clear_path();
+			if (home != nullptr) {
+				army->set_location(*home);
+			} else {
+				instance_manager.get_unit_instance_manager().destroy_group(*army);
+			}
+		}
+	}
+}
+
+void WarManager::update_combat(InstanceManager& instance_manager) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		if (province.get_armies().empty()) {
+			continue;
+		}
+
+		std::vector<ArmyInstance*> armies = copy_armies(province);
+		for (ArmyInstance* army : armies) {
+			army->set_in_combat(false);
+		}
+		if (armies.size() < 2) {
+			continue;
+		}
+
+		// Find a country that has an enemy in the province, the battle is fought between its side and the enemies
+		CountryInstance const* lead_country = nullptr;
+		for (size_t i = 0; i < armies.size() && lead_country == nullptr; ++i) {
+			for (size_t j = i + 1; j < armies.size(); ++j) {
+				if (armies[i]->get_country().is_at_war_with(armies[j]->get_country())) {
+					lead_country = &armies[i]->get_country();
+					break;
+				}
+			}
+		}
+		if (lead_country == nullptr) {
+			continue;
+		}
+
+		BattleSide side_a, side_b;
+		for (ArmyInstance* army : armies) {
+			if (army->empty()) {
+				continue;
+			}
+			CountryInstance const& country = army->get_country();
+			if (country.is_at_war_with(*lead_country)) {
+				side_b.armies.push_back(army);
+			}
+		}
+		for (ArmyInstance* army : armies) {
+			if (army->empty()) {
+				continue;
+			}
+			CountryInstance const& country = army->get_country();
+			if (&country == lead_country) {
+				side_a.armies.push_back(army);
+				continue;
+			}
+			if (country.is_at_war_with(*lead_country)) {
+				continue;
+			}
+			// An ally fights alongside if it is at war with someone on the other side
+			const bool fights_b = std::any_of(side_b.armies.begin(), side_b.armies.end(), [&country](ArmyInstance* enemy) -> bool {
+				return country.is_at_war_with(enemy->get_country());
+			});
+			if (fights_b) {
+				side_a.armies.push_back(army);
+			}
+		}
+
+		calculate_side(side_a);
+		calculate_side(side_b);
+		if (side_a.regiment_count == 0 || side_b.regiment_count == 0) {
+			continue;
+		}
+
+		const fixed_point_t power_a = side_a.power;
+		const fixed_point_t power_b = side_b.power;
+		const size_t regiments_a = side_a.regiment_count;
+		const size_t regiments_b = side_b.regiment_count;
+
+		apply_damage(side_b, power_a);
+		apply_damage(side_a, power_b);
+		calculate_side(side_a);
+		calculate_side(side_b);
+
+		for (ArmyInstance* army : side_a.armies) {
+			fought_today.insert(army->unique_id);
+		}
+		for (ArmyInstance* army : side_b.armies) {
+			fought_today.insert(army->unique_id);
+		}
+
+		const fixed_point_t rout_threshold = fixed_point_t(1) / 10;
+		const fixed_point_t ratio_a = side_a.get_organisation_ratio();
+		const fixed_point_t ratio_b = side_b.get_organisation_ratio();
+		const bool routed_a = side_a.regiment_count == 0 || ratio_a < rout_threshold;
+		const bool routed_b = side_b.regiment_count == 0 || ratio_b < rout_threshold;
+
+		if (!routed_a && !routed_b) {
+			for (ArmyInstance* army : side_a.armies) {
+				army->set_in_combat(true);
+			}
+			for (ArmyInstance* army : side_b.armies) {
+				army->set_in_combat(true);
+			}
+			continue;
+		}
+
+		const bool a_loses = routed_a && (!routed_b || ratio_a <= ratio_b);
+		BattleSide& loser = a_loses ? side_a : side_b;
+		BattleSide& winner = a_loses ? side_b : side_a;
+		const size_t loser_regiments = a_loses ? regiments_a : regiments_b;
+
+		// Battle score for the winner's side
+		if (!loser.armies.empty() && !winner.armies.empty()) {
+			CountryInstance const& winner_country = winner.armies.front()->get_country();
+			CountryInstance const& loser_country = loser.armies.front()->get_country();
+			if (War* const war = find_war_between(winner_country, loser_country); war != nullptr) {
+				const fixed_point_t gain = fixed_point_t::_1 + fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser_regiments, 20))) / 4;
+				fixed_point_t& score = war->is_attacker(winner_country) ? war->attacker_battle_score : war->defender_battle_score;
+				score += gain;
+				if (score > MAX_BATTLE_SCORE) {
+					score = fixed_point_t(MAX_BATTLE_SCORE);
+				}
+			}
+		}
+
+		// The losers retreat, or are destroyed if there is nowhere to go
+		for (ArmyInstance* army : loser.armies) {
+			army->clear_path();
+			ProvinceInstance* const retreat = find_retreat_province(province, *army, map_instance);
+			if (retreat != nullptr) {
+				army->set_location(*retreat);
+			} else {
+				unit_manager.destroy_group(*army);
+			}
+		}
+	}
+}
+
+void WarManager::update_sieges(InstanceManager& instance_manager) {
+	std::unordered_set<ProvinceInstance const*> active;
+
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (province.province_definition.is_water() || province.get_armies().empty()) {
+			continue;
+		}
+
+		CountryInstance* const controller = province.get_controller();
+		if (controller == nullptr) {
+			continue;
+		}
+
+		CountryInstance* besieger = nullptr;
+		bool contested = false;
+		for (ArmyInstance& army : province.get_armies()) {
+			if (army.is_in_combat()) {
+				contested = true;
+				break;
+			}
+			if (besieger == nullptr && army.get_country().is_at_war_with(*controller)) {
+				besieger = &army.get_country();
+			}
+		}
+		if (besieger == nullptr || contested) {
+			continue;
+		}
+		// Enemy armies of the besieger in the province stop the siege
+		for (ArmyInstance const& army : province.get_armies()) {
+			if (army.get_country().is_at_war_with(*besieger)) {
+				contested = true;
+				break;
+			}
+		}
+		if (contested) {
+			continue;
+		}
+
+		active.insert(&province);
+		Siege& siege = sieges[&province];
+		if (siege.besieger != besieger) {
+			siege = {};
+			siege.besieger = besieger;
+		}
+		siege.days_required = get_siege_days_required(province);
+		siege.days++;
+
+		if (siege.days >= siege.days_required) {
+			province.set_controller(besieger);
+			active.erase(&province);
+		}
+	}
+
+	for (auto it = sieges.begin(); it != sieges.end();) {
+		if (active.contains(it->first)) {
+			++it;
+		} else {
+			it = sieges.erase(it);
+		}
+	}
+}
+
+void WarManager::update_scores(InstanceManager& instance_manager) {
+	for (War& war : wars) {
+		// Share of the enemies' land (by weight) that the side holds, 0..100
+		const auto occupation_score = [](
+			memory::vector<CountryInstance*> const& owners, memory::vector<CountryInstance*> const& occupiers
+		) -> fixed_point_t {
+			std::int32_t total = 0;
+			std::int32_t held = 0;
+			for (CountryInstance const* owner : owners) {
+				for (ProvinceInstance const* province : owner->get_owned_provinces()) {
+					const std::int32_t weight = get_province_weight(*province);
+					total += weight;
+					if (province->get_controller() != owner && contains_country(occupiers, province->get_controller())) {
+						held += weight;
+					}
+				}
+			}
+			return total > 0 ? fixed_point_t(held) / total * 100 : fixed_point_t::_0;
+		};
+
+		war.attacker_score = std::min<fixed_point_t>(
+			occupation_score(war.defenders, war.attackers) + war.attacker_battle_score, fixed_point_t(100)
+		);
+		war.defender_score = std::min<fixed_point_t>(
+			occupation_score(war.attackers, war.defenders) + war.defender_battle_score, fixed_point_t(100)
+		);
+	}
+}
+
+void WarManager::update_army_recovery(InstanceManager& instance_manager) {
+	const fixed_point_t organisation_recovery = fixed_point_t(2) / 100;
+	const fixed_point_t strength_recovery = fixed_point_t(5) / 1000;
+
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (ArmyInstance& army : province.get_armies()) {
+			if (fought_today.contains(army.unique_id)) {
+				continue;
+			}
+
+			// Men are only replaced on friendly ground
+			CountryInstance const* const owner = province.get_owner();
+			const bool friendly = owner != nullptr
+				&& (owner == &army.get_country() || army.get_country().has_alliance_with(*owner));
+
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				regiment.recover(
+					regiment.get_max_organisation() * organisation_recovery,
+					friendly ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
+				);
+			}
+		}
+	}
+}
+
+void WarManager::tick(InstanceManager& instance_manager) {
+	fought_today.clear();
+
+	update_combat(instance_manager);
+
+	// Delete regiments that lost all their men
+	{
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+			if (province.get_armies().empty()) {
+				continue;
+			}
+			for (ArmyInstance* army : copy_armies(province)) {
+				std::vector<UnitInstance*> dead;
+				for (UnitInstance& unit : army->get_units()) {
+					if (unit.get_strength() <= fixed_point_t::_0) {
+						dead.push_back(&unit);
+					}
+				}
+				// destroy_unit deletes the group together with its last unit
+				for (UnitInstance* unit : dead) {
+					unit_manager.destroy_unit(*unit, *army);
+				}
+			}
+		}
+	}
+
+	update_sieges(instance_manager);
+	update_scores(instance_manager);
+	update_army_recovery(instance_manager);
+	update_auto_plan(instance_manager);
+	update_fronts(instance_manager);
+}

@@ -40,6 +40,10 @@ namespace OpenVic {
 
 		void set_name(std::string_view new_name);
 
+		// Combat helpers, values are clamped to [0, max]
+		void take_damage(fixed_point_t organisation_loss, fixed_point_t strength_loss);
+		void recover(fixed_point_t organisation_gain, fixed_point_t strength_gain);
+
 		constexpr bool operator==(UnitInstance const& rhs) const {
 			return unique_id == rhs.unique_id;
 		}

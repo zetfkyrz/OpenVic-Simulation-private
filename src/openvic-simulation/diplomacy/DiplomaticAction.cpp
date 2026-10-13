@@ -99,14 +99,17 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 		return false;
 	}
 
-	try {
-		type->visit([&cache](auto const& action_type) -> void {
-			action_type.commit_action(cache.argument);
-		});
-	} catch (std::bad_any_cast const&) {
+	// These actions read the third country from the context data, which std::any_cast would throw on if it is missing
+	// (exceptions are disabled in the simulation build)
+	if (!cache.argument.context_data.has_value()
+		&& (type->get_identifier() == "decrease_opinion" || type->get_identifier() == "remove_from_foreign_sphere")) {
 		spdlog::error_s("Diplomatic action \"{}\" was sent without the context data it requires!", type->get_identifier());
 		return false;
 	}
+
+	type->visit([&cache](auto const& action_type) -> void {
+		action_type.commit_action(cache.argument);
+	});
 
 	return true;
 }
@@ -233,8 +236,12 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 		{
 			.commit =
 				[](Argument& arg) {
-					arg.instance_manager.get_country_relation_manager().set_at_war_with( //
-						arg.sender, arg.receiver, true
+					arg.instance_manager.get_war_manager().declare_war(arg.instance_manager, *arg.sender, *arg.receiver);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return arg.instance_manager.get_war_manager().can_declare_war(
+						*arg.sender, *arg.receiver, arg.instance_manager.get_today()
 					);
 				},
 		}
@@ -242,7 +249,23 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"offer_peace",
 		{
-			.commit = [](Argument& arg) {},
+			// White peace in the first war the two countries fight each other in. Other peace terms are
+			// proposed with the propose_peace game action.
+			.commit =
+				[](Argument& arg) {
+					for (War const* war : arg.instance_manager.get_war_manager().get_wars_of(*arg.sender)) {
+						if (war->has_participant(*arg.receiver) && war->is_attacker(*arg.sender) != war->is_attacker(*arg.receiver)) {
+							arg.instance_manager.get_war_manager().propose_peace(
+								arg.instance_manager, war->id, *arg.sender, WarManager::peace_type_t::WHITE_PEACE
+							);
+							break;
+						}
+					}
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return arg.sender->is_at_war_with(*arg.receiver);
+				},
 		}
 	);
 	result &= add_diplomatic_action(
