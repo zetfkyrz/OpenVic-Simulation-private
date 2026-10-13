@@ -138,7 +138,15 @@ namespace OpenVic {
 		DiplomaticActionTickCache create_diplomatic_action_tick(
 			std::string_view identifier, CountryInstance* sender, CountryInstance* receiver, std::any context_data,
 			InstanceManager& instance_manager
-		);
+		) const;
+
+		// Sends the action from sender to receiver, asks the receiver whether it accepts and, if it does, commits it.
+		// Returns true if the action was committed.
+		// The receiver's decision currently lives in this function only (see the policy comment in the .cpp file).
+		bool execute_diplomatic_action(
+			std::size_t action_type_index, CountryInstance* sender, CountryInstance* receiver, std::any context_data,
+			InstanceManager& instance_manager
+		) const;
 
 		bool setup_diplomatic_actions();
 	};

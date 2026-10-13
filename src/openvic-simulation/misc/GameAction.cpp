@@ -3,6 +3,7 @@
 #include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 
 using namespace OpenVic;
@@ -322,4 +323,18 @@ bool GameActionManager::VariantVisitor::operator() (start_land_unit_recruitment_
 	//TODO verify pop is recruitable and has enough size (pop.try_recruit())
 	//TODO actually instantiate a regiment in recruitment state
 	return false;
+}
+
+// Diplomacy
+bool GameActionManager::VariantVisitor::operator() (diplomatic_action_argument_t const& argument) const {
+	const auto [sender_index, receiver_index, action_type_index] = argument;
+	CountryInstanceManager& country_manager = instance_manager.get_country_instance_manager();
+
+	return instance_manager.definition_manager.get_diplomatic_action_manager().execute_diplomatic_action(
+		action_type_index,
+		&country_manager.get_country_instance_by_index(sender_index),
+		&country_manager.get_country_instance_by_index(receiver_index),
+		{},
+		instance_manager
+	);
 }
