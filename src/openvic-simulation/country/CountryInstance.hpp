@@ -535,6 +535,10 @@ namespace OpenVic {
 		bool add_reform(Reform const& new_reform);
 
 		void set_strata_tax_rate_slider_value(Strata const& strata, const fixed_point_t new_value);
+		// Puts money into the national stockpile, e.g. the dividends of state owned factories
+		void add_cash(const fixed_point_t amount) {
+			cash_stockpile += amount;
+		}
 		// Takes money out of the national stockpile, e.g. to pay for construction
 		void spend_cash(const fixed_point_t amount) {
 			cash_stockpile -= amount;

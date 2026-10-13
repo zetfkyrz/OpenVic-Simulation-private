@@ -11,6 +11,7 @@
 #include "openvic-simulation/misc/GameRulesManager.hpp"
 
 using namespace OpenVic;
+
 static constexpr size_t MONTHS_OF_PRICE_HISTORY = 36;
 
 GoodMarket::GoodMarket(GameRulesManager const& new_game_rules_manager, GoodDefinition const& new_good_definition)

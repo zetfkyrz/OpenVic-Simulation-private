@@ -16,6 +16,10 @@
 #include <openvic-simulation/core/memory/Vector.hpp>
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
+#include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/economy/production/FactoryInstance.hpp>
+#include <openvic-simulation/map/State.hpp>
+#include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/economy/GoodDefinition.hpp>
 #include <openvic-simulation/economy/production/ProductionType.hpp>
@@ -43,8 +47,70 @@ inline static void print_memory_usage( //
 #endif
 }
 
+// Days to simulate for the economy report (-e), 0 = no report
+static size_t economy_report_days = 0;
+// Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
+static size_t bookmark_index = 0;
+
+// Summary of the factories and of the money in the economy, printed with the "ECON" prefix
+static void print_economy_report(InstanceManager& instance_manager) {
+	size_t factories = 0, open_factories = 0, building = 0, levels = 0;
+	fixed_point_t budgets = 0, revenue = 0, wages = 0, owner_income = 0, profit = 0;
+	double workforce_fraction_sum = 0;
+	size_t staffed_factories = 0, over_threshold = 0;
+	fixed_point_t expansion_funds = 0, total_cost = 0;
+
+	for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+		for (State const& state : state_set.get_states()) {
+			for (FactoryInstance const& factory : state.get_factories()) {
+				factories++;
+				levels += static_cast<size_t>(type_safe::get(factory.get_level()));
+				open_factories += factory.is_open();
+				building += factory.is_under_construction();
+				budgets += factory.get_budget();
+				expansion_funds += factory.get_expansion_fund();
+				total_cost += FactoryInstance::calculate_construction_cost(factory.building_type, instance_manager.get_market_instance());
+				revenue += factory.get_revenue_yesterday();
+				wages += factory.get_wages_yesterday();
+				owner_income += factory.get_owner_income_yesterday();
+				profit += factory.get_profit_yesterday();
+				if (type_safe::get(factory.get_max_employee_count()) > 0) {
+					staffed_factories++;
+					over_threshold += type_safe::get(factory.get_employee_count()) * 100 >= type_safe::get(factory.get_max_employee_count()) * 80;
+					workforce_fraction_sum += static_cast<double>(type_safe::get(factory.get_employee_count())) /
+						static_cast<double>(type_safe::get(factory.get_max_employee_count()));
+				}
+			}
+		}
+	}
+
+	fixed_point_t country_cash = 0, gold_income = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		country_cash += country.get_cash_stockpile().load();
+		gold_income += country.get_gold_income_untracked();
+	}
+	fixed_point_t pop_cash = 0;
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop const& pop : province.get_pops()) {
+			pop_cash += pop.get_cash().get_copy_of_value();
+		}
+	}
+
+	fmt::println(
+		"ECON {} factories={} open={} building={} levels={} employment={:.2f} revenue={:.1f} wages={:.1f} owners={:.1f} "
+		"profit={:.1f} over80%={} funds={:.0f} avg_cost={:.0f} | money: countries={:.0f} pops={:.0f} factories={:.0f} total={:.0f}",
+		instance_manager.get_today(), factories, open_factories, building, levels,
+		staffed_factories > 0 ? workforce_fraction_sum / staffed_factories : 0.0, static_cast<double>(revenue),
+		static_cast<double>(wages), static_cast<double>(owner_income), static_cast<double>(profit),
+		over_threshold, static_cast<double>(expansion_funds), factories > 0 ? static_cast<double>(total_cost) / factories : 0.0,
+		static_cast<double>(country_cash), static_cast<double>(pop_cash), static_cast<double>(budgets),
+		static_cast<double>(country_cash + pop_cash + budgets)
+	);
+}
+
 static void print_help(FILE* file, std::string_view program_name) {
-	fmt::println(file, "Usage: {} [-h] [-t] [-b <path>] [path]+", program_name);
+	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
+	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
 	fmt::println(file, "    -b : Use the following path as the base directory (instead of searching for one).");
@@ -243,12 +309,13 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	}
 
 	SPDLOG_INFO("===== Setting up instance... =====");
-	ret &= game_manager.setup_instance(
-		game_manager.get_definition_manager()
-			.get_history_manager()
-			.get_bookmark_manager()
-			.get_front_bookmark()
-	);
+	auto const& bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
+	if (bookmark_index >= bookmarks.size()) {
+		spdlog::error_s("Invalid bookmark index {}", bookmark_index);
+		return false;
+	}
+	Bookmark const* const bookmark = &bookmarks[bookmark_index];
+	ret &= game_manager.setup_instance(*bookmark);
 
 	print_memory_usage("Instance Setup");
 
@@ -366,6 +433,17 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && economy_report_days > 0) {
+		InstanceManager& instance_manager = *game_manager.get_instance_manager();
+		print_economy_report(instance_manager);
+		for (size_t day = 1; day <= economy_report_days; ++day) {
+			instance_manager.force_tick_and_update();
+			if (day % 30 == 0) {
+				print_economy_report(instance_manager);
+			}
+		}
+	}
+
 	SPDLOG_INFO("===== Ending game session... =====");
 	ret &= game_manager.end_game_session();
 
@@ -419,6 +497,18 @@ int main(int argc, char const* argv[]) {
 			return 0;
 		} else if (strcmp(arg, "-t") == 0) {
 			run_tests = true;
+		} else if (strcmp(arg, "-k") == 0) {
+			if (++argn >= argc) {
+				fmt::println(stderr, "Missing bookmark index after \"-k\".");
+				return -1;
+			}
+			bookmark_index = static_cast<size_t>(std::max(0, std::atoi(argv[argn])));
+		} else if (strcmp(arg, "-e") == 0) {
+			if (++argn >= argc) {
+				fmt::println(stderr, "Missing number of days after \"-e\".");
+				return -1;
+			}
+			economy_report_days = static_cast<size_t>(std::max(0, std::atoi(argv[argn])));
 		} else if (strcmp(arg, "-b") == 0) {
 			if (!_read("-b", "base directory", std::identity {})) {
 				return -1;

@@ -22,11 +22,16 @@ namespace {
 	// Time it takes to build a level when the building type does not specify it
 	constexpr int64_t DEFAULT_CONSTRUCTION_DAYS = 180;
 	// Days of inputs the factory is funded with when it starts operating
-	constexpr int32_t FOUNDING_CAPITAL_DAYS = 15;
+	constexpr int32_t FOUNDING_CAPITAL_DAYS = 5;
 	// Days of input consumption the factory tries to keep in its stockpile
 	constexpr int32_t STOCKPILE_TARGET_DAYS = 2;
-	// Days of consecutive profit before the owners consider expanding the factory
-	constexpr uint32_t DAYS_OF_PROFIT_BEFORE_EXPANSION = 45;
+	// Share of the daily profit saved in the expansion fund until it covers the cost of an expansion
+	const fixed_point_t EXPANSION_FUND_SHARE = fixed_point_t::_0_10 * 2;
+	// The factory expands (checked at the start of each month) when at least this share of its jobs is filled
+	constexpr int32_t EXPANSION_EMPLOYMENT_PERCENT = 80;
+	// Days of input costs the factory keeps as working capital, what it has more is paid to the owners
+	constexpr int32_t WORKING_CAPITAL_DAYS = 5;
+	constexpr int32_t MIN_WORKING_CAPITAL = 20;
 	// Days of consecutive loss (at minimum throttle) after which the factory closes
 	constexpr uint32_t DAYS_OF_LOSS_BEFORE_CLOSING = 90;
 }
@@ -203,33 +208,36 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	}
 	budget -= wages;
 
-	// Owners take a part of the profit
+	// Distribution of the profit
 	const fixed_point_t profit = revenue - consumed_value_pending - wages;
 	fixed_point_t owner_income = 0;
+	fixed_point_t state_income = 0;
 
-	if (profit > 0 && production_type.owner.has_value()) {
-		memory::vector<std::reference_wrapper<Pop>> const& owner_pops =
-			state.get_pops_cache_by_type()[production_type.owner->pop_type_index];
-
-		int32_t total_owner_size = 0;
-		for (Pop const& pop : owner_pops) {
-			total_owner_size += type_safe::get(pop.get_size());
+	if (profit > 0) {
+		// 1. A part of the profit goes into the expansion fund until it covers the cost of an expansion
+		fixed_point_t to_fund = 0;
+		if (can_be_expanded()) {
+			const fixed_point_t cost = calculate_construction_cost(building_type, market_instance);
+			to_fund = std::min(
+				std::min(profit * EXPANSION_FUND_SHARE, std::max(cost - expansion_fund, fixed_point_t::_0)), budget
+			);
+			expansion_fund += to_fund;
+			budget -= to_fund;
 		}
 
-		if (total_owner_size > 0) {
-			owner_income = std::min(profit * fixed_point_t::_0_25, budget);
-			for (Pop& pop : owner_pops) {
-				pop.add_factory_owner_income(owner_income * type_safe::get(pop.get_size()) / total_owner_size);
-			}
-			budget -= owner_income;
-		} else {
-			owner_income = 0;
+		// 2. What the factory has beyond its working capital is paid to the owners (the state and the capitalists)
+		const fixed_point_t working_capital = consumed_value_pending * WORKING_CAPITAL_DAYS + MIN_WORKING_CAPITAL;
+		const fixed_point_t excess = std::max(budget - working_capital, fixed_point_t::_0);
+		const fixed_point_t dividend = std::min(excess, std::max(profit - to_fund, excess / 10));
+		if (dividend > 0) {
+			pay_dividend(state, dividend, owner_income, state_income);
 		}
 	}
 
 	revenue_yesterday = revenue;
 	wages_yesterday = wages;
 	owner_income_yesterday = owner_income;
+	state_income_yesterday = state_income;
 	profit_yesterday = profit;
 
 	produced_quantity_pending = 0;
@@ -308,17 +316,63 @@ void FactoryInstance::advance_construction(State& state, const Date today, Marke
 	is_funded = true;
 }
 
-void FactoryInstance::try_private_expansion(const Date today, MarketInstance const& market_instance) {
-	if (!open || !can_be_expanded() || profitable_days < DAYS_OF_PROFIT_BEFORE_EXPANSION) {
+void FactoryInstance::pay_dividend(
+	State& state, const fixed_point_t amount, fixed_point_t& capitalists_income, fixed_point_t& state_income
+) {
+	fixed_point_t capitalists_part = amount * (fixed_point_t::_1 - state_share);
+	fixed_point_t state_part = amount - capitalists_part;
+
+	if (capitalists_part > 0) {
+		int32_t total_owner_size = 0;
+		if (production_type.owner.has_value()) {
+			for (Pop const& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+				total_owner_size += type_safe::get(pop.get_size());
+			}
+		}
+
+		if (total_owner_size > 0) {
+			for (Pop& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+				pop.add_factory_owner_income(capitalists_part * type_safe::get(pop.get_size()) / total_owner_size);
+			}
+		} else {
+			// Without capitalists in the state the whole profit belongs to the state
+			state_part += capitalists_part;
+			capitalists_part = 0;
+		}
+	}
+
+	if (state_part > 0) {
+		CountryInstance* const country = state.get_owner();
+		if (country != nullptr) {
+			country->add_cash(state_part);
+		} else {
+			state_part = 0;
+		}
+	}
+
+	budget -= capitalists_part + state_part;
+	capitalists_income += capitalists_part;
+	state_income += state_part;
+}
+
+void FactoryInstance::try_auto_expansion(const Date today, MarketInstance const& market_instance) {
+	// Checked at the start of each month, like the monthly hiring of the workers
+	if (!today.is_month_start() || !open || !can_be_expanded()) {
 		return;
 	}
 
-	const fixed_point_t cost = FactoryInstance::calculate_construction_cost(building_type, market_instance);
-	if (budget < cost * 3 / 2) {
+	// Most of the jobs have to be filled, otherwise a bigger factory would not find workers
+	const int32_t max_employees = type_safe::get(max_employee_count);
+	if (max_employees <= 0 || type_safe::get(employee_count) * 100 < max_employees * EXPANSION_EMPLOYMENT_PERCENT) {
 		return;
 	}
 
-	budget -= cost;
+	const fixed_point_t cost = calculate_construction_cost(building_type, market_instance);
+	if (expansion_fund < cost) {
+		return;
+	}
+
+	expansion_fund -= cost;
 	profitable_days = 0;
 	start_construction(today);
 }
@@ -389,9 +443,9 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		return;
 	}
 
-	try_private_expansion(today, market_instance);
-
 	hire(state);
+
+	try_auto_expansion(today, market_instance);
 
 	const int32_t max_employees = type_safe::get(max_employee_count);
 	const fixed_point_t workforce_fraction = max_employees > 0

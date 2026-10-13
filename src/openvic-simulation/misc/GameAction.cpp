@@ -582,6 +582,8 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 		if (factory == nullptr) {
 			return false;
 		}
+		// A factory built by the player belongs to the state
+		factory->set_state_share(fixed_point_t::_1);
 	}
 
 	country.spend_cash(cost);

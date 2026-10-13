@@ -62,6 +62,10 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(efficiency);
 		fixed_point_t PROPERTY(throttle);
 		fixed_point_t PROPERTY(budget);
+		// Part of the profit saved for the expansion of the factory, the factory expands when it covers the cost
+		fixed_point_t PROPERTY(expansion_fund);
+		// Share of the factory owned by the state (the rest belongs to the capitalists), 0..1
+		fixed_point_t PROPERTY_RW(state_share);
 		// Whether the factory has received its founding capital, which factories added by the game setup have not yet
 		bool is_funded = false;
 		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
@@ -92,6 +96,7 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(input_cost_yesterday);
 		fixed_point_t PROPERTY(wages_yesterday);
 		fixed_point_t PROPERTY(owner_income_yesterday);
+		fixed_point_t PROPERTY(state_income_yesterday);
 		fixed_point_t PROPERTY(profit_yesterday);
 		uint32_t PROPERTY(profitable_days, 0);
 		uint32_t PROPERTY(unprofitable_days, 0);
@@ -101,7 +106,9 @@ namespace OpenVic {
 
 		void settle(State& state, MarketInstance const& market_instance);
 		void advance_construction(State& state, const Date today, MarketInstance const& market_instance);
-		void try_private_expansion(const Date today, MarketInstance const& market_instance);
+		void try_auto_expansion(const Date today, MarketInstance const& market_instance);
+		// Pays the dividend out of the budget to the capitalists and the state according to the shares, adds what each got
+		void pay_dividend(State& state, fixed_point_t amount, fixed_point_t& capitalists_income, fixed_point_t& state_income);
 		void hire(State& state);
 		void top_up_budget(MarketInstance const& market_instance);
 

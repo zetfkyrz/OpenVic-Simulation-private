@@ -348,7 +348,8 @@ void Pop::add_artisanal_revenue(const fixed_point_t revenue) {
 	}
 
 	artisanal_revenue += revenue;
-	income += income;
+	// The local income shadows the member: `income += income` doubled the income of the artisans (money out of nothing)
+	this->income += income;
 	cash += income;
 }
 template void Pop::add_artisanal_revenue<true>(const fixed_point_t revenue);
