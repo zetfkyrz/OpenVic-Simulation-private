@@ -346,7 +346,7 @@ bool Dataloader::_load_interface_files(UIManager& ui_manager) const {
 		"core",
 
 		/* Over-map menus */
-		"province_interface", "topbar", "menubar", "outliner", "goto", "v2ledger",
+		"province_interface", "topbar", "menubar", "outliner", "goto", "v2ledger", "mapicons",
 
 		/* Nation management screens */
 		"country_production", "country_budget", "country_technology", "country_politics", "country_pops", "country_trade",
