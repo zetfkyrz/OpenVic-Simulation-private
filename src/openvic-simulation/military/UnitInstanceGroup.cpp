@@ -577,14 +577,19 @@ UnitInstanceGroup* UnitInstanceManager::get_unit_instance_group_by_unique_id(uni
 	}
 }
 
-bool UnitInstanceManager::order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance) {
+bool UnitInstanceManager::order_move(
+	ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance, const bool append
+) {
 	if (destination.province_definition.is_water() || army.empty()) {
 		return false;
 	}
 
-	ProvinceInstance& start = army.get_location();
+	const bool extend_route = append && army.is_moving();
+	ProvinceInstance& start = extend_route ? army.get_path().back().get() : army.get_location();
 	if (&start == &destination) {
-		army.clear_path();
+		if (!extend_route) {
+			army.clear_path();
+		}
 		return true;
 	}
 
@@ -651,6 +656,15 @@ bool UnitInstanceManager::order_move(ArmyInstance& army, ProvinceInstance& desti
 		path.emplace_back(*step);
 	}
 	std::reverse(path.begin(), path.end());
+
+	if (extend_route) {
+		memory::vector<std::reference_wrapper<ProvinceInstance>> full_path;
+		for (ProvinceInstance& step : army.get_path()) {
+			full_path.emplace_back(step);
+		}
+		full_path.insert(full_path.end(), path.begin(), path.end());
+		path = std::move(full_path);
+	}
 
 	army.set_path(std::move(path));
 	return true;

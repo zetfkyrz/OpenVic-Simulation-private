@@ -93,6 +93,7 @@ X(diplomatic_action, country_index_t, country_index_t, std::uint32_t) \
 X(build_factory, country_index_t, province_index_t, building_type_index_t) \
 X(set_factory_open, country_index_t, province_index_t, building_type_index_t, bool) \
 X(move_army, unique_id_t, province_index_t) \
+X(queue_army_move, unique_id_t, province_index_t) \
 X(stop_army, unique_id_t) \
 X(propose_peace, country_index_t, std::uint32_t, std::uint32_t) \
 X(create_front, country_index_t, country_index_t) \

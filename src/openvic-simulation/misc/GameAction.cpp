@@ -382,6 +382,36 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 	);
 }
 
+bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t const& argument) const {
+	const auto [unique_id, province_index] = argument;
+
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
+	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+		spdlog::error_s("GAME_ACTION_QUEUE_ARMY_MOVE called with invalid army unique id: {}", unique_id);
+		return false;
+	}
+
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_QUEUE_ARMY_MOVE called with invalid province index: {}", province_index);
+		return false;
+	}
+
+	// An order given by hand takes the army off its front
+	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+		if (front.country == &group->get_country()) {
+			instance_manager.get_war_manager().set_front_army(
+				instance_manager, group->get_country(), front.id, unique_id, false
+			);
+			break;
+		}
+	}
+
+	return instance_manager.get_unit_instance_manager().order_move(
+		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance(), true
+	);
+}
+
 bool GameActionManager::VariantVisitor::operator() (stop_army_argument_t const& argument) const {
 	const unique_id_t unique_id = type_safe::get(argument);
 

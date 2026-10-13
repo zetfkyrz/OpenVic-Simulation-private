@@ -2180,14 +2180,22 @@ void CountryInstance::manage_national_stockpile(
 
 	for (auto [good_instance, good_data] : goods_data) {
 		const good_index_t good_index = good_instance.index;
-		if (good_data.is_automated || !good_data.is_selling) {
-			const fixed_point_t quantity_to_allocate_for = good_data.is_automated
-				? good_data.government_needs - good_data.stockpile_amount
-				: good_data.stockpile_cutoff - good_data.stockpile_amount;
+
+		// Automated (AI): keep only what the government needs (nothing while no needs are calculated), sell the excess
+		// and buy up what is missing. Manual: buy up to the stockpile level of the slider, or sell down to it.
+		const fixed_point_t target_stockpile = good_data.is_automated
+			? good_data.government_needs
+			: good_data.stockpile_cutoff;
+		const bool buys = good_data.is_automated
+			? good_data.stockpile_amount < target_stockpile
+			: !good_data.is_selling;
+
+		if (buys) {
+			const fixed_point_t quantity_to_allocate_for = target_stockpile - good_data.stockpile_amount;
 			const fixed_point_t max_quantity_to_buy = good_data.is_automated
-				? good_data.max_government_consumption - good_data.stockpile_amount
+				? std::max(good_data.max_government_consumption, target_stockpile) - good_data.stockpile_amount
 				: quantity_to_allocate_for;
-			if (max_quantity_to_buy <= 0 || available_funds <= 0) {
+			if (max_quantity_to_buy <= 0 || quantity_to_allocate_for <= 0 || available_funds <= 0) {
 				continue;
 			}
 
@@ -2198,12 +2206,16 @@ void CountryInstance::manage_national_stockpile(
 				good_index,
 				quantity_to_allocate_for
 			);
+			if (max_money_to_spend <= 0) {
+				good_indices_to_buy.pop_back();
+				continue;
+			}
 			wants_more_mask[good_index] = true;
 			const fixed_point_t weight = weights[good_index] = fixed_point_t::usable_max / max_money_to_spend;
 			weights_sum += weight;
 		} else {
-			const fixed_point_t quantity_to_sell = good_data.stockpile_amount - good_data.stockpile_cutoff;
-			if (quantity_to_sell <= 0) {
+			const fixed_point_t quantity_to_sell = good_data.stockpile_amount - target_stockpile;
+			if (quantity_to_sell <= 0 || !market_instance.get_is_available(good_index)) {
 				continue;
 			}
 			market_instance.place_market_sell_order(

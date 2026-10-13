@@ -105,6 +105,11 @@ void FactoryInstance::after_buy(void* actor, BuyResult const& buy_result) {
 		if (input.good.index == buy_result.good_index) {
 			input.bought_today += buy_result.quantity_bought;
 			input.spent_today += buy_result.money_spent_total;
+			// Imported inputs are charged the tariff of the country, like the purchases of pops (the budget may not
+			// cover it entirely, top_up_budget keeps the budget from going negative)
+			if (factory.tariff_collector != nullptr) {
+				input.spent_today += factory.tariff_collector->apply_tariff(buy_result.money_spent_on_imports);
+			}
 			return;
 		}
 	}
@@ -368,6 +373,10 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	}
 
 	const std::optional<country_index_t> country_index = owner->index;
+	tariff_collector = owner;
+	// Part of the budget has to be kept for the tariff on imported inputs
+	const fixed_point_t tariff_rate = owner->effective_tariff_rate.get_untracked();
+	const fixed_point_t tariff_multiplier = tariff_rate > fixed_point_t::_0 ? fixed_point_t::_1 + tariff_rate : fixed_point_t::_1;
 
 	const fixed_point_t output = production_type.base_output_quantity * level_value * production_fraction * efficiency;
 	produced_quantity_pending = output;
@@ -391,13 +400,13 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		}
 
 		const fixed_point_t money_to_spend = std::min(
-			budget_left, market_instance.get_max_money_to_allocate_to_buy_quantity(input.good.index, wanted)
+			budget_left / tariff_multiplier, market_instance.get_max_money_to_allocate_to_buy_quantity(input.good.index, wanted)
 		);
 		if (money_to_spend <= 0) {
 			continue;
 		}
 
-		budget_left -= money_to_spend;
+		budget_left -= money_to_spend * tariff_multiplier;
 		market_instance.place_buy_up_to_order(
 			{ input.good.index, country_index, wanted, money_to_spend, this, after_buy }
 		);

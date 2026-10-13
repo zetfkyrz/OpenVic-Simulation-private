@@ -15,6 +15,7 @@
 namespace OpenVic {
 	struct BuildingType;
 	struct BuyResult;
+	struct CountryInstance;
 	struct GoodDefinition;
 	struct MarketInstance;
 	struct Pop;
@@ -63,6 +64,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(budget);
 		// Whether the factory has received its founding capital, which factories added by the game setup have not yet
 		bool is_funded = false;
+		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
+		CountryInstance* tariff_collector = nullptr;
 
 		memory::vector<Input> SPAN_PROPERTY(inputs);
 		memory::vector<Worker> SPAN_PROPERTY(workers);

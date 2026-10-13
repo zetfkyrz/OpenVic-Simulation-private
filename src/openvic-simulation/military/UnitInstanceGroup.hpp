@@ -237,7 +237,8 @@ namespace OpenVic {
 		void tick();
 
 		// Finds the shortest land path for the army and starts moving it, false if the destination is unreachable
-		bool order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance);
+		// With append = true the route starts at the end of the army's current route and is added to it
+		bool order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance, bool append = false);
 
 		// Removes a unit from its group and deletes it, the group is deleted too if it becomes empty.
 		// The unit and, possibly, its group must not be used after this call.
