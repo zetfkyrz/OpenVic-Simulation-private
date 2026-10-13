@@ -9,6 +9,8 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/portable/ForwardableSpan.hpp"
+#include "openvic-simulation/economy/BuildingLevel.hpp"
+#include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/population/PopsAggregate.hpp"
 #include "openvic-simulation/types/ColonyStatus.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
@@ -16,6 +18,7 @@
 
 namespace OpenVic {
 	struct BaseIssue;
+	struct BuildingType;
 	struct CountryInstance;
 	struct CountryParty;
 	struct Culture;
@@ -46,6 +49,8 @@ namespace OpenVic {
 			pop_type_index_t
 		> SPAN_PROPERTY(pops_cache_by_type);
 
+		memory::colony<FactoryInstance> PROPERTY(factories);
+
 		void _update_country();
 
 	public:
@@ -71,6 +76,17 @@ namespace OpenVic {
 		}
 
 		void update_gamestate();
+
+		memory::colony<FactoryInstance>& get_mutable_factories() {
+			return factories;
+		}
+		// The factory of the given type, nullptr if the state has none
+		FactoryInstance* find_factory(BuildingType const& building_type);
+		FactoryInstance const* find_factory(BuildingType const& building_type) const;
+		bool has_free_factory_slot() const;
+		// Adds a factory of the given type with the given completed level,
+		// nullptr if there is no free slot or the state already has a factory of that type
+		FactoryInstance* add_factory(BuildingType const& building_type, building_level_t level);
 	};
 
 	struct Region;
@@ -91,6 +107,10 @@ namespace OpenVic {
 		size_t get_state_count() const;
 
 		void update_gamestate();
+
+		states_t& get_mutable_states() {
+			return states;
+		}
 	};
 
 	struct MapInstance;
@@ -122,6 +142,10 @@ namespace OpenVic {
 		void reset();
 
 		void update_gamestate();
+
+		memory::vector<StateSet>& get_mutable_state_sets() {
+			return state_sets;
+		}
 	};
 }
 

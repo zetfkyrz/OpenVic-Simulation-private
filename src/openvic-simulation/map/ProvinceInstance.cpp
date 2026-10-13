@@ -497,7 +497,9 @@ bool ProvinceInstance::apply_history_to_province(ProvinceHistoryEntry const& ent
 			building.set_level(level);
 		}
 	}
-	// TODO: load state buildings - entry.get_state_buildings()
+	for (auto const& [building_type_index, level] : entry.get_state_buildings()) {
+		pending_state_buildings[building_type_index] = level;
+	}
 	// TODO: party loyalties for each POP when implemented on POP side - entry.get_party_loyalties()
 	return ret;
 }

@@ -88,6 +88,8 @@ namespace OpenVic {
 		void update_modifier_sums(const Date today, StaticModifierCache const& static_modifier_cache);
 		void update_gamestate(InstanceManager const& instance_manager);
 		void map_tick();
+		// Ticks the factories of all states, after the province tick as that resets the employment of pops
+		void factory_tick(MarketInstance& market_instance, const Date today);
 		void initialise_for_new_game(InstanceManager const& instance_manager);
 	};
 }

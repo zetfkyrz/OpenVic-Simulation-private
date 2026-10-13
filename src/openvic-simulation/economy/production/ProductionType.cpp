@@ -67,7 +67,7 @@ bool ProductionType::is_valid_for_artisan_in(ProvinceInstance& province) const{
 	return !is_coastal || game_rules_manager.may_use_coastal_artisanal_production_types(province);
 }
 
-bool ProductionType::is_valid_for_factory_in(State& state) const{
+bool ProductionType::is_valid_for_factory_in(State const& state) const {
 	if (template_type != template_type_t::FACTORY) {
 		return false;
 	}
