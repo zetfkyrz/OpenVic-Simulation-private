@@ -43,7 +43,7 @@ namespace OpenVic {
 		fixed_point_t remaining;
 		// The part of an internal loan the capitalists have not spent yet
 		fixed_point_t unspent;
-		// Yearly interest as a fraction (0.05 = 5%), never below 1%
+		// Yearly interest as a fraction (0.05 = 5%); the player may set 0%, AI countries never go below 1%
 		fixed_point_t annual_rate;
 		fixed_point_t interest_paid;
 
@@ -54,6 +54,8 @@ namespace OpenVic {
 		Date grace_end;
 		Date due_date;
 		bool active = true;
+		// An external loan taken by a country that pays itself back every month as far as the cash allows
+		bool auto_repay = false;
 
 		static Timespan get_term_length(term_t term);
 		static Timespan get_grace_length(term_t term);
@@ -85,7 +87,12 @@ namespace OpenVic {
 		};
 		static constexpr std::int32_t FRIEND_RELATIONS = 100;
 
+		// Lowest rate at all (the player can lend and borrow for free)
 		static fixed_point_t get_min_rate() {
+			return fixed_point_t::_0;
+		}
+		// AI countries never lend for less than this
+		static fixed_point_t get_ai_min_rate() {
 			return fixed_point_t(1) / 100;
 		}
 		static fixed_point_t get_max_rate() {
@@ -159,6 +166,7 @@ namespace OpenVic {
 		// Pays back (a part of) a loan from the money of the borrower, returns the amount paid
 		fixed_point_t repay_loan(InstanceManager& instance_manager, Loan& loan, fixed_point_t amount);
 		bool repay_loan_by_id(InstanceManager& instance_manager, CountryInstance& payer, std::uint32_t id, fixed_point_t amount);
+		bool set_loan_auto_repay(CountryInstance& payer, std::uint32_t id, bool auto_repay);
 
 		// Money the capitalists of the state can spend: their savings and the unspent parts of the loans that allow it
 		fixed_point_t get_capitalist_money(State const& state, Loan::purpose_t purpose, std::int32_t construction_days) const;

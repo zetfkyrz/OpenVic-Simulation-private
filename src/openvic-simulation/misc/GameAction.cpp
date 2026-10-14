@@ -738,10 +738,16 @@ bool GameActionManager::VariantVisitor::operator() (repay_loan_argument_t const&
 	);
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_loan_auto_repay_argument_t const& argument) const {
+	const auto [country_index, loan_id, auto_repay] = argument;
+	return instance_manager.get_credit_manager().set_loan_auto_repay(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), loan_id, auto_repay
+	);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_central_bank_rates_argument_t const& argument) const {
 	const auto [country_index, internal_rate, external_rate] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	// Rates are never lower than 1%
 	country.set_central_bank_rates(
 		CreditManager::clamp_rate(internal_rate), CreditManager::clamp_rate(external_rate)
 	);

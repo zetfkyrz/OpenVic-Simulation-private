@@ -161,7 +161,7 @@ memory::vector<ExternalOffer> CreditManager::get_offers(
 		ExternalOffer offer;
 		offer.lender = const_cast<CountryInstance*>(&lender);
 		offer.max_amount = std::min(std::min(surplus * AI_LENDING_SHARE, AI_MAX_LOAN), room);
-		offer.rate = clamp_rate(lender.get_external_loan_rate() + debt_ratio * 5 / 100);
+		offer.rate = std::max(clamp_rate(lender.get_external_loan_rate() + debt_ratio * 5 / 100), get_ai_min_rate());
 		if (offer.max_amount >= MIN_LOAN) {
 			offers.push_back(offer);
 		}
@@ -252,6 +252,9 @@ bool CreditManager::give_external_loan(
 	fixed_point_t rate, const Loan::term_t term
 ) {
 	rate = clamp_rate(rate);
+	if (lender.is_ai()) {
+		rate = std::max(rate, get_ai_min_rate());
+	}
 	if (&lender == &borrower || !is_valid_country(lender) || !is_valid_country(borrower) || amount < MIN_LOAN
 		|| lender.get_spendable_cash() < amount) {
 		return false;
@@ -375,6 +378,9 @@ bool CreditManager::give_internal_loan(
 	last_internal_loan_month[&lender] = month;
 
 	rate = clamp_rate(rate);
+	if (lender.is_ai()) {
+		rate = std::max(rate, get_ai_min_rate());
+	}
 	lender.spend_cash(amount);
 	state.set_credit_manager(this);
 
@@ -431,6 +437,19 @@ bool CreditManager::repay_loan_by_id(
 				return false;
 			}
 			return repay_loan(instance_manager, *loan, amount) > fixed_point_t::_0;
+		}
+	}
+	return false;
+}
+
+bool CreditManager::set_loan_auto_repay(CountryInstance& payer, const std::uint32_t id, const bool auto_repay) {
+	for (std::unique_ptr<Loan>& loan : loans) {
+		if (loan->id == id) {
+			if (loan->kind != Loan::kind_t::EXTERNAL || loan->borrower != &payer) {
+				return false;
+			}
+			loan->auto_repay = auto_repay;
+			return true;
 		}
 	}
 	return false;
@@ -500,6 +519,12 @@ void CreditManager::monthly_interest_and_repayment(InstanceManager& instance_man
 		} else {
 			// What cannot be paid is added to the debt
 			loan.remaining += interest;
+		}
+
+		// Loans marked for automatic repayment are paid back with all the cash that can be spared
+		if (loan.auto_repay) {
+			repay_loan(instance_manager, loan, loan.remaining);
+			return;
 		}
 
 		// AI countries that have plenty of money pay their debts back
