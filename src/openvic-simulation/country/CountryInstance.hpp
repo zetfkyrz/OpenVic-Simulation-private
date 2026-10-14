@@ -363,6 +363,10 @@ namespace OpenVic {
 		void add_prestige(const fixed_point_t delta) {
 			prestige += delta;
 		}
+		void set_last_election(const Date date) {
+			last_election = date;
+		}
+		void set_upper_house_proportion(Ideology const& ideology, fixed_point_t value);
 		// Tariffs collected / import subsidies paid yesterday
 		fixed_point_t get_tariff_income() const {
 			return actual_tariff_income.load();

@@ -241,6 +241,8 @@ namespace OpenVic {
 
 		void setup_pop_test_values(TypedSpan<reform_index_t, const Reform> reforms);
 		memory::colony<Pop>& get_mutable_pops();
+		// A new pop in the province (people moved here by migration, promotion, ...), nullptr in water provinces
+		Pop* add_pop(PopBase const& pop_base, PopDeps const& pop_deps);
 	private:
 		template<typename T>
 		static std::conditional_t<std::is_const_v<T>, Pop const*, Pop*> _find_pop_by_id(T& self, const pop_id_in_province_t pop_id);

@@ -1,5 +1,6 @@
 #include <chrono>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <random>
 #include <unordered_set>
@@ -56,6 +57,7 @@ inline static void print_memory_usage( //
 static size_t economy_report_days = 0;
 static bool run_army_test = false;
 static bool tariff_test = false;
+static bool recommended_rules = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -596,6 +598,116 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 	return ok;
 }
 
+// Total population by pop type, printed with the "POP" prefix
+static void print_population_report(InstanceManager& instance_manager) {
+	std::map<std::string, std::int64_t> by_type;
+	std::map<std::string, double> life_by_type, cash_by_type, income_by_type, expenses_by_type;
+	std::int64_t total = 0, unemployed = 0, employable = 0;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			const std::int64_t size = type_safe::get(pop.get_size());
+			by_type[std::string(pop.get_type().get_identifier())] += size;
+			life_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_life_needs_fulfilled()) * static_cast<double>(size);
+			cash_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_cash().get_copy_of_value());
+			income_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_income());
+			expenses_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_expenses().get_copy_of_value());
+			total += size;
+			if (pop.get_type().can_be_unemployed) {
+				employable += size;
+				unemployed += type_safe::get(pop.get_unemployed());
+			}
+		}
+	}
+	std::string line = fmt::format("POP {} total={} unemployed={:.1f}%", instance_manager.get_today(), total,
+		employable > 0 ? 100.0 * static_cast<double>(unemployed) / static_cast<double>(employable) : 0.0);
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers", "aristocrats", "capitalists", "bureaucrats" }) {
+		line += fmt::format(" {}={}", name, by_type[std::string(name)]);
+	}
+	line += " | life needs:";
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers", "aristocrats" }) {
+		const std::int64_t count = by_type[std::string(name)];
+		line += fmt::format(" {}={:.2f}", name, count > 0 ? life_by_type[std::string(name)] / static_cast<double>(count) : 0.0);
+	}
+	// What the needs of a farmer pop cost per 1000 people a day at the current prices
+	{
+		GoodInstanceManager const& goods = instance_manager.get_good_instance_manager();
+		for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks" }) {
+			double life_cost = 0.0, everyday_cost = 0.0;
+			bool found = false;
+			for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+				for (Pop& pop : province.get_mutable_pops()) {
+					if (pop.get_type().get_identifier() != name) {
+						continue;
+					}
+					for (auto const& [good_index, quantity] : pop.get_life_needs()) {
+						life_cost += static_cast<double>(quantity) * static_cast<double>(goods.get_good_instance_by_index(good_index)->get_price()) * 1000.0 / 200000.0;
+					}
+					for (auto const& [good_index, quantity] : pop.get_everyday_needs()) {
+						everyday_cost += static_cast<double>(quantity) * static_cast<double>(goods.get_good_instance_by_index(good_index)->get_price()) * 1000.0 / 200000.0;
+					}
+					found = true;
+					break;
+				}
+				if (found) {
+					break;
+				}
+			}
+			line += fmt::format(" | {} needs cost/1000/day: life {:.3f} everyday {:.3f}", name, life_cost, everyday_cost);
+		}
+	}
+	line += " | price/base:";
+	for (GoodInstance const& good : instance_manager.get_good_instance_manager().get_good_instances()) {
+		const std::string_view name = good.good_definition.get_identifier();
+		if (name == "grain" || name == "fruit" || name == "fish" || name == "cattle" || name == "clothes" || name == "furniture"
+			|| name == "liquor" || name == "wine" || name == "cotton" || name == "coal" || name == "iron") {
+			line += fmt::format(" {}={:.2f}/{:.2f}(s{:.0f} d{:.0f} t{:.0f})", name, static_cast<double>(good.get_price()), static_cast<double>(good.good_definition.base_price),
+				static_cast<double>(good.get_total_supply_yesterday()), static_cast<double>(good.get_total_demand_yesterday()), static_cast<double>(good.get_quantity_traded_yesterday()));
+		}
+	}
+	line += " | per 1000 people (cash/income/expenses):";
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers" }) {
+		const double count = static_cast<double>(by_type[std::string(name)]) / 1000.0;
+		if (count > 0) {
+			line += fmt::format(" {}={:.1f}/{:.2f}/{:.2f}", name, cash_by_type[std::string(name)] / count,
+				income_by_type[std::string(name)] / count, expenses_by_type[std::string(name)] / count);
+		}
+	}
+	fmt::println("{}", line);
+}
+
+// Money flows of the pops by type (per 1000 people and day), printed with the "FLOWS" prefix
+static void print_pop_flows(InstanceManager& instance_manager) {
+	struct Flow {
+		double size = 0.0;
+		std::map<std::string, double> values;
+	};
+	std::map<std::string, Flow> flows;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			Flow& flow = flows[std::string(pop.get_type().get_identifier())];
+			flow.size += static_cast<double>(type_safe::get(pop.get_size()));
+#define ADD_FLOW(name) flow.values[#name] += static_cast<double>(pop.get_##name());
+			OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(ADD_FLOW)
+			OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(ADD_FLOW)
+#undef ADD_FLOW
+		}
+	}
+	fmt::println("FLOWS {}", instance_manager.get_today());
+	for (auto const& [name, flow] : flows) {
+		if (flow.size < 1000.0) {
+			continue;
+		}
+		std::string line = fmt::format("FLOWS   {:12}", name);
+		for (auto const& [key, value] : flow.values) {
+			const double per_1000 = value / (flow.size / 1000.0);
+			if (std::abs(per_1000) >= 0.0005) {
+				line += fmt::format(" {}={:.3f}", key, per_1000);
+			}
+		}
+		fmt::println("{}", line);
+	}
+}
+
 // Tariffs of the biggest countries: slider, effective rate, imports and the income, printed with the "TARIFF" prefix
 static void print_tariff_report(InstanceManager& instance_manager) {
 	fmt::println("TARIFF {}", instance_manager.get_today());
@@ -828,6 +940,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		return false;
 	}
 	Bookmark const* const bookmark = &bookmarks[bookmark_index];
+	if (recommended_rules) {
+		SPDLOG_INFO("Using the recommended game rules (price changes that clear the market)");
+		const_cast<GameRulesManager&>(game_manager.get_game_rules_manager()).use_recommended_rules();
+	}
 	ret &= game_manager.setup_instance(*bookmark);
 
 	print_memory_usage("Instance Setup");
@@ -976,10 +1092,15 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			instance_manager.force_tick_and_update();
 		}
 		print_economy_report(instance_manager);
+		print_population_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
 			if (day % 30 == 0) {
 				print_economy_report(instance_manager);
+				print_population_report(instance_manager);
+				if (day % 90 == 0) {
+					print_pop_flows(instance_manager);
+				}
 				if (tariff_test) {
 					print_tariff_report(instance_manager);
 				}
@@ -1042,6 +1163,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-R") == 0) {
+			recommended_rules = true;
 		} else if (strcmp(arg, "-T") == 0) {
 			tariff_test = true;
 		} else if (strcmp(arg, "-S") == 0) {
