@@ -358,7 +358,7 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 	const auto [unique_id, province_index] = argument;
 
 	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
-	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+	if (OV_unlikely(group == nullptr)) {
 		spdlog::error_s("GAME_ACTION_MOVE_ARMY called with invalid army unique id: {}", unique_id);
 		return false;
 	}
@@ -379,16 +379,14 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 		}
 	}
 
-	return instance_manager.get_unit_instance_manager().order_move(
-		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance()
-	);
+	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance());
 }
 
 bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t const& argument) const {
 	const auto [unique_id, province_index] = argument;
 
 	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
-	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+	if (OV_unlikely(group == nullptr)) {
 		spdlog::error_s("GAME_ACTION_QUEUE_ARMY_MOVE called with invalid army unique id: {}", unique_id);
 		return false;
 	}
@@ -409,9 +407,7 @@ bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t c
 		}
 	}
 
-	return instance_manager.get_unit_instance_manager().order_move(
-		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance(), true
-	);
+	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance(), true);
 }
 
 bool GameActionManager::VariantVisitor::operator() (stop_army_argument_t const& argument) const {
@@ -907,4 +903,50 @@ bool GameActionManager::VariantVisitor::operator() (disband_army_argument_t cons
 	}
 	instance_manager.get_unit_instance_manager().destroy_group(*army);
 	return true;
+}
+
+// Ships and transport
+bool GameActionManager::VariantVisitor::operator() (load_army_argument_t const& argument) const {
+	const auto [army_id, navy_id] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(navy_id);
+	if (army == nullptr || group == nullptr || group->branch != unit_branch_t::NAVAL) {
+		return false;
+	}
+	return static_cast<NavyInstance*>(group)->load_army(*army);
+}
+
+bool GameActionManager::VariantVisitor::operator() (unload_army_argument_t const& argument) const {
+	ArmyInstance* const army = find_army(instance_manager, type_safe::get(argument));
+	if (army == nullptr || army->get_transport_navy() == nullptr) {
+		return false;
+	}
+	return const_cast<NavyInstance*>(army->get_transport_navy())->unload_army(*army);
+}
+
+bool GameActionManager::VariantVisitor::operator() (land_army_argument_t const& argument) const {
+	const auto [army_id, province_index] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (army == nullptr || province == nullptr || army->get_transport_navy() == nullptr) {
+		return false;
+	}
+	return const_cast<NavyInstance*>(army->get_transport_navy())->land_army(*army, *province);
+}
+
+bool GameActionManager::VariantVisitor::operator() (start_ship_building_argument_t const& argument) const {
+	const auto [ship_type_index, province_index] = argument;
+	ShipType const* const ship_type = instance_manager.definition_manager
+		.get_military_manager()
+		.get_unit_type_manager()
+		.get_ship_type_by_index(ship_type_index);
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(ship_type == nullptr || province == nullptr)) {
+		return false;
+	}
+	CountryInstance* const country = province->get_owner();
+	if (country == nullptr) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().start_ship_building(*country, *ship_type, *province);
 }

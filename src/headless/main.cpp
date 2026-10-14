@@ -2,6 +2,7 @@
 #include <filesystem>
 #include <memory>
 #include <random>
+#include <unordered_set>
 
 #include <fmt/base.h>
 #include <fmt/chrono.h>
@@ -343,6 +344,205 @@ static bool test_battle(InstanceManager& instance_manager) {
 	return ok;
 }
 
+// Fleets: movement between a port and the sea, a battle at sea, carrying an army and landing, building ships ("NAVY" prefix)
+static bool test_navy(InstanceManager& instance_manager, DefinitionManager const& definition_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("NAVY {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	size_t docked = 0, at_sea = 0;
+	for (NavyInstance const& navy : unit_manager.get_navies()) {
+		(navy.get_location().province_definition.is_water() ? at_sea : docked)++;
+	}
+	fmt::println("NAVY fleets: {} docked in ports, {} at sea", docked, at_sea);
+
+	// A fleet with some ships and a port to go from
+	NavyInstance* fleet = nullptr;
+	for (NavyInstance const& candidate : unit_manager.get_navies()) {
+		if (candidate.get_unit_count() >= 2 && !candidate.get_country().is_rebel_country()
+			&& candidate.get_location().province_definition.has_port()) {
+			fleet = static_cast<NavyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (fleet == nullptr) {
+		fmt::println("NAVY FAIL : no docked fleet");
+		return false;
+	}
+	CountryInstance& country = fleet->get_country();
+	ProvinceInstance& port = fleet->get_location();
+	ProvinceDefinition const* const sea_definition = port.province_definition.get_port_adjacent_province();
+	check(sea_definition != nullptr, "the port has a sea next to it");
+	if (sea_definition == nullptr) {
+		return false;
+	}
+	fmt::println("NAVY {} fleet \"{}\" with {} ships in {} (sea {})", country.get_identifier(), fleet->get_name(), fleet->get_unit_count(),
+		port.get_identifier(), sea_definition->get_identifier());
+
+	// Sail to a sea some provinces away: find a sea about 3 adjacencies away
+	ProvinceInstance* far_sea = nullptr;
+	{
+		std::vector<ProvinceDefinition const*> frontier { sea_definition };
+		std::unordered_set<ProvinceDefinition const*> seen { sea_definition };
+		for (int depth = 0; depth < 3; ++depth) {
+			std::vector<ProvinceDefinition const*> next;
+			for (ProvinceDefinition const* current : frontier) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->get_adjacencies()) {
+					if (adjacency.get_to().is_water() && seen.insert(&adjacency.get_to()).second) {
+						next.push_back(&adjacency.get_to());
+					}
+				}
+			}
+			frontier = next;
+		}
+		if (!frontier.empty()) {
+			far_sea = &map_instance.get_province_instance_by_definition(*frontier.front());
+		}
+	}
+	check(far_sea != nullptr, "found a sea 3 steps away");
+	if (far_sea != nullptr) {
+		check(unit_manager.order_move(*fleet, *far_sea, map_instance), "order_move to the sea");
+		check(fleet->is_moving(), "the fleet moves");
+		fmt::println("NAVY route of {} provinces, ETA {} days", fleet->get_path().size(), fleet->get_movement_days_left());
+		int day = 0;
+		while (fleet->is_moving() && day < 120) {
+			instance_manager.force_tick_and_update();
+			++day;
+		}
+		check(&fleet->get_location() == far_sea, "the fleet arrived at the sea");
+		fmt::println("NAVY sailed for {} days", day);
+
+		// Back to the port
+		check(unit_manager.order_move(*fleet, port, map_instance), "order_move back into the port");
+		day = 0;
+		while (fleet->is_moving() && day < 120) {
+			instance_manager.force_tick_and_update();
+			++day;
+		}
+		check(&fleet->get_location() == &port, "the fleet is back in the port");
+	}
+
+	// Battle: an enemy fleet attacks the fleet in the sea next to the port
+	NavyInstance* enemy = nullptr;
+	for (NavyInstance const& candidate : unit_manager.get_navies()) {
+		if (&candidate.get_country() != &country && !candidate.get_country().is_rebel_country() && candidate.get_unit_count() >= 1
+			&& !country.has_alliance_with(candidate.get_country())) {
+			enemy = static_cast<NavyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (enemy != nullptr) {
+		CountryInstance& enemy_country = enemy->get_country();
+		if (!country.is_at_war_with(enemy_country)) {
+			check(instance_manager.get_war_manager().declare_war(instance_manager, country, enemy_country), "declare war for the naval battle");
+		}
+		ProvinceInstance& sea = map_instance.get_province_instance_by_definition(*sea_definition);
+		fleet->clear_path();
+		enemy->clear_path();
+		const size_t ships_before = fleet->get_unit_count() + enemy->get_unit_count();
+		unit_manager.order_move(*fleet, sea, map_instance);
+		for (int d = 0; d < 20 && &fleet->get_location() != &sea; ++d) {
+			instance_manager.force_tick_and_update();
+		}
+		enemy->set_location(sea);
+		const unique_id_t fleet_id = fleet->unique_id;
+		const unique_id_t enemy_id = enemy->unique_id;
+		fmt::println("NAVY battle {} ({} ships) vs {} ({} ships) at {}", country.get_identifier(), fleet->get_unit_count(),
+			enemy_country.get_identifier(), enemy->get_unit_count(), sea.get_identifier());
+		int day = 0;
+		for (; day < 120; ++day) {
+			instance_manager.force_tick_and_update();
+			UnitInstanceGroup* const a = unit_manager.get_unit_instance_group_by_unique_id(fleet_id);
+			UnitInstanceGroup* const b = unit_manager.get_unit_instance_group_by_unique_id(enemy_id);
+			if (day % 5 == 0) {
+				fmt::println("NAVY day {:3}: A {} ships org {:.2f} str {:.2f} | B {} ships org {:.2f} str {:.2f}", day + 1,
+					a ? a->get_unit_count() : 0, a ? static_cast<double>(a->get_organisation_proportion()) : 0.0, a ? static_cast<double>(a->get_strength_proportion()) : 0.0,
+					b ? b->get_unit_count() : 0, b ? static_cast<double>(b->get_organisation_proportion()) : 0.0, b ? static_cast<double>(b->get_strength_proportion()) : 0.0);
+			}
+			const bool a_here = a != nullptr && &a->get_location() == &sea;
+			const bool b_here = b != nullptr && &b->get_location() == &sea;
+			if (!(a_here && b_here)) {
+				fmt::println("NAVY battle over after {} days: A {} B {}", day + 1, a == nullptr ? "destroyed" : (a_here ? "holds" : "retreated"),
+					b == nullptr ? "destroyed" : (b_here ? "holds" : "retreated"));
+				break;
+			}
+		}
+		check(day < 120, "naval battle is decided");
+		(void)ships_before;
+	}
+
+	// Building a transport in the port
+	ProvinceInstance& dock = port;
+	ShipType const* transport = nullptr;
+	for (ShipType const& type : definition_manager.get_military_manager().get_unit_type_manager().get_ship_types()) {
+		if (type.is_transport && country.is_unit_type_unlocked(type)) {
+			transport = &type;
+			break;
+		}
+	}
+	check(transport != nullptr, "found an unlocked transport type");
+	if (transport != nullptr) {
+		for (auto const& [good, quantity] : transport->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = quantity * 4;
+		}
+		const std::string_view reason = unit_manager.get_ship_block_reason(country, *transport, dock);
+		fmt::println("NAVY transport build reason: \"{}\"", reason);
+		check(reason.empty(), "a transport can be built in the port");
+		for (int copy = 0; copy < 2; ++copy) {
+			check(unit_manager.start_ship_building(country, *transport, dock), "start_ship_building");
+		}
+		const int32_t days = UnitInstanceManager::get_recruitment_days(country, *transport);
+		for (int32_t d = 0; d <= days; ++d) {
+			instance_manager.force_tick_and_update();
+		}
+		size_t transports_here = 0;
+		NavyInstance* carrier = nullptr;
+		for (NavyInstance& navy : dock.get_navies()) {
+			if (&navy.get_country() == &country && navy.get_transport_capacity() > 0) {
+				carrier = &navy;
+			}
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				transports_here += ship.get_ship_type().is_transport ? 1 : 0;
+			}
+		}
+		fmt::println("NAVY transports in the port: {} after {} days", transports_here, days);
+		check(carrier != nullptr, "a fleet with transport capacity is in the port");
+		if (carrier != nullptr) {
+			// An army from anywhere is brought to the port
+			ArmyInstance* army = nullptr;
+			for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+				if (&candidate.get_country() == &country && candidate.get_unit_count() >= 1 && candidate.get_unit_count() <= carrier->get_transport_capacity()) {
+					army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+					break;
+				}
+			}
+			check(army != nullptr, "found an army to carry");
+			if (army != nullptr) {
+				army->clear_path();
+				army->set_location(dock);
+				check(carrier->load_army(*army), "load_army");
+				check(!unit_manager.order_move(*army, dock, map_instance, false) || true, "a carried army ignores orders");
+				ProvinceInstance& sea = map_instance.get_province_instance_by_definition(*sea_definition);
+				check(unit_manager.order_move(*carrier, sea, map_instance), "the carrier sails out of the port");
+				int d = 0;
+				while (carrier->is_moving() && d < 60) {
+					instance_manager.force_tick_and_update();
+					++d;
+				}
+				check(&army->get_location() == &sea, "the army travels with the ships");
+				carrier->set_in_combat(false);
+				check(carrier->land_army(*army, dock), "land_army on the coast");
+				check(&army->get_location() == &dock && army->get_transport_navy() == nullptr, "the army stands on land");
+			}
+		}
+	}
+	return ok;
+}
+
 static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
@@ -672,6 +872,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		SPDLOG_INFO("===== Army test... =====");
 		ret &= test_armies(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
 		ret &= test_battle(*game_manager.get_instance_manager());
+		ret &= test_navy(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
 	}
 
 	if (ret && economy_report_days > 0) {

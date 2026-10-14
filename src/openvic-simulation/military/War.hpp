@@ -95,6 +95,10 @@ namespace OpenVic {
 		std::unordered_map<ProvinceInstance const*, Siege> sieges;
 		std::unordered_set<unique_id_t> fought_today;
 
+		// Ports with an enemy fleet in front of them and no fleet of the owner, and the share of ports of each country
+		std::unordered_set<ProvinceInstance const*> blockaded_ports;
+		std::unordered_map<CountryInstance const*, fixed_point_t> blockade_shares;
+
 		memory::vector<Front> fronts;
 		std::uint32_t next_front_id = 1;
 		// Countries whose fronts and army assignments are managed automatically
@@ -113,12 +117,23 @@ namespace OpenVic {
 		void update_scores(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
 		void update_attrition(InstanceManager& instance_manager);
+		void update_naval_combat(InstanceManager& instance_manager);
+		void update_blockades(InstanceManager& instance_manager);
 		void update_leaders(InstanceManager& instance_manager);
 
 		void end_war(InstanceManager& instance_manager, std::uint32_t war_id);
 		void transfer_states(InstanceManager& instance_manager, War const& war, bool winners_are_attackers);
 
 	public:
+		bool is_blockaded(ProvinceInstance const& port) const {
+			return blockaded_ports.contains(&port);
+		}
+		// Share (0..1) of the ports of the country that are blockaded
+		fixed_point_t get_blockade_share(CountryInstance const& country) const {
+			const auto it = blockade_shares.find(&country);
+			return it != blockade_shares.end() ? it->second : fixed_point_t::_0;
+		}
+
 		std::span<const War> get_wars() const {
 			return wars;
 		}

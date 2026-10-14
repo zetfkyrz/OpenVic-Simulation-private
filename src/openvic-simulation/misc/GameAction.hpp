@@ -122,7 +122,11 @@ X(split_regiment, unique_id_t) \
 X(merge_armies, unique_id_t, unique_id_t) \
 X(set_army_leader, unique_id_t, unique_id_t) \
 X(disband_regiment, unique_id_t) \
-X(disband_army, unique_id_t)
+X(disband_army, unique_id_t) \
+X(load_army, unique_id_t, unique_id_t) \
+X(unload_army, unique_id_t) \
+X(land_army, unique_id_t, province_index_t) \
+X(start_ship_building, ship_type_index_t, province_index_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

@@ -100,6 +100,11 @@ namespace OpenVic {
 
 		// Whether a group of the given country may enter the province (own/allied/access/hostile land)
 		static bool can_country_enter(CountryInstance const& country, ProvinceInstance const& province);
+		// Whether a navy of the given country may enter the province: any sea, or a port of the country or its friends
+		static bool can_navy_enter(CountryInstance const& country, ProvinceInstance const& province);
+		// Distance of the step between two provinces on the way of the group (a port and its sea have no measured
+		// distance), negative if the step is not possible
+		fixed_point_t get_step_distance(ProvinceInstance const& from, ProvinceInstance const& to) const;
 
 		// Distance covered each day by the group (the slowest unit decides)
 		fixed_point_t get_movement_speed() const;
@@ -138,6 +143,10 @@ namespace OpenVic {
 		void update_gamestate();
 		void tick();
 
+		void set_transport_navy(NavyInstance* navy) {
+			transport_navy = navy;
+		}
+
 		// Called daily: an army that stays still gains a dig in level every days_per_level days (up to cap),
 		// moving or fighting resets it
 		void advance_dig_in(const int32_t days_per_level, const int32_t cap);
@@ -169,6 +178,22 @@ namespace OpenVic {
 		void update_gamestate();
 		void tick();
 
+		// Regiments each transport ship can carry
+		static constexpr size_t REGIMENTS_PER_TRANSPORT = 4;
+		// Share of the organisation that an army keeps after landing from the ships
+		static constexpr int32_t LANDING_ORGANISATION_DIVISOR = 2;
+
+		size_t get_transport_capacity() const;
+		size_t get_carried_regiment_count() const;
+		// Loads an army that is in the same port as the navy
+		bool load_army(ArmyInstance& army);
+		// Unloads a carried army in a port
+		bool unload_army(ArmyInstance& army);
+		// Lands a carried army from the sea next to the coastal province
+		bool land_army(ArmyInstance& army, ProvinceInstance& target);
+		// Forgets an army (it was destroyed or left)
+		void forget_carried_army(ArmyInstance const& army);
+
 		std::span<const std::reference_wrapper<ShipInstance>> get_ship_instances() {
 			return { reinterpret_cast<std::reference_wrapper<ShipInstance> const*>(get_units().data()), get_units().size() };
 		}
@@ -196,9 +221,10 @@ namespace OpenVic {
 	struct RecruitmentOrder {
 		unique_id_t id;
 		CountryInstance* country;
-		RegimentType const* regiment_type;
+		RegimentType const* regiment_type; // set for a regiment, nullptr for a ship
+		ShipType const* ship_type; // set for a ship
 		ProvinceInstance* province;
-		Pop* pop;
+		Pop* pop; // the pop that gives the soldiers, nullptr for a ship
 		int32_t days_total;
 		int32_t days_left;
 	};
@@ -259,9 +285,12 @@ namespace OpenVic {
 		void update_gamestate();
 		void tick();
 
-		// Finds the shortest land path for the army and starts moving it, false if the destination is unreachable
-		// With append = true the route starts at the end of the army's current route and is added to it
-		bool order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance, bool append = false);
+		// Finds the shortest path (by land for armies, by sea between ports for navies) and starts moving the group,
+		// false if the destination is unreachable. With append = true the route starts at the end of the current route
+		// of the group and is added to it
+		bool order_move(UnitInstanceGroup& group, ProvinceInstance& destination, MapInstance& map_instance, bool append = false);
+		// The nearest port the country's navy can dock in, from the province (nullptr if there is none)
+		ProvinceInstance* find_nearest_port(CountryInstance const& country, ProvinceInstance& from, MapInstance& map_instance);
 
 		// Empty if the regiment can be recruited from the pop, otherwise the reason it cannot (shown to the player)
 		static std::string_view get_recruitment_block_reason(
@@ -272,10 +301,17 @@ namespace OpenVic {
 		bool start_recruitment(
 			CountryInstance& country, RegimentType const& regiment_type, ProvinceInstance& province, Pop& pop
 		);
+		// The same for building a ship in a port of the province
+		std::string_view get_ship_block_reason(
+			CountryInstance const& country, ShipType const& ship_type, ProvinceInstance const& province
+		) const;
+		bool start_ship_building(CountryInstance& country, ShipType const& ship_type, ProvinceInstance& province);
+		// Drowns the carried armies that do not fit in the transport ships that are left
+		void enforce_transport_capacity(NavyInstance& navy);
 		// Cancels an order of the country, the goods are returned
 		bool cancel_recruitment(CountryInstance& country, unique_id_t order_id);
 		// Days the regiment takes to recruit for the country
-		static int32_t get_recruitment_days(CountryInstance const& country, RegimentType const& regiment_type);
+		static int32_t get_recruitment_days(CountryInstance const& country, UnitType const& unit_type);
 
 		// Moves a regiment out of its army into a new army in the same province
 		ArmyInstance* split_regiment(ArmyInstance& army, RegimentInstance& regiment);

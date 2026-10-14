@@ -33,6 +33,17 @@ namespace {
 		return result;
 	}
 
+	// Armies of the province that are not on board of a ship, copied to a plain vector
+	std::vector<ArmyInstance*> copy_active_armies(ProvinceInstance& province) {
+		std::vector<ArmyInstance*> result;
+		for (ArmyInstance& army : province.get_armies()) {
+			if (army.get_transport_navy() == nullptr) {
+				result.push_back(&army);
+			}
+		}
+		return result;
+	}
+
 	// Bonuses of a general from the personality and background traits
 	struct LeaderBonus {
 		fixed_point_t attack, defence, morale, attrition;
@@ -569,11 +580,11 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
-		if (province.get_armies().empty()) {
+		if (province.get_armies().empty() || province.province_definition.is_water()) {
 			continue;
 		}
 
-		std::vector<ArmyInstance*> armies = copy_armies(province);
+		std::vector<ArmyInstance*> armies = copy_active_armies(province);
 		for (ArmyInstance* army : armies) {
 			army->set_in_combat(false);
 		}
@@ -730,6 +741,9 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 		CountryInstance* besieger = nullptr;
 		bool contested = false;
 		for (ArmyInstance& army : province.get_armies()) {
+			if (army.get_transport_navy() != nullptr) {
+				continue;
+			}
 			if (army.is_in_combat()) {
 				contested = true;
 				break;
@@ -743,7 +757,7 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 		}
 		// Enemy armies of the besieger in the province stop the siege
 		for (ArmyInstance const& army : province.get_armies()) {
-			if (army.get_country().is_at_war_with(*besieger)) {
+			if (army.get_transport_navy() == nullptr && army.get_country().is_at_war_with(*besieger)) {
 				contested = true;
 				break;
 			}
@@ -762,7 +776,7 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 		// More regiments take a fortress faster, the siege skill of the regiments adds to it (up to 4 times as fast)
 		fixed_point_t siege_speed = fixed_point_t::_1;
 		for (ArmyInstance const& army : province.get_armies()) {
-			if (&army.get_country() != besieger) {
+			if (&army.get_country() != besieger || army.get_transport_navy() != nullptr) {
 				continue;
 			}
 			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
@@ -848,6 +862,237 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	}
 }
 
+namespace {
+	struct NavalSide {
+		std::vector<NavyInstance*> navies;
+		fixed_point_t power;
+		fixed_point_t organisation;
+		fixed_point_t max_organisation;
+		size_t ship_count = 0;
+
+		fixed_point_t get_organisation_ratio() const {
+			return max_organisation > fixed_point_t::_0 ? organisation / max_organisation : fixed_point_t::_0;
+		}
+	};
+
+	// Share of the maximum strength / organisation of a ship that is lost each day by a ship hit with the force
+	// of its own hull
+	constexpr int32_t NAVAL_STRENGTH_DAMAGE_PERCENT = 2;
+	constexpr int32_t NAVAL_ORGANISATION_DAMAGE_PERCENT = 8;
+
+	void calculate_naval_side(NavalSide& side) {
+		const fixed_point_t min_org_factor = fixed_point_t(3) / 10;
+		side.power = fixed_point_t::_0;
+		side.organisation = fixed_point_t::_0;
+		side.max_organisation = fixed_point_t::_0;
+		side.ship_count = 0;
+
+		for (NavyInstance* navy : side.navies) {
+			for (ShipInstance& ship : navy->get_ship_instances()) {
+				if (ship.get_max_strength() <= fixed_point_t::_0 || ship.get_strength() <= fixed_point_t::_0) {
+					continue;
+				}
+				const fixed_point_t strength_factor = ship.get_strength() / ship.get_max_strength();
+				fixed_point_t organisation_factor = ship.get_max_organisation() > fixed_point_t::_0
+					? ship.get_organisation() / ship.get_max_organisation() : fixed_point_t::_0;
+				if (organisation_factor < min_org_factor) {
+					organisation_factor = min_org_factor;
+				}
+				side.power += (ship.get_ship_type().gun_power + ship.get_ship_type().torpedo_attack) * strength_factor * organisation_factor;
+				side.organisation += ship.get_organisation();
+				side.max_organisation += ship.get_max_organisation();
+				side.ship_count++;
+			}
+		}
+	}
+
+	void apply_naval_damage(NavalSide& target, const fixed_point_t enemy_power) {
+		if (target.ship_count == 0) {
+			return;
+		}
+		const fixed_point_t average_power = enemy_power / static_cast<int32_t>(target.ship_count);
+
+		for (NavyInstance* navy : target.navies) {
+			for (ShipInstance& ship : navy->get_ship_instances()) {
+				if (ship.get_strength() <= fixed_point_t::_0) {
+					continue;
+				}
+				// A thin hull takes the full force, a thick one a part of it (at most 6 times the damage); evasion avoids some hits
+				const fixed_point_t hull = std::max(ship.get_ship_type().hull, fixed_point_t::_1);
+				fixed_point_t ratio = average_power / hull / (fixed_point_t::_1 + ship.get_ship_type().evasion / 10);
+				ratio = std::min(ratio, fixed_point_t(6));
+				const int32_t rout_factor = ship.get_organisation() > fixed_point_t::_0 ? 1 : 3;
+				ship.take_damage(
+					ship.get_max_organisation() * ratio * NAVAL_ORGANISATION_DAMAGE_PERCENT / 100,
+					ship.get_max_strength() * ratio * NAVAL_STRENGTH_DAMAGE_PERCENT * rout_factor / 100
+				);
+			}
+		}
+	}
+
+	// The fleet flees to the nearest port it can dock in, with the armies on board; it is lost if there is none
+	void retreat_navy(NavyInstance& navy, UnitInstanceManager& unit_manager, MapInstance& map_instance) {
+		navy.clear_path();
+		ProvinceInstance* const port = unit_manager.find_nearest_port(navy.get_country(), navy.get_location(), map_instance);
+		if (port == nullptr) {
+			unit_manager.destroy_group(navy);
+			return;
+		}
+		std::vector<ArmyInstance*> carried;
+		for (ArmyInstance& army : navy.get_carried_armies()) {
+			carried.push_back(&army);
+		}
+		navy.set_location(*port);
+		for (ArmyInstance* army : carried) {
+			army->clear_path();
+			army->set_location(*port);
+		}
+	}
+}
+
+void WarManager::update_naval_combat(InstanceManager& instance_manager) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		if (province.get_navies().empty()) {
+			continue;
+		}
+
+		std::vector<NavyInstance*> navies;
+		for (NavyInstance& navy : province.get_navies()) {
+			navy.set_in_combat(false);
+			if (!navy.empty()) {
+				navies.push_back(&navy);
+			}
+		}
+		// Fleets in a port do not fight
+		if (navies.size() < 2 || !province.province_definition.is_water()) {
+			continue;
+		}
+
+		CountryInstance const* lead_country = nullptr;
+		for (size_t i = 0; i < navies.size() && lead_country == nullptr; ++i) {
+			for (size_t j = i + 1; j < navies.size(); ++j) {
+				if (navies[i]->get_country().is_at_war_with(navies[j]->get_country())) {
+					lead_country = &navies[i]->get_country();
+					break;
+				}
+			}
+		}
+		if (lead_country == nullptr) {
+			continue;
+		}
+
+		NavalSide side_a, side_b;
+		for (NavyInstance* navy : navies) {
+			CountryInstance const& country = navy->get_country();
+			if (country.is_at_war_with(*lead_country)) {
+				side_b.navies.push_back(navy);
+			} else if (&country == lead_country) {
+				side_a.navies.push_back(navy);
+			} else if (std::any_of(navies.begin(), navies.end(), [&country, lead_country](NavyInstance* other) -> bool {
+				return other->get_country().is_at_war_with(*lead_country) && country.is_at_war_with(other->get_country());
+			})) {
+				// An ally of the lead country fights alongside it
+				side_a.navies.push_back(navy);
+			}
+		}
+
+		calculate_naval_side(side_a);
+		calculate_naval_side(side_b);
+		if (side_a.ship_count == 0 || side_b.ship_count == 0) {
+			continue;
+		}
+		const fixed_point_t power_a = side_a.power;
+		const fixed_point_t power_b = side_b.power;
+		apply_naval_damage(side_b, power_a);
+		apply_naval_damage(side_a, power_b);
+		calculate_naval_side(side_a);
+		calculate_naval_side(side_b);
+
+		const fixed_point_t rout_threshold = fixed_point_t(1) / 10;
+		const bool routed_a = side_a.ship_count == 0 || side_a.get_organisation_ratio() < rout_threshold;
+		const bool routed_b = side_b.ship_count == 0 || side_b.get_organisation_ratio() < rout_threshold;
+
+		if (!routed_a && !routed_b) {
+			for (NavyInstance* navy : side_a.navies) {
+				navy->set_in_combat(true);
+			}
+			for (NavyInstance* navy : side_b.navies) {
+				navy->set_in_combat(true);
+			}
+			continue;
+		}
+
+		const bool a_loses = routed_a && (!routed_b || side_a.get_organisation_ratio() <= side_b.get_organisation_ratio());
+		NavalSide& loser = a_loses ? side_a : side_b;
+		NavalSide& winner = a_loses ? side_b : side_a;
+
+		// Sinking ships make the battle score of the winner
+		if (!loser.navies.empty() && !winner.navies.empty()) {
+			CountryInstance const& winner_country = winner.navies.front()->get_country();
+			CountryInstance const& loser_country = loser.navies.front()->get_country();
+			if (War* const war = find_war_between(winner_country, loser_country); war != nullptr) {
+				const fixed_point_t gain = fixed_point_t::_1 + fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser.navies.size() * 2, 12))) / 4;
+				fixed_point_t& score = war->is_attacker(winner_country) ? war->attacker_battle_score : war->defender_battle_score;
+				score += gain;
+				if (score > MAX_BATTLE_SCORE) {
+					score = fixed_point_t(MAX_BATTLE_SCORE);
+				}
+			}
+		}
+
+		for (NavyInstance* navy : loser.navies) {
+			retreat_navy(*navy, unit_manager, map_instance);
+		}
+	}
+}
+
+void WarManager::update_blockades(InstanceManager& instance_manager) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	blockaded_ports.clear();
+	blockade_shares.clear();
+
+	std::unordered_map<CountryInstance const*, std::pair<int32_t, int32_t>> counts; // ports, blockaded
+
+	for (ProvinceInstance const& port : map_instance.get_province_instances()) {
+		if (port.province_definition.is_water() || !port.province_definition.has_port()) {
+			continue;
+		}
+		CountryInstance const* const owner = port.get_owner();
+		ProvinceDefinition const* const sea_definition = port.province_definition.get_port_adjacent_province();
+		if (owner == nullptr || sea_definition == nullptr) {
+			continue;
+		}
+		counts[owner].first++;
+
+		ProvinceInstance const& sea = map_instance.get_province_instance_by_definition(*sea_definition);
+		bool enemy_fleet = false;
+		bool defending_fleet = false;
+		for (NavyInstance const& navy : sea.get_navies()) {
+			if (navy.empty()) {
+				continue;
+			}
+			if (navy.get_country().is_at_war_with(*owner)) {
+				enemy_fleet = true;
+			} else if (&navy.get_country() == owner || navy.get_country().has_alliance_with(*owner)) {
+				defending_fleet = true;
+			}
+		}
+		if (enemy_fleet && !defending_fleet) {
+			blockaded_ports.insert(&port);
+			counts[owner].second++;
+		}
+	}
+
+	for (auto const& [country, count] : counts) {
+		if (count.second > 0 && count.first > 0) {
+			blockade_shares[country] = fixed_point_t(count.second) / count.first;
+		}
+	}
+}
+
 void WarManager::update_attrition(InstanceManager& instance_manager) {
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
@@ -870,8 +1115,12 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 			}
 
 			const bool friendly = owner == &country || (owner != nullptr && country.has_alliance_with(*owner));
-			// Only countries at war need supplies
-			const fixed_point_t supply = country.is_at_war() ? country.get_army_supply_ratio() : fixed_point_t::_1;
+			// Only countries at war need supplies, a blockade of the ports cuts them
+			fixed_point_t supply = country.is_at_war() ? country.get_army_supply_ratio() : fixed_point_t::_1;
+			supply -= get_blockade_share(country) / 2;
+			if (supply < fixed_point_t::_0) {
+				supply = fixed_point_t::_0;
+			}
 
 			fixed_point_t rate = fixed_point_t::_0;
 			if (!friendly) {
@@ -977,6 +1226,42 @@ void WarManager::tick(InstanceManager& instance_manager) {
 			}
 		}
 	}
+
+	update_naval_combat(instance_manager);
+	// Sink the ships that lost all their men, the armies they cannot carry any more drown
+	{
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		std::vector<unique_id_t> damaged;
+		for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+			for (NavyInstance& navy : province.get_navies()) {
+				for (UnitInstance const& unit : navy.get_units()) {
+					if (unit.get_strength() <= fixed_point_t::_0) {
+						damaged.push_back(navy.unique_id);
+						break;
+					}
+				}
+			}
+		}
+		for (const unique_id_t navy_id : damaged) {
+			UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(navy_id);
+			if (group == nullptr) {
+				continue;
+			}
+			std::vector<UnitInstance*> dead;
+			for (UnitInstance& unit : group->get_units()) {
+				if (unit.get_strength() <= fixed_point_t::_0) {
+					dead.push_back(&unit);
+				}
+			}
+			for (UnitInstance* unit : dead) {
+				unit_manager.destroy_unit(*unit, *group);
+			}
+			if (UnitInstanceGroup* const remaining = unit_manager.get_unit_instance_group_by_unique_id(navy_id)) {
+				unit_manager.enforce_transport_capacity(static_cast<NavyInstance&>(*remaining));
+			}
+		}
+	}
+	update_blockades(instance_manager);
 
 	update_sieges(instance_manager);
 	update_scores(instance_manager);
