@@ -55,6 +55,7 @@ inline static void print_memory_usage( //
 // Days to simulate for the economy report (-e), 0 = no report
 static size_t economy_report_days = 0;
 static bool run_army_test = false;
+static bool tariff_test = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -595,6 +596,31 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 	return ok;
 }
 
+// Tariffs of the biggest countries: slider, effective rate, imports and the income, printed with the "TARIFF" prefix
+static void print_tariff_report(InstanceManager& instance_manager) {
+	fmt::println("TARIFF {}", instance_manager.get_today());
+	size_t shown = 0;
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country() || shown >= 12) {
+			continue;
+		}
+		if (country.get_total_rank() == 0 || country.get_total_rank() > 12) {
+			continue;
+		}
+		++shown;
+		fmt::println(
+			"TARIFF   #{:2} {} slider {:.2f} effective {:.2f} efficiency {:.2f} imports {:.1f} income {:.1f} subsidies {:.1f}",
+			country.get_total_rank(), country.get_identifier(),
+			static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
+			static_cast<double>(country.effective_tariff_rate.get_untracked()),
+			static_cast<double>(country.tariff_efficiency.get_untracked()),
+			static_cast<double>(country.get_yesterdays_import_value_untracked()),
+			static_cast<double>(country.get_tariff_income()),
+			static_cast<double>(country.get_import_subsidies_spending())
+		);
+	}
+}
+
 static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
@@ -927,8 +953,22 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		ret &= test_navy(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
 	}
 
+	if (ret && tariff_test && economy_report_days == 0) {
+		economy_report_days = 90;
+	}
+
 	if (ret && economy_report_days > 0) {
 		InstanceManager& instance_manager = *game_manager.get_instance_manager();
+		if (tariff_test) {
+			// The biggest countries put a tariff of 25% (the slider is clamped to the limits of the country)
+			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (country.get_total_rank() > 0 && country.get_total_rank() <= 12) {
+					instance_manager.queue_game_action<set_tariff_rate_argument_t>(country.index, fixed_point_t(1) / 4);
+				}
+			}
+			instance_manager.force_tick_and_update();
+			print_tariff_report(instance_manager);
+		}
 		if (subsidise_all) {
 			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
@@ -940,6 +980,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			instance_manager.force_tick_and_update();
 			if (day % 30 == 0) {
 				print_economy_report(instance_manager);
+				if (tariff_test) {
+					print_tariff_report(instance_manager);
+				}
 			}
 		}
 	}
@@ -999,6 +1042,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-T") == 0) {
+			tariff_test = true;
 		} else if (strcmp(arg, "-S") == 0) {
 			subsidise_all = true;
 		} else if (strcmp(arg, "-k") == 0) {

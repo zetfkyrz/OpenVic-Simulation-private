@@ -363,6 +363,13 @@ namespace OpenVic {
 		void add_prestige(const fixed_point_t delta) {
 			prestige += delta;
 		}
+		// Tariffs collected / import subsidies paid yesterday
+		fixed_point_t get_tariff_income() const {
+			return actual_tariff_income.load();
+		}
+		fixed_point_t get_import_subsidies_spending() const {
+			return actual_import_subsidies_spending.load();
+		}
 	private:
 		size_t PROPERTY(prestige_rank, 0);
 		fixed_point_t PROPERTY(diplomatic_points);
