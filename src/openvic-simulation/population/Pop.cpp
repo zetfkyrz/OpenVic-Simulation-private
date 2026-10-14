@@ -760,6 +760,16 @@ void Pop::allocate_cash_for_artisanal_spending(fixed_point_t money_to_spend) {
 	cash_allocated_for_artisanal_spending += money_to_spend;
 }
 
+fixed_point_t Pop::take_cash(const fixed_point_t amount) {
+	const fixed_point_t available = cash.get_copy_of_value();
+	const fixed_point_t taken = amount < available ? amount : available;
+	if (taken <= fixed_point_t::_0) {
+		return fixed_point_t::_0;
+	}
+	cash -= taken;
+	return taken;
+}
+
 void Pop::hire(pop_size_t count) {
 	if (OV_unlikely(count <= 0)) {
 		spdlog::warn_s(

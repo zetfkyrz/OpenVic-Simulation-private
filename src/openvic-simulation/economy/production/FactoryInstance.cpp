@@ -231,9 +231,10 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 
 		if (total_workers > pop_size_t(0)) {
 			for (Worker const& worker : workers) {
-				worker.pop->add_factory_worker_income(
-					wages * type_safe::get(worker.size) / type_safe::get(total_workers)
-				);
+				const fixed_point_t income = wages * type_safe::get(worker.size) / type_safe::get(total_workers);
+				if (income > fixed_point_t::_0) {
+					worker.pop->add_factory_worker_income(income);
+				}
 			}
 		} else {
 			wages = 0;
@@ -381,7 +382,10 @@ void FactoryInstance::pay_dividend(
 			const fixed_point_t paid_to_pops = capitalists_part - saved;
 			state.add_to_capitalist_fund(saved);
 			for (Pop& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
-				pop.add_factory_owner_income(paid_to_pops * type_safe::get(pop.get_size()) / total_owner_size);
+				const fixed_point_t income = paid_to_pops * type_safe::get(pop.get_size()) / total_owner_size;
+				if (income > fixed_point_t::_0) {
+					pop.add_factory_owner_income(income);
+				}
 			}
 		} else {
 			// Without capitalists in the state the whole profit belongs to the state
@@ -597,7 +601,9 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 				subsidy_today += paid;
 			}
 			if (capitalist_fraction > 0) {
-				const fixed_point_t paid = state.take_from_capitalist_fund(shortfall * capitalist_fraction);
+				const fixed_point_t paid = state.take_capitalist_money(
+					shortfall * capitalist_fraction, Loan::purpose_t::LOSS_COVER, 0
+				);
 				budget += paid;
 				private_cover_today += paid;
 			}

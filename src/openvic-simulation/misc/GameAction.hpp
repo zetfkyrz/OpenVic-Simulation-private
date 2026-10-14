@@ -97,6 +97,13 @@ X(set_all_factories_open, country_index_t, bool) \
 X(set_all_factories_subsidised, country_index_t, bool) \
 X(expand_all_factories, country_index_t) \
 X(set_subsidy_mode, country_index_t, std::uint32_t) \
+X(take_external_loan, country_index_t, country_index_t, fixed_point_t, std::uint32_t) \
+X(give_external_loans, country_index_t, std::uint32_t, fixed_point_t, fixed_point_t, std::uint32_t) \
+X(stage_loan_target, country_index_t, country_index_t, bool) \
+X(give_internal_loan, country_index_t, province_index_t, fixed_point_t, fixed_point_t, std::uint32_t, std::uint32_t) \
+X(repay_loan, country_index_t, std::uint32_t, fixed_point_t) \
+X(set_central_bank_rates, country_index_t, fixed_point_t, fixed_point_t) \
+X(answer_alliance_request, country_index_t, country_index_t, bool) \
 X(buy_factory_share, country_index_t, province_index_t, building_type_index_t, std::uint32_t) \
 X(sell_factory_share, country_index_t, province_index_t, building_type_index_t, std::uint32_t) \
 X(move_army, unique_id_t, province_index_t) \

@@ -87,6 +87,27 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		}
 	}
 
+	size_t external_loans = 0, internal_loans = 0;
+	fixed_point_t external_debt = 0, internal_debt = 0, internal_unspent = 0, capitalist_funds = 0;
+	for (auto const& loan : instance_manager.get_credit_manager().get_loans()) {
+		if (!loan->active) {
+			continue;
+		}
+		if (loan->kind == Loan::kind_t::EXTERNAL) {
+			external_loans++;
+			external_debt += loan->remaining;
+		} else {
+			internal_loans++;
+			internal_debt += loan->remaining;
+			internal_unspent += loan->unspent;
+		}
+	}
+	for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+		for (State const& state : state_set.get_states()) {
+			capitalist_funds += state.get_capitalist_fund();
+		}
+	}
+
 	fixed_point_t country_cash = 0, gold_income = 0;
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		country_cash += country.get_cash_stockpile().load();
@@ -99,6 +120,11 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		}
 	}
 
+	fmt::println(
+		"CREDIT loans ext={} int={} | debt ext={:.0f} int={:.0f} | unspent={:.0f} capitalist_savings={:.0f} | building={}",
+		external_loans, internal_loans, static_cast<double>(external_debt), static_cast<double>(internal_debt),
+		static_cast<double>(internal_unspent), static_cast<double>(capitalist_funds), building
+	);
 	fmt::println(
 		"ECON {} factories={} open={} building={} levels={} employment={:.2f} revenue={:.1f} wages={:.1f} owners={:.1f} "
 		"profit={:.1f} over80%={} funds={:.0f} avg_cost={:.0f} | money: countries={:.0f} pops={:.0f} factories={:.0f} total={:.0f}",

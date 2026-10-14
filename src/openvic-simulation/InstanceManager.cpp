@@ -195,6 +195,7 @@ void InstanceManager::tick() {
 	country_instance_manager.country_manager_tick_after_map();
 	unit_instance_manager.tick();
 	war_manager.tick(*this);
+	credit_manager.tick(*this);
 
 	if (today.is_month_start()) {
 		market_instance.record_price_history();

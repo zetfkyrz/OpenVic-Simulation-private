@@ -4,6 +4,7 @@
 
 #include <fmt/base.h>
 
+#include "openvic-simulation/economy/credit/Credit.hpp"
 #include "openvic-simulation/core/memory/Colony.hpp"
 #include "openvic-simulation/core/memory/FixedVector.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
@@ -28,6 +29,7 @@ namespace OpenVic {
 	struct PopType;
 	struct ProvinceInstance;
 	struct Religion;
+	struct CreditManager;
 	struct StateManager;
 	struct StateSet;
 	struct Strata;
@@ -53,6 +55,7 @@ namespace OpenVic {
 		// Savings of the capitalists of the state: part of the dividends they get, used to cover the losses of the
 		// factories they own (and, later, to invest)
 		fixed_point_t PROPERTY(capitalist_fund);
+		CreditManager* credit_manager = nullptr;
 
 		void _update_country();
 
@@ -80,9 +83,19 @@ namespace OpenVic {
 
 		void update_gamestate();
 
+		// Set by the credit manager when the first loan of the state is given
+		void set_credit_manager(CreditManager* new_credit_manager) {
+			credit_manager = new_credit_manager;
+		}
+		CreditManager* get_credit_manager() const {
+			return credit_manager;
+		}
 		void add_to_capitalist_fund(const fixed_point_t amount) {
 			capitalist_fund += amount;
 		}
+		// The money the capitalists can spend on a purpose: savings plus the unspent money of the loans that allow it
+		fixed_point_t get_capitalist_money(Loan::purpose_t purpose, std::int32_t construction_days) const;
+		fixed_point_t take_capitalist_money(fixed_point_t amount, Loan::purpose_t purpose, std::int32_t construction_days);
 		// Takes at most the amount out of the fund, returns what was taken
 		fixed_point_t take_from_capitalist_fund(const fixed_point_t amount) {
 			const fixed_point_t taken = amount < capitalist_fund ? amount : capitalist_fund;

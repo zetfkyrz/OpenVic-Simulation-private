@@ -234,6 +234,8 @@ namespace OpenVic {
 			> reusable_vectors
 		);
 		void allocate_cash_for_artisanal_spending(const fixed_point_t money_to_spend);
+		// Takes at most the amount out of the cash of the pop (e.g. a debt that is collected), returns what was taken
+		fixed_point_t take_cash(const fixed_point_t amount);
 		void hire(pop_size_t count);
 		//recruit or conscript
 		bool try_recruit();

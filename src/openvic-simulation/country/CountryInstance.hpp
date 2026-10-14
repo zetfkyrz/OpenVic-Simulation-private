@@ -135,6 +135,15 @@ namespace OpenVic {
 		enum struct subsidy_mode_t : uint32_t { ALL = 0, STATE_ONLY = 1, BY_SHARE = 2 };
 	private:
 		subsidy_mode_t PROPERTY_RW(subsidy_mode, subsidy_mode_t::BY_SHARE);
+		// Central bank: yearly interest rates of the loans the country gives to its capitalists and to other countries
+		fixed_point_t PROPERTY(internal_loan_rate, fixed_point_t(5) / 100);
+		fixed_point_t PROPERTY(external_loan_rate, fixed_point_t(4) / 100);
+	public:
+		void set_central_bank_rates(const fixed_point_t internal_rate, const fixed_point_t external_rate) {
+			internal_loan_rate = internal_rate;
+			external_loan_rate = external_rate;
+		}
+	private:
 		bool PROPERTY_CUSTOM_PREFIX(releasable_vassal, is, true);
 		bool PROPERTY(owns_colonial_province, false);
 		bool PROPERTY(has_unowned_cores, false);

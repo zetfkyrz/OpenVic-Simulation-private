@@ -11,6 +11,7 @@
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
+#include "openvic-simulation/economy/credit/Credit.hpp"
 #include "openvic-simulation/economy/production/ArtisanalProducerDeps.hpp"
 #include "openvic-simulation/economy/production/ResourceGatheringOperationDeps.hpp"
 #include "openvic-simulation/economy/trading/MarketInstance.hpp"
@@ -58,6 +59,7 @@ namespace OpenVic {
 		CountryInstanceManager PROPERTY_REF(country_instance_manager);
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
+		CreditManager PROPERTY_REF(credit_manager);
 		PoliticsInstanceManager PROPERTY_REF(politics_instance_manager);
 		/* Near the end so it is freed after other managers that may depend on it,
 		 * e.g. if we want to remove military units from the province they're in when they're destructed. */
