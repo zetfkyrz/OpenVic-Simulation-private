@@ -951,3 +951,82 @@ bool GameActionManager::VariantVisitor::operator() (start_ship_building_argument
 	}
 	return instance_manager.get_unit_instance_manager().start_ship_building(*country, *ship_type, *province);
 }
+
+// Peace negotiations
+bool GameActionManager::VariantVisitor::operator() (declare_war_goal_argument_t const& argument) const {
+	const auto [attacker_index, defender_index, goal_type, province_index] = argument;
+	CountryInstance& attacker = war_action_country(instance_manager, attacker_index);
+	CountryInstance& defender = war_action_country(instance_manager, defender_index);
+
+	WarGoal goal;
+	if (goal_type > static_cast<std::uint32_t>(WarGoal::type_t::REPARATIONS)) {
+		return false;
+	}
+	goal.type = static_cast<WarGoal::type_t>(goal_type);
+	if (goal.type == WarGoal::type_t::CONQUER_STATE) {
+		goal.state_province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (goal.state_province == nullptr) {
+			return false;
+		}
+	}
+	return instance_manager.get_war_manager().declare_war(instance_manager, attacker, defender, goal);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t const& argument) const {
+	const auto [country_index, war_id, kind, province_index, enabled] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	WarManager& manager = instance_manager.get_war_manager();
+
+	if (manager.get_war_by_id(war_id) == nullptr) {
+		return false;
+	}
+	PeaceTerms& draft = manager.get_peace_draft(country, war_id);
+
+	switch (kind) {
+	case 0: { // a state
+		ProvinceInstance const* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (province == nullptr) {
+			return false;
+		}
+		const auto it = std::find_if(draft.states.begin(), draft.states.end(), [province](ProvinceInstance const* other) -> bool {
+			return other == province || (other->get_state() != nullptr && other->get_state() == province->get_state());
+		});
+		if (enabled && it == draft.states.end()) {
+			draft.states.push_back(province);
+		} else if (!enabled && it != draft.states.end()) {
+			draft.states.erase(it);
+		}
+		return true;
+	}
+	case 1:
+		draft.reparations = enabled;
+		return true;
+	case 2:
+		draft.humiliate = enabled;
+		return true;
+	case 3: // the side gives instead of demanding, the states listed make no sense then
+		draft.concede = enabled;
+		draft.states.clear();
+		return true;
+	case 4:
+		manager.clear_peace_draft(country);
+		return true;
+	}
+	return false;
+}
+
+bool GameActionManager::VariantVisitor::operator() (send_peace_offer_argument_t const& argument) const {
+	const auto [country_index, war_id] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	WarManager& manager = instance_manager.get_war_manager();
+
+	PeaceTerms terms = manager.get_peace_draft(country, war_id);
+	return manager.send_peace_offer(instance_manager, country, terms);
+}
+
+bool GameActionManager::VariantVisitor::operator() (answer_peace_offer_argument_t const& argument) const {
+	const auto [country_index, war_id, accept] = argument;
+	return instance_manager.get_war_manager().answer_peace_offer(
+		instance_manager, war_action_country(instance_manager, country_index), war_id, accept
+	);
+}

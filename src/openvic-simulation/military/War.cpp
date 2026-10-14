@@ -310,11 +310,23 @@ bool WarManager::can_declare_war(CountryInstance const& attacker, CountryInstanc
 }
 
 bool WarManager::declare_war(InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender) {
+	return declare_war(instance_manager, attacker, defender, WarGoal {});
+}
+
+bool WarManager::declare_war(
+	InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender, WarGoal const& goal
+) {
 	if (!can_declare_war(attacker, defender, instance_manager.get_today())) {
+		return false;
+	}
+	// The goal state must belong to the defender
+	if (goal.type == WarGoal::type_t::CONQUER_STATE
+		&& (goal.state_province == nullptr || goal.state_province->get_owner() != &defender)) {
 		return false;
 	}
 
 	War war;
+	war.goal = goal;
 	war.id = next_war_id++;
 	war.start_date = instance_manager.get_today();
 	war.attackers.push_back(&attacker);
@@ -1278,6 +1290,7 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_army_recovery(instance_manager);
 	update_attrition(instance_manager);
 	update_leaders(instance_manager);
+	update_ai_peace(instance_manager);
 	update_auto_plan(instance_manager);
 	update_fronts(instance_manager);
 }

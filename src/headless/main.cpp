@@ -341,6 +341,58 @@ static bool test_battle(InstanceManager& instance_manager) {
 		}
 	}
 	check(day < 90, "battle is decided within 90 days");
+
+	// Peace: the winner occupies a state of the loser and demands it
+	{
+		WarManager& war_manager = instance_manager.get_war_manager();
+		War const* war = nullptr;
+		for (War const* candidate : war_manager.get_wars_of(country_a)) {
+			if (candidate->has_participant(country_b)) {
+				war = candidate;
+				break;
+			}
+		}
+		check(war != nullptr, "the war exists");
+		if (war != nullptr) {
+			ProvinceInstance* taken = nullptr;
+			for (ProvinceInstance* candidate : country_b.get_owned_provinces()) {
+				if (candidate->get_state() != nullptr) {
+					taken = candidate;
+					break;
+				}
+			}
+			check(taken != nullptr, "the loser owns a state");
+			if (taken != nullptr) {
+				for (ProvinceInstance& province : taken->get_state()->get_provinces()) {
+					province.set_controller(&country_a);
+				}
+				instance_manager.force_tick_and_update();
+				const bool a_attacker = war->is_attacker(country_a);
+				const auto candidates = war_manager.get_peace_candidates(*war, country_a, false);
+				fmt::println("PEACE war #{} score A {:.1f} B {:.1f}, candidates: {}", war->id,
+					static_cast<double>(war->get_score(a_attacker)), static_cast<double>(war->get_score(!a_attacker)), candidates.size());
+				check(!candidates.empty(), "the occupied state is a candidate");
+				PeaceTerms terms;
+				terms.war_id = war->id;
+				if (!candidates.empty()) {
+					terms.states.push_back(candidates.front());
+				}
+				const fixed_point_t cost = war_manager.get_terms_cost(*war, country_a, terms);
+				memory::string reason;
+				const bool accepts = war_manager.evaluate_offer(instance_manager, *war, a_attacker, terms, &reason);
+				fmt::println("PEACE terms cost {:.1f}, available {:.1f}, the other side {} ({})", static_cast<double>(cost),
+					static_cast<double>(war->get_score(a_attacker)), accepts ? "accepts" : "refuses", reason);
+				const bool signed_peace = war_manager.send_peace_offer(instance_manager, country_a, terms);
+				auto const* response = war_manager.get_last_response(country_a);
+				fmt::println("PEACE sent: {} - {}", signed_peace ? "signed" : "not signed", response != nullptr ? response->text : "");
+				check(response != nullptr && !response->text.empty(), "the answer has a text");
+				if (signed_peace) {
+					check(taken->get_owner() == &country_a || taken->get_owner() != &country_b, "the state changed hands");
+					check(!country_a.is_at_war_with(country_b), "the war is over");
+				}
+			}
+		}
+	}
 	return ok;
 }
 

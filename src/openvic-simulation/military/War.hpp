@@ -16,6 +16,45 @@ namespace OpenVic {
 	struct ProvinceInstance;
 	struct State;
 
+	// What the attacker wants from the war. A conquered state of the war goal costs half of the war score at the peace table.
+	struct WarGoal {
+		enum struct type_t : std::uint32_t {
+			NONE = 0,      // no goal: the war can only be won by occupation
+			CONQUER_STATE = 1, // take the state (state_province is any province of it)
+			HUMILIATE = 2, // prestige: the winner gains and the loser loses it
+			REPARATIONS = 3 // the loser pays a part of its treasury
+		};
+		type_t type = type_t::NONE;
+		ProvinceInstance const* state_province = nullptr;
+	};
+
+	// Terms of a peace, built by a country before the offer is sent
+	struct PeaceTerms {
+		std::uint32_t war_id = 0;
+		// true: the proposer is losing and gives the states listed (the enemy occupies them), false: the proposer demands them
+		bool concede = false;
+		memory::vector<ProvinceInstance const*> states; // one province of each state
+		bool reparations = false;
+		bool humiliate = false;
+	};
+
+	// The answer to the last offer of a country, shown in the peace window
+	struct PeaceResponse {
+		bool accepted = false;
+		memory::string text;
+		Date date;
+	};
+
+	// A peace offered to a country that has to answer it (the player)
+	struct PeaceOffer {
+		std::uint32_t war_id = 0;
+		CountryInstance* from = nullptr;
+		bool from_is_attacker = false;
+		// The terms are from the point of view of the sender: concede = the sender gives the states
+		PeaceTerms terms;
+		Date date;
+	};
+
 	// A war between two sides. The first country of each side is its leader.
 	// The war goal is always conquest: the side that holds more enemy land wins more at the peace table.
 	struct War {
@@ -30,6 +69,7 @@ namespace OpenVic {
 		// Total war score of each side, 0..100
 		fixed_point_t attacker_score;
 		fixed_point_t defender_score;
+		WarGoal goal; // of the attacker
 
 		bool is_attacker(CountryInstance const& country) const;
 		bool is_defender(CountryInstance const& country) const;
@@ -92,6 +132,14 @@ namespace OpenVic {
 		};
 		memory::vector<Truce> truces;
 
+		std::unordered_map<CountryInstance const*, PeaceTerms> peace_drafts;
+		std::unordered_map<CountryInstance const*, PeaceResponse> last_responses;
+		memory::vector<PeaceOffer> offers; // to AI controlled or player countries, the receiver is the other side of the war
+		// Days a country wants to wait before it makes a new offer in the war: war id + country -> date
+		std::unordered_map<std::uint64_t, Date> next_offer_date;
+		void apply_peace_terms(InstanceManager& instance_manager, War const& war, bool proposer_is_attacker, PeaceTerms const& terms);
+		void update_ai_peace(InstanceManager& instance_manager);
+
 		std::unordered_map<ProvinceInstance const*, Siege> sieges;
 		std::unordered_set<unique_id_t> fought_today;
 
@@ -153,6 +201,43 @@ namespace OpenVic {
 		bool can_declare_war(CountryInstance const& attacker, CountryInstance const& defender, Date today) const;
 		// Starts a war, the allies of both sides who are not allied to the enemy join in automatically
 		bool declare_war(InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender);
+		bool declare_war(
+			InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender, WarGoal const& goal
+		);
+
+		// ---- Peace negotiations ----
+		static constexpr std::int32_t REPARATIONS_COST = 10;
+		static constexpr std::int32_t HUMILIATE_COST = 8;
+		// The share of the treasury of the loser that is paid in reparations, and the prestige that changes hands
+		static constexpr std::int32_t REPARATIONS_PERCENT = 25;
+		static constexpr std::int32_t HUMILIATE_PRESTIGE = 5;
+		static constexpr std::int32_t OFFER_VALID_DAYS = 60;
+
+		// Draft of the terms of a country (the player builds it in the peace window)
+		PeaceTerms& get_peace_draft(CountryInstance const& country, std::uint32_t war_id);
+		PeaceTerms const* find_peace_draft(CountryInstance const& country) const;
+		void clear_peace_draft(CountryInstance const& country);
+		// The war score a state costs when the side takes it from its owner (half for the war goal)
+		fixed_point_t get_state_cost(War const& war, bool winners_are_attackers, ProvinceInstance const& state_province) const;
+		// States that can be put in the terms: the enemy states the side holds a province of (and the goal state),
+		// or, when conceding, the own states the enemy holds a province of
+		memory::vector<ProvinceInstance const*> get_peace_candidates(War const& war, CountryInstance const& proposer, bool concede) const;
+		// Total war score the terms cost
+		fixed_point_t get_terms_cost(War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const;
+		// What the receiver of the offer says, with the reason (no side effects)
+		bool evaluate_offer(
+			InstanceManager const& instance_manager, War const& war, bool proposer_is_attacker, PeaceTerms const& terms,
+			memory::string* reason = nullptr
+		) const;
+		// Sends the terms, applies them if the other side accepts. Returns whether the peace was signed; the answer is
+		// kept in get_last_response.
+		bool send_peace_offer(InstanceManager& instance_manager, CountryInstance& proposer, PeaceTerms const& terms);
+
+		PeaceResponse const* get_last_response(CountryInstance const& country) const;
+
+		// Offers waiting for the answer of the country
+		memory::vector<PeaceOffer> get_offers_for(CountryInstance const& country) const;
+		bool answer_peace_offer(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t war_id, bool accept);
 
 		// The decision of the other side's leader. This is the single place that has to be replaced by real AI/player choice.
 		bool would_accept_peace(
