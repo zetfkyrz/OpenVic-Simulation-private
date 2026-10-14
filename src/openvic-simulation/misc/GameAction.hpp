@@ -97,6 +97,8 @@ X(set_all_factories_open, country_index_t, bool) \
 X(set_all_factories_subsidised, country_index_t, bool) \
 X(expand_all_factories, country_index_t) \
 X(set_subsidy_mode, country_index_t, std::uint32_t) \
+X(buy_factory_share, country_index_t, province_index_t, building_type_index_t, std::uint32_t) \
+X(sell_factory_share, country_index_t, province_index_t, building_type_index_t, std::uint32_t) \
 X(move_army, unique_id_t, province_index_t) \
 X(queue_army_move, unique_id_t, province_index_t) \
 X(stop_army, unique_id_t) \

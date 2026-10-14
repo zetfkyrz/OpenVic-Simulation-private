@@ -584,6 +584,7 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 		}
 		// A factory built by the player belongs to the state
 		factory->set_state_share(fixed_point_t::_1);
+		factory->set_built_by_state(true);
 	}
 
 	country.spend_cash(cost);
@@ -639,6 +640,37 @@ bool GameActionManager::VariantVisitor::operator() (set_all_factories_subsidised
 		}
 	}
 	return changed;
+}
+
+namespace {
+	bool trade_factory_share(
+		InstanceManager& instance_manager, const country_index_t country_index, const province_index_t province_index,
+		const building_type_index_t building_type_index, const std::uint32_t percent, const bool state_buys
+	) {
+		CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+		const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+		if (target.state == nullptr || percent == 0 || percent > 100) {
+			return false;
+		}
+		FactoryInstance* factory = target.state->find_factory(*target.building_type);
+		if (factory == nullptr) {
+			return false;
+		}
+		return factory->trade_share(
+			*target.state, country, instance_manager.get_market_instance(),
+			fixed_point_t(static_cast<int32_t>(percent)) / 100, state_buys
+		);
+	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (buy_factory_share_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, percent] = argument;
+	return trade_factory_share(instance_manager, country_index, province_index, building_type_index, percent, true);
+}
+
+bool GameActionManager::VariantVisitor::operator() (sell_factory_share_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, percent] = argument;
+	return trade_factory_share(instance_manager, country_index, province_index, building_type_index, percent, false);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_subsidy_mode_argument_t const& argument) const {

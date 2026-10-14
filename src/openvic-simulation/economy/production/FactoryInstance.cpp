@@ -108,6 +108,50 @@ fixed_point_t FactoryInstance::get_daily_construction_goods(GoodDefinition const
 	return it->second / construction_total_days;
 }
 
+fixed_point_t FactoryInstance::calculate_value(MarketInstance const& market_instance) const {
+	const fixed_point_t replacement = calculate_construction_cost(building_type, market_instance) *
+		static_cast<int32_t>(type_safe::get(level)) / 4;
+	const fixed_point_t from_profit = average_profit > fixed_point_t::_0
+		? average_profit * (365 * PAYBACK_YEARS)
+		: fixed_point_t::_0;
+	return std::max(from_profit, replacement);
+}
+
+bool FactoryInstance::trade_share(
+	State& state, CountryInstance& country, MarketInstance const& market_instance, fixed_point_t share, const bool state_buys
+) {
+	if (level <= building_level_t(0) || share <= fixed_point_t::_0) {
+		return false;
+	}
+
+	const fixed_point_t value = calculate_value(market_instance);
+
+	if (state_buys) {
+		share = std::min(share, fixed_point_t::_1 - state_share);
+		const fixed_point_t price = value * share;
+		if (share <= fixed_point_t::_0 || country.get_cash_stockpile().load() < price) {
+			return false;
+		}
+		country.spend_cash(price);
+		state.add_to_capitalist_fund(price);
+		state_share += share;
+		return true;
+	}
+
+	// The capitalists only buy a factory that makes a profit, with the savings they have
+	share = std::min(share, state_share);
+	if (share <= fixed_point_t::_0 || average_profit <= fixed_point_t::_0 || value <= fixed_point_t::_0) {
+		return false;
+	}
+	const fixed_point_t affordable = std::min(share, state.get_capitalist_fund() / value);
+	if (affordable < fixed_point_t(1) / 1000) {
+		return false;
+	}
+	country.add_cash(state.take_from_capitalist_fund(value * affordable));
+	state_share -= affordable;
+	return true;
+}
+
 void FactoryInstance::set_open(const bool new_open) {
 	open = new_open;
 	if (open) {
@@ -234,6 +278,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	owner_income_yesterday = owner_income;
 	state_income_yesterday = state_income;
 	profit_yesterday = profit;
+	average_profit += (profit - average_profit) / 30;
 
 	produced_quantity_pending = 0;
 	consumed_value_pending = 0;
@@ -448,6 +493,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 			}
 			if (capitalists <= 0) {
 				state_share = fixed_point_t::_1;
+				built_by_state = true;
 			}
 		}
 	}

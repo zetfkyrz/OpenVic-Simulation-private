@@ -66,6 +66,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(expansion_fund);
 		// Share of the factory owned by the state (the rest belongs to the capitalists), 0..1
 		fixed_point_t PROPERTY_RW(state_share);
+		// Whether the factory was built by the state (otherwise by capitalists / the game setup)
+		bool PROPERTY_RW_CUSTOM_NAME(built_by_state, was_built_by_state, set_built_by_state, false);
 		// A subsidised factory keeps running at a loss: its own budget is used first, and the state treasury pays only
 		// the part of the purchases the budget cannot cover
 		bool PROPERTY_CUSTOM_PREFIX(subsidised, is, false);
@@ -106,6 +108,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(owner_income_yesterday);
 		fixed_point_t PROPERTY(state_income_yesterday);
 		fixed_point_t PROPERTY(profit_yesterday);
+		// Moving average of the daily profit (about the last month), the base of the value of the factory
+		fixed_point_t PROPERTY(average_profit);
 		uint32_t PROPERTY(profitable_days, 0);
 		uint32_t PROPERTY(unprofitable_days, 0);
 
@@ -122,6 +126,8 @@ namespace OpenVic {
 		void grant_starting_budget(MarketInstance const& market_instance, building_level_t levels);
 
 	public:
+		// Years of profit the whole factory is worth
+		static constexpr int32_t PAYBACK_YEARS = 6;
 		BuildingType const& building_type;
 		ProductionType const& production_type;
 
@@ -150,6 +156,17 @@ namespace OpenVic {
 		// Quantity of the good used up on a day when the construction is worked
 		[[nodiscard]] fixed_point_t get_daily_construction_goods(GoodDefinition const& good) const;
 		void set_open(const bool new_open);
+
+		// What the whole factory is worth: its yearly profit times PAYBACK_YEARS, but not less than a share of the cost of
+		// building it again
+		[[nodiscard]] fixed_point_t calculate_value(MarketInstance const& market_instance) const;
+		// The state buys (state_buys) the given share (0..1) of the factory from the capitalists or sells it to them.
+		// The state pays out of / receives into its treasury, the capitalists use / fill the savings fund of the state.
+		// Returns false when nothing could be traded.
+		bool trade_share(
+			State& state, CountryInstance& country, MarketInstance const& market_instance, fixed_point_t share,
+			bool state_buys
+		);
 		void set_subsidised(const bool new_subsidised) {
 			subsidised = new_subsidised;
 		}
