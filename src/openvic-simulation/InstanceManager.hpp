@@ -8,6 +8,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/country/CountryInstanceDeps.hpp"
+#include "openvic-simulation/country/Colonisation.hpp"
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
@@ -61,6 +62,7 @@ namespace OpenVic {
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
 		NotificationLog PROPERTY_REF(notification_log);
+		ColonisationManager PROPERTY_REF(colonisation_manager);
 		CreditManager PROPERTY_REF(credit_manager);
 		PoliticsInstanceManager PROPERTY_REF(politics_instance_manager);
 		/* Near the end so it is freed after other managers that may depend on it,
@@ -117,5 +119,10 @@ namespace OpenVic {
 			);
 		}
 		bool queue_game_action(game_action_t&& game_action);
+		// Runs an action at once instead of queueing it: for the AI, which acts inside the tick (when the queue is closed)
+		template<typename T, typename... Args>
+		bool run_game_action_now(Args&&... args) {
+			return game_action_manager.execute_game_action(game_action_t(std::in_place_type<T>, std::forward<Args>(args)...));
+		}
 	};
 }

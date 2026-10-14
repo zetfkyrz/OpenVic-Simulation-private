@@ -1,5 +1,6 @@
 #include "InstanceManager.hpp"
 
+#include "openvic-simulation/ai/CountryAI.hpp"
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/population/PopDynamics.hpp"
@@ -200,6 +201,7 @@ void InstanceManager::tick() {
 	unit_instance_manager.tick();
 	war_manager.tick(*this);
 	credit_manager.tick(*this);
+	colonisation_manager.tick(*this);
 
 	if (today.is_month_start()) {
 		market_instance.record_price_history();
@@ -207,6 +209,7 @@ void InstanceManager::tick() {
 		PoliticsDynamics::monthly_update(*this);
 		RebelDynamics::monthly_update(*this);
 		ResearchDynamics::monthly_update(*this);
+		CountryAI::monthly_update(*this);
 	}
 }
 

@@ -1046,3 +1046,24 @@ bool GameActionManager::VariantVisitor::operator() (enact_reform_argument_t cons
 	}
 	return country.add_reform(*reform);
 }
+
+// Colonisation
+bool GameActionManager::VariantVisitor::operator() (start_colonisation_argument_t const& argument) const {
+	const auto [country_index, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr) {
+		return false;
+	}
+	return instance_manager.get_colonisation_manager().start_project(
+		instance_manager, war_action_country(instance_manager, country_index), *province
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (cancel_colonisation_argument_t const& argument) const {
+	const auto [country_index, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr) {
+		return false;
+	}
+	return instance_manager.get_colonisation_manager().cancel_project(war_action_country(instance_manager, country_index), *province);
+}
