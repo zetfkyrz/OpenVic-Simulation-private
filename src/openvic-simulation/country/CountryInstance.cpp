@@ -2130,6 +2130,9 @@ void CountryInstance::country_tick_before_map(
 		available_funds
 	);
 
+	// What is left is free to be spent on subsidies and loans during the day
+	free_funds = available_funds;
+
 	//TODO market maker orders
 
 	taxable_income_by_pop_type.fill(0);
@@ -2499,6 +2502,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	const fixed_point_t gold_income_value = country_defines.get_gold_to_cash_rate() * total_gold_production;;
 	gold_income.set(gold_income_value);
 	cash_stockpile += gold_income_value;
+	free_funds = cash_stockpile.load();
 	const fixed_point_t yesterdays_balance = cash_stockpile - cash_stockpile_start_of_tick;
 	balance_history.push_back(yesterdays_balance);
 }

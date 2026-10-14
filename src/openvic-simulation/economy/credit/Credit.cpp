@@ -153,7 +153,7 @@ memory::vector<ExternalOffer> CreditManager::get_offers(
 		if (&lender == &borrower || !is_valid_country(lender) || !lender.is_ai() || lender.is_at_war_with(borrower)) {
 			continue;
 		}
-		const fixed_point_t surplus = lender.get_cash_stockpile().load() - AI_LENDING_RESERVE;
+		const fixed_point_t surplus = lender.get_spendable_cash() - AI_LENDING_RESERVE;
 		if (surplus < MIN_LOAN) {
 			continue;
 		}
@@ -187,7 +187,7 @@ bool CreditManager::take_external_loan(
 			continue;
 		}
 		amount = std::min(amount, offer.max_amount);
-		if (amount < MIN_LOAN || lender.get_cash_stockpile().load() < amount) {
+		if (amount < MIN_LOAN || lender.get_spendable_cash() < amount) {
 			return false;
 		}
 
@@ -253,7 +253,7 @@ bool CreditManager::give_external_loan(
 ) {
 	rate = clamp_rate(rate);
 	if (&lender == &borrower || !is_valid_country(lender) || !is_valid_country(borrower) || amount < MIN_LOAN
-		|| lender.get_cash_stockpile().load() < amount) {
+		|| lender.get_spendable_cash() < amount) {
 		return false;
 	}
 
@@ -359,7 +359,7 @@ bool CreditManager::give_internal_loan(
 	InstanceManager& instance_manager, CountryInstance& lender, State& state, const fixed_point_t amount,
 	fixed_point_t rate, const Loan::term_t term, const Loan::maturity_policy_t policy
 ) {
-	if (state.get_owner() != &lender || amount < MIN_LOAN || lender.get_cash_stockpile().load() < amount) {
+	if (state.get_owner() != &lender || amount < MIN_LOAN || lender.get_spendable_cash() < amount) {
 		return false;
 	}
 	if (count_capitalists(instance_manager, state) <= 0) {
@@ -402,7 +402,7 @@ fixed_point_t CreditManager::repay_loan(InstanceManager& instance_manager, Loan&
 
 	fixed_point_t paid = 0;
 	if (loan.kind == Loan::kind_t::EXTERNAL) {
-		paid = std::min(amount, loan.borrower->get_cash_stockpile().load());
+		paid = std::min(amount, loan.borrower->get_spendable_cash());
 		loan.borrower->spend_cash(paid);
 		loan.lender->add_cash(paid);
 	} else {
@@ -493,7 +493,7 @@ void CreditManager::monthly_interest_and_repayment(InstanceManager& instance_man
 
 	if (loan.kind == Loan::kind_t::EXTERNAL) {
 		CountryInstance& borrower = *loan.borrower;
-		if (borrower.get_cash_stockpile().load() >= interest) {
+		if (borrower.get_spendable_cash() >= interest) {
 			borrower.spend_cash(interest);
 			loan.lender->add_cash(interest);
 			loan.interest_paid += interest;

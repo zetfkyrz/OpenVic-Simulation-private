@@ -184,6 +184,7 @@ namespace OpenVic {
 		ValueHistory<fixed_point_t> PROPERTY(balance_history);
 		OV_STATE_PROPERTY(fixed_point_t, gold_income);
 		atomic_fixed_point_t PROPERTY(cash_stockpile);
+		fixed_point_t free_funds;
 		spin_mutex taxable_income_mutex;
 		OV_IFLATMAP_PROPERTY(PopType, fixed_point_t, taxable_income_by_pop_type);
 		OV_STATE_PROPERTY(fixed_point_t, tax_efficiency);
@@ -553,10 +554,20 @@ namespace OpenVic {
 		// Puts money into the national stockpile, e.g. the dividends of state owned factories
 		void add_cash(const fixed_point_t amount) {
 			cash_stockpile += amount;
+			free_funds += amount;
 		}
 		// Takes money out of the national stockpile, e.g. to pay for construction
 		void spend_cash(const fixed_point_t amount) {
 			cash_stockpile -= amount;
+			free_funds -= amount;
+		}
+		// The money that is not committed to the budget and the national stockpile purchases of the day: what can be
+		// spent on subsidies, loans and the like while the day is being simulated without overspending the treasury
+		fixed_point_t get_spendable_cash() const {
+			const fixed_point_t cash = cash_stockpile.load();
+			const fixed_point_t free = free_funds;
+			const fixed_point_t spendable = cash < free ? cash : free;
+			return spendable > fixed_point_t::_0 ? spendable : fixed_point_t::_0;
 		}
 		void set_army_spending_slider_value(const fixed_point_t new_value);
 		void set_navy_spending_slider_value(const fixed_point_t new_value);

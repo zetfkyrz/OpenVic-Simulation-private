@@ -129,7 +129,7 @@ bool FactoryInstance::trade_share(
 	if (state_buys) {
 		share = std::min(share, fixed_point_t::_1 - state_share);
 		const fixed_point_t price = value * share;
-		if (share <= fixed_point_t::_0 || country.get_cash_stockpile().load() < price) {
+		if (share <= fixed_point_t::_0 || country.get_spendable_cash() < price) {
 			return false;
 		}
 		country.spend_cash(price);
@@ -593,7 +593,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 				}
 			}
 
-			const fixed_point_t treasury = owner->get_cash_stockpile().load();
+			const fixed_point_t treasury = owner->get_spendable_cash();
 			if (state_fraction > 0 && treasury > 0) {
 				const fixed_point_t paid = std::min(shortfall * state_fraction, treasury);
 				owner->spend_cash(paid);
