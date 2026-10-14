@@ -862,19 +862,20 @@ bool GameActionManager::VariantVisitor::operator() (merge_armies_argument_t cons
 
 bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t const& argument) const {
 	const auto [army_id, leader_id] = argument;
-	ArmyInstance* const army = find_army(instance_manager, army_id);
-	if (army == nullptr) {
+	// Generals lead armies, admirals lead fleets
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+	if (group == nullptr) {
 		return false;
 	}
-	// Leader 0 takes the general off the army
+	// Leader 0 takes the leader off the group
 	if (leader_id == 0) {
-		return army->get_leader() != nullptr && army->set_leader(nullptr);
+		return group->get_leader() != nullptr && group->set_leader(nullptr);
 	}
 	LeaderInstance* const leader = instance_manager.get_unit_instance_manager().get_leader_instance_by_unique_id(leader_id);
-	if (leader == nullptr || leader->branch != unit_branch_t::LAND || &leader->country != &army->get_country() || !leader->get_can_be_used()) {
+	if (leader == nullptr || leader->branch != group->branch || &leader->country != &group->get_country() || !leader->get_can_be_used()) {
 		return false;
 	}
-	return army->set_leader(leader);
+	return group->set_leader(leader);
 }
 
 bool GameActionManager::VariantVisitor::operator() (disband_regiment_argument_t const& argument) const {

@@ -1160,33 +1160,15 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	const Date today = instance_manager.get_today();
 
-	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (country.is_rebel_country() || !country.exists()) {
-			continue;
-		}
-
-		const size_t army_count = country.get_armies().size();
-		if (army_count == 0) {
-			continue;
-		}
-
-		// Once a month new generals are made as long as there are leadership points and armies without a general
-		if (today.is_month_start() && country.get_auto_create_leaders() && country.get_create_leader_count() > 0
-			&& country.get_leaders<unit_branch_t::LAND>().size() < army_count) {
-			unit_manager.create_leader(country, unit_branch_t::LAND, today);
-		}
-
-		if (!country.get_auto_assign_leaders()) {
-			continue;
-		}
-
-		// Free generals (the best prestige first) go to armies that have none
-		for (ArmyInstance& army : country.get_armies()) {
-			if (army.get_leader() != nullptr || army.empty()) {
+	// Free leaders (the best prestige first) go to groups that have none
+	const auto assign_free = [](auto&& groups, auto&& leaders) -> void {
+		for (auto const& wrapped : groups) {
+			auto& group = wrapped.get();
+			if (group.get_leader() != nullptr || group.empty()) {
 				continue;
 			}
 			LeaderInstance* best = nullptr;
-			for (LeaderInstance& leader : country.get_leaders<unit_branch_t::LAND>()) {
+			for (LeaderInstance& leader : leaders) {
 				if (leader.get_unit_instance_group() == nullptr && leader.get_can_be_used()
 					&& (best == nullptr || leader.get_prestige() > best->get_prestige())) {
 					best = &leader;
@@ -1195,8 +1177,36 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 			if (best == nullptr) {
 				break;
 			}
-			army.set_leader(best);
+			group.set_leader(best);
 		}
+	};
+
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (country.is_rebel_country() || !country.exists()) {
+			continue;
+		}
+
+		const size_t army_count = country.get_armies().size();
+		const size_t navy_count = country.get_navies().size();
+		if (army_count == 0 && navy_count == 0) {
+			continue;
+		}
+
+		// Once a month new leaders are made as long as there are leadership points and groups without a leader;
+		// generals first, then admirals
+		if (today.is_month_start() && country.get_auto_create_leaders() && country.get_create_leader_count() > 0) {
+			if (country.get_leaders<unit_branch_t::LAND>().size() < army_count) {
+				unit_manager.create_leader(country, unit_branch_t::LAND, today);
+			} else if (country.get_leaders<unit_branch_t::NAVAL>().size() < navy_count) {
+				unit_manager.create_leader(country, unit_branch_t::NAVAL, today);
+			}
+		}
+
+		if (!country.get_auto_assign_leaders()) {
+			continue;
+		}
+		assign_free(country.get_armies(), country.get_leaders<unit_branch_t::LAND>());
+		assign_free(country.get_navies(), country.get_leaders<unit_branch_t::NAVAL>());
 	}
 }
 
