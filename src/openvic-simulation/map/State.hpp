@@ -50,6 +50,9 @@ namespace OpenVic {
 		> SPAN_PROPERTY(pops_cache_by_type);
 
 		memory::colony<FactoryInstance> PROPERTY(factories);
+		// Savings of the capitalists of the state: part of the dividends they get, used to cover the losses of the
+		// factories they own (and, later, to invest)
+		fixed_point_t PROPERTY(capitalist_fund);
 
 		void _update_country();
 
@@ -76,6 +79,16 @@ namespace OpenVic {
 		}
 
 		void update_gamestate();
+
+		void add_to_capitalist_fund(const fixed_point_t amount) {
+			capitalist_fund += amount;
+		}
+		// Takes at most the amount out of the fund, returns what was taken
+		fixed_point_t take_from_capitalist_fund(const fixed_point_t amount) {
+			const fixed_point_t taken = amount < capitalist_fund ? amount : capitalist_fund;
+			capitalist_fund -= taken;
+			return taken > fixed_point_t::_0 ? taken : fixed_point_t::_0;
+		}
 
 		memory::colony<FactoryInstance>& get_mutable_factories() {
 			return factories;

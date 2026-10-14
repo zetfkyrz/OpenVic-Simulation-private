@@ -21,8 +21,10 @@ using namespace OpenVic;
 namespace {
 	// Time it takes to build a level when the building type does not specify it
 	constexpr int64_t DEFAULT_CONSTRUCTION_DAYS = 180;
-	// Days of inputs the factory is funded with when it starts operating
-	constexpr int32_t FOUNDING_CAPITAL_DAYS = 5;
+	// Share of the cost of a building the factory starts with (when it is built and at the start of the game)
+	const fixed_point_t STARTING_BUDGET_SHARE = fixed_point_t(5) / 100;
+	// Share of the dividends the capitalists put into the savings fund of the state
+	const fixed_point_t CAPITALIST_SAVINGS_SHARE = fixed_point_t(3) / 10;
 	// Days of input consumption the factory tries to keep in its stockpile
 	constexpr int32_t STOCKPILE_TARGET_DAYS = 2;
 	// Share of the daily profit saved in the expansion fund until it covers the cost of an expansion
@@ -141,21 +143,10 @@ void FactoryInstance::after_sell(
 	factory.sold_quantity_today += sell_result.quantity_sold;
 }
 
-void FactoryInstance::top_up_budget(MarketInstance const& market_instance) {
-	if (level <= building_level_t(0)) {
-		return;
-	}
-
-	fixed_point_t daily_input_value = 0;
-	for (Input const& input : inputs) {
-		daily_input_value += input.quantity_per_level * static_cast<int32_t>(type_safe::get(level)) *
-			market_instance.get_good_instance(input.good.index).get_price();
-	}
-
-	const fixed_point_t founding_capital = daily_input_value * FOUNDING_CAPITAL_DAYS;
-	if (budget < founding_capital) {
-		budget = founding_capital;
-	}
+void FactoryInstance::grant_starting_budget(MarketInstance const& market_instance, const building_level_t levels) {
+	// The factory starts with a small budget so that a first unprofitable days do not close it at once
+	budget += calculate_construction_cost(building_type, market_instance) * STARTING_BUDGET_SHARE *
+		static_cast<int32_t>(type_safe::get(levels));
 }
 
 void FactoryInstance::settle(State& state, MarketInstance const& market_instance) {
@@ -234,6 +225,10 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		}
 	}
 
+	subsidy_yesterday = subsidy_today;
+	subsidy_today = fixed_point_t::_0;
+	private_cover_yesterday = private_cover_today;
+	private_cover_today = fixed_point_t::_0;
 	revenue_yesterday = revenue;
 	wages_yesterday = wages;
 	owner_income_yesterday = owner_income;
@@ -257,6 +252,11 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		unprofitable_days++;
 		profitable_days = 0;
 		efficiency = std::max(efficiency - fixed_point_t::epsilon * 130, fixed_point_t::_0_50 + fixed_point_t::_0_10);
+		if (subsidised) {
+			// The state pays for the losses: the factory neither slows down nor closes
+			throttle = fixed_point_t::_1;
+			return;
+		}
 		throttle = std::max(throttle - fixed_point_t::_0_10, fixed_point_t::_0_20);
 
 		if (unprofitable_days >= DAYS_OF_LOSS_BEFORE_CLOSING && throttle <= fixed_point_t::_0_20) {
@@ -312,7 +312,7 @@ void FactoryInstance::advance_construction(State& state, const Date today, Marke
 	level += building_level_t(1);
 	construction_start.reset();
 	construction_end.reset();
-	top_up_budget(market_instance);
+	grant_starting_budget(market_instance, building_level_t(1));
 	is_funded = true;
 }
 
@@ -331,8 +331,12 @@ void FactoryInstance::pay_dividend(
 		}
 
 		if (total_owner_size > 0) {
+			// Part of what the capitalists get is saved in the fund of the state, the rest is the income of their pops
+			const fixed_point_t saved = capitalists_part * CAPITALIST_SAVINGS_SHARE;
+			const fixed_point_t paid_to_pops = capitalists_part - saved;
+			state.add_to_capitalist_fund(saved);
 			for (Pop& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
-				pop.add_factory_owner_income(capitalists_part * type_safe::get(pop.get_size()) / total_owner_size);
+				pop.add_factory_owner_income(paid_to_pops * type_safe::get(pop.get_size()) / total_owner_size);
 			}
 		} else {
 			// Without capitalists in the state the whole profit belongs to the state
@@ -431,8 +435,21 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	advance_construction(state, today, market_instance);
 
 	if (!is_funded && level > building_level_t(0)) {
-		top_up_budget(market_instance);
+		grant_starting_budget(market_instance, level);
 		is_funded = true;
+
+		// A factory in a state without capitalists belongs to the state, otherwise to the capitalists
+		if (state_share < fixed_point_t::_1) {
+			int32_t capitalists = 0;
+			if (production_type.owner.has_value()) {
+				for (Pop const& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+					capitalists += type_safe::get(pop.get_size());
+				}
+			}
+			if (capitalists <= 0) {
+				state_share = fixed_point_t::_1;
+			}
+		}
 	}
 
 	workers.clear();
@@ -492,6 +509,53 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		market_instance.place_market_sell_order(
 			{ production_type.output_good.index, country_index, output, this, after_sell }, reusable_vector
 		);
+	}
+
+	// The factory pays its purchases with its own budget first. What the budget lacks is covered by the owners:
+	// the state (if the factory is subsidised, as far as the subsidy mode says) and the capitalists, from their
+	// savings fund, for their share of the factory.
+	{
+		fixed_point_t desired = 0;
+		for (Input const& input : inputs) {
+			const fixed_point_t wanted = input.quantity_per_level * level_value * throttle * STOCKPILE_TARGET_DAYS - input.stockpile;
+			if (wanted > 0 && market_instance.get_is_available(input.good.index)) {
+				desired += market_instance.get_max_money_to_allocate_to_buy_quantity(input.good.index, wanted) * tariff_multiplier;
+			}
+		}
+		const fixed_point_t shortfall = desired - budget;
+		if (shortfall > 0) {
+			fixed_point_t state_fraction = 0;
+			fixed_point_t capitalist_fraction = fixed_point_t::_1 - state_share;
+			if (subsidised) {
+				switch (owner->get_subsidy_mode()) {
+					using enum CountryInstance::subsidy_mode_t;
+				case ALL:
+					state_fraction = fixed_point_t::_1;
+					capitalist_fraction = 0;
+					break;
+				case STATE_ONLY:
+					// Factories owned entirely by the state are paid for by the state (share 1), the others by the shares
+					state_fraction = state_share;
+					break;
+				case BY_SHARE:
+					state_fraction = state_share;
+					break;
+				}
+			}
+
+			const fixed_point_t treasury = owner->get_cash_stockpile().load();
+			if (state_fraction > 0 && treasury > 0) {
+				const fixed_point_t paid = std::min(shortfall * state_fraction, treasury);
+				owner->spend_cash(paid);
+				budget += paid;
+				subsidy_today += paid;
+			}
+			if (capitalist_fraction > 0) {
+				const fixed_point_t paid = state.take_from_capitalist_fund(shortfall * capitalist_fraction);
+				budget += paid;
+				private_cover_today += paid;
+			}
+		}
 	}
 
 	// Buy the inputs for the next days, only spending what the factory's own budget can afford

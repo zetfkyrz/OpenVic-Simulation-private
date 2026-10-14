@@ -66,6 +66,14 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(expansion_fund);
 		// Share of the factory owned by the state (the rest belongs to the capitalists), 0..1
 		fixed_point_t PROPERTY_RW(state_share);
+		// A subsidised factory keeps running at a loss: its own budget is used first, and the state treasury pays only
+		// the part of the purchases the budget cannot cover
+		bool PROPERTY_CUSTOM_PREFIX(subsidised, is, false);
+		fixed_point_t subsidy_today;
+		fixed_point_t PROPERTY(subsidy_yesterday);
+		// Losses covered by the capitalists of the state
+		fixed_point_t private_cover_today;
+		fixed_point_t PROPERTY(private_cover_yesterday);
 		// Whether the factory has received its founding capital, which factories added by the game setup have not yet
 		bool is_funded = false;
 		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
@@ -110,7 +118,8 @@ namespace OpenVic {
 		// Pays the dividend out of the budget to the capitalists and the state according to the shares, adds what each got
 		void pay_dividend(State& state, fixed_point_t amount, fixed_point_t& capitalists_income, fixed_point_t& state_income);
 		void hire(State& state);
-		void top_up_budget(MarketInstance const& market_instance);
+		// Gives the factory a starting budget of 5% of the cost of the levels that were just built
+		void grant_starting_budget(MarketInstance const& market_instance, building_level_t levels);
 
 	public:
 		BuildingType const& building_type;
@@ -141,6 +150,9 @@ namespace OpenVic {
 		// Quantity of the good used up on a day when the construction is worked
 		[[nodiscard]] fixed_point_t get_daily_construction_goods(GoodDefinition const& good) const;
 		void set_open(const bool new_open);
+		void set_subsidised(const bool new_subsidised) {
+			subsidised = new_subsidised;
+		}
 
 		void tick(State& state, MarketInstance& market_instance, const Date today);
 	};

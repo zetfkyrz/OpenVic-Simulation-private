@@ -17,6 +17,7 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/population/Pop.hpp>
@@ -51,6 +52,8 @@ inline static void print_memory_usage( //
 static size_t economy_report_days = 0;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
+// Subsidise all factories of all countries at the start of the economy report (-S)
+static bool subsidise_all = false;
 
 // Summary of the factories and of the money in the economy, printed with the "ECON" prefix
 static void print_economy_report(InstanceManager& instance_manager) {
@@ -435,6 +438,12 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 
 	if (ret && economy_report_days > 0) {
 		InstanceManager& instance_manager = *game_manager.get_instance_manager();
+		if (subsidise_all) {
+			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
+			}
+			instance_manager.force_tick_and_update();
+		}
 		print_economy_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
@@ -497,6 +506,8 @@ int main(int argc, char const* argv[]) {
 			return 0;
 		} else if (strcmp(arg, "-t") == 0) {
 			run_tests = true;
+		} else if (strcmp(arg, "-S") == 0) {
+			subsidise_all = true;
 		} else if (strcmp(arg, "-k") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing bookmark index after \"-k\".");

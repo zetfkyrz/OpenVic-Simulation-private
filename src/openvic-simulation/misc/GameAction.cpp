@@ -591,6 +591,96 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 	return true;
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_factory_subsidised_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, new_subsidised] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	FactoryInstance* factory = target.state->find_factory(*target.building_type);
+	if (factory == nullptr || factory->is_subsidised() == new_subsidised) {
+		return false;
+	}
+
+	factory->set_subsidised(new_subsidised);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_all_factories_open_argument_t const& argument) const {
+	const auto [country_index, new_open] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	bool changed = false;
+	for (State* state : country.get_states()) {
+		for (FactoryInstance& factory : state->get_mutable_factories()) {
+			if (factory.get_level() > building_level_t(0) && factory.is_open() != new_open) {
+				factory.set_open(new_open);
+				changed = true;
+			}
+		}
+	}
+	return changed;
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_all_factories_subsidised_argument_t const& argument) const {
+	const auto [country_index, new_subsidised] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	bool changed = false;
+	for (State* state : country.get_states()) {
+		for (FactoryInstance& factory : state->get_mutable_factories()) {
+			if (factory.is_subsidised() != new_subsidised) {
+				factory.set_subsidised(new_subsidised);
+				changed = true;
+			}
+		}
+	}
+	return changed;
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_subsidy_mode_argument_t const& argument) const {
+	const auto [country_index, mode] = argument;
+	if (OV_unlikely(mode > static_cast<std::uint32_t>(CountryInstance::subsidy_mode_t::BY_SHARE))) {
+		spdlog::error_s("GAME_ACTION_SET_SUBSIDY_MODE called with invalid mode: {}", mode);
+		return false;
+	}
+
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	const auto new_mode = static_cast<CountryInstance::subsidy_mode_t>(mode);
+	if (country.get_subsidy_mode() == new_mode) {
+		return false;
+	}
+	country.set_subsidy_mode(new_mode);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (expand_all_factories_argument_t const& argument) const {
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(
+		type_safe::get(argument)
+	);
+
+	bool changed = false;
+	for (State* state : country.get_states()) {
+		for (FactoryInstance& factory : state->get_mutable_factories()) {
+			if (!factory.can_be_expanded() || !country.is_building_type_unlocked(factory.building_type)) {
+				continue;
+			}
+			// Like the expansion of a single factory: the money part is paid at once, the goods come from the stockpile
+			const fixed_point_t cost = factory.building_type.cost;
+			if (country.get_cash_stockpile().load() < cost) {
+				continue;
+			}
+			country.spend_cash(cost);
+			factory.start_construction(instance_manager.get_today(), true);
+			changed = true;
+		}
+	}
+	return changed;
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t const& argument) const {
 	const auto [country_index, province_index, building_type_index, new_open] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
