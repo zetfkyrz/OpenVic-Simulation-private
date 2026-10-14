@@ -38,6 +38,13 @@ namespace OpenVic {
 		LeaderBase(LeaderBase&&) = default;
 
 		void set_picture(std::string_view new_picture);
+		// Prestige never goes below zero
+		void add_prestige(const fixed_point_t amount) {
+			prestige += amount;
+			if (prestige < fixed_point_t::_0) {
+				prestige = fixed_point_t::_0;
+			}
+		}
 	};
 
 	struct UnitInstanceManager;

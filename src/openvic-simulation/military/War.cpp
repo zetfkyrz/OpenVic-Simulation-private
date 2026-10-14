@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/economy/BuildingInstance.hpp"
@@ -11,6 +12,8 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/military/LeaderTrait.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -30,9 +33,44 @@ namespace {
 		return result;
 	}
 
+	// Bonuses of a general from the personality and background traits
+	struct LeaderBonus {
+		fixed_point_t attack, defence, morale, attrition;
+	};
+
+	LeaderBonus get_leader_bonus(ArmyInstance const& army, ModifierEffectCache const& cache) {
+		LeaderBonus bonus;
+		LeaderInstance const* const leader = army.get_leader();
+		if (leader == nullptr) {
+			return bonus;
+		}
+		for (LeaderTrait const* trait : { leader->get_personality(), leader->get_background() }) {
+			if (trait == nullptr) {
+				continue;
+			}
+			if (cache.get_attack_leader() != nullptr) {
+				bonus.attack += trait->get_effect(*cache.get_attack_leader());
+			}
+			if (cache.get_defence_leader() != nullptr) {
+				bonus.defence += trait->get_effect(*cache.get_defence_leader());
+			}
+			if (cache.get_morale_leader() != nullptr) {
+				bonus.morale += trait->get_effect(*cache.get_morale_leader());
+			}
+			if (cache.get_attrition_leader() != nullptr) {
+				bonus.attrition += trait->get_effect(*cache.get_attrition_leader());
+			}
+		}
+		return bonus;
+	}
+
 	struct BattleSide {
 		std::vector<ArmyInstance*> armies;
 		fixed_point_t power;
+		// Divides the damage the side takes: defence of the regiments, generals and the dig in of the armies
+		fixed_point_t defence_factor = fixed_point_t::_1;
+		// Divides the organisation the side loses: morale of the generals
+		fixed_point_t morale_factor = fixed_point_t::_1;
 		fixed_point_t organisation;
 		fixed_point_t max_organisation;
 		size_t regiment_count = 0;
@@ -42,7 +80,13 @@ namespace {
 		}
 	};
 
-	void calculate_side(BattleSide& side) {
+	// Each point of a general's attack / defence / morale is worth this share
+	constexpr int32_t LEADER_POINT_DIVISOR = 10;
+	// Each level of dig in makes the army take this much less damage
+	constexpr int32_t DIG_IN_DIVISOR = 10;
+	constexpr std::uint64_t LEADER_DEATH_ODDS = 30;
+
+	void calculate_side(BattleSide& side, ModifierEffectCache const& cache) {
 		const fixed_point_t min_org_factor = fixed_point_t(3) / 10;
 
 		side.power = fixed_point_t::_0;
@@ -50,7 +94,20 @@ namespace {
 		side.max_organisation = fixed_point_t::_0;
 		side.regiment_count = 0;
 
+		fixed_point_t defence_sum = fixed_point_t::_0;
+		fixed_point_t morale_sum = fixed_point_t::_0;
+		fixed_point_t dig_in_best = fixed_point_t::_0;
+
 		for (ArmyInstance* army : side.armies) {
+			const LeaderBonus bonus = get_leader_bonus(*army, cache);
+			const fixed_point_t attack_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.attack / LEADER_POINT_DIVISOR);
+			const fixed_point_t defence_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.defence / LEADER_POINT_DIVISOR);
+			const fixed_point_t morale_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.morale);
+
+			if (fixed_point_t(static_cast<int32_t>(army->get_dig_in_level())) > dig_in_best) {
+				dig_in_best = fixed_point_t(static_cast<int32_t>(army->get_dig_in_level()));
+			}
+
 			for (RegimentInstance& regiment : army->get_regiment_instances()) {
 				const fixed_point_t max_strength = regiment.get_max_strength();
 				const fixed_point_t max_organisation = regiment.get_max_organisation();
@@ -66,11 +123,22 @@ namespace {
 					organisation_factor = min_org_factor;
 				}
 
-				side.power += (regiment.get_regiment_type().attack + fixed_point_t::_1) * strength_factor * organisation_factor;
+				side.power += (regiment.get_regiment_type().attack + fixed_point_t::_1) * strength_factor * organisation_factor
+					* attack_multiplier;
+				defence_sum += (regiment.get_regiment_type().defence + fixed_point_t::_1) * defence_multiplier;
+				morale_sum += morale_multiplier;
 				side.organisation += regiment.get_organisation();
 				side.max_organisation += max_organisation;
 				side.regiment_count++;
 			}
+		}
+
+		if (side.regiment_count > 0) {
+			const int32_t count = static_cast<int32_t>(side.regiment_count);
+			// A regiment with defence 1 (value 2 here) takes the damage of the earlier model, better defence takes less
+			side.defence_factor = std::max(fixed_point_t::_0_50, defence_sum / count / 2)
+				* (fixed_point_t::_1 + dig_in_best / DIG_IN_DIVISOR);
+			side.morale_factor = morale_sum / count;
 		}
 	}
 
@@ -84,6 +152,8 @@ namespace {
 		const fixed_point_t strength_damage = fixed_point_t(1) / 100;
 
 		const fixed_point_t average_power = enemy_power / static_cast<int32_t>(target.regiment_count);
+		const fixed_point_t strength_power = average_power / target.defence_factor;
+		const fixed_point_t organisation_power = strength_power / target.morale_factor;
 
 		for (ArmyInstance* army : target.armies) {
 			for (RegimentInstance& regiment : army->get_regiment_instances()) {
@@ -93,8 +163,8 @@ namespace {
 				// Regiments without organisation are routing and lose men much faster
 				const int32_t rout_factor = regiment.get_organisation() > fixed_point_t::_0 ? 1 : 3;
 				regiment.take_damage(
-					regiment.get_max_organisation() * average_power * organisation_damage,
-					regiment.get_max_strength() * average_power * strength_damage * rout_factor
+					regiment.get_max_organisation() * organisation_power * organisation_damage,
+					regiment.get_max_strength() * strength_power * strength_damage * rout_factor
 				);
 			}
 		}
@@ -496,6 +566,7 @@ void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t 
 void WarManager::update_combat(InstanceManager& instance_manager) {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		if (province.get_armies().empty()) {
@@ -555,8 +626,8 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 			}
 		}
 
-		calculate_side(side_a);
-		calculate_side(side_b);
+		calculate_side(side_a, cache);
+		calculate_side(side_b, cache);
 		if (side_a.regiment_count == 0 || side_b.regiment_count == 0) {
 			continue;
 		}
@@ -568,8 +639,8 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 
 		apply_damage(side_b, power_a);
 		apply_damage(side_a, power_b);
-		calculate_side(side_a);
-		calculate_side(side_b);
+		calculate_side(side_a, cache);
+		calculate_side(side_b, cache);
 
 		for (ArmyInstance* army : side_a.armies) {
 			fought_today.insert(army->unique_id);
@@ -609,6 +680,23 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 				score += gain;
 				if (score > MAX_BATTLE_SCORE) {
 					score = fixed_point_t(MAX_BATTLE_SCORE);
+				}
+			}
+		}
+
+		// The generals of the winners gain prestige, the generals of the losers lose it and may die
+		for (ArmyInstance* army : winner.armies) {
+			if (LeaderInstance* const leader = army->get_leader()) {
+				leader->add_prestige(fixed_point_t(1) / 100);
+			}
+		}
+		for (ArmyInstance* army : loser.armies) {
+			if (LeaderInstance* const leader = army->get_leader()) {
+				leader->add_prestige(fixed_point_t(-1) / 100);
+				// A deterministic "dice": about one lost battle in LEADER_DEATH_ODDS kills the general
+				const std::uint64_t dice = (leader->unique_id * 2654435761ULL + static_cast<std::uint64_t>((instance_manager.get_today() - Date {}).to_int()) * 40503ULL) >> 3;
+				if (dice % LEADER_DEATH_ODDS == 0) {
+					unit_manager.destroy_leader(*leader);
 				}
 			}
 		}
@@ -671,7 +759,19 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 			siege.besieger = besieger;
 		}
 		siege.days_required = get_siege_days_required(province);
-		siege.days++;
+		// More regiments take a fortress faster, the siege skill of the regiments adds to it (up to 4 times as fast)
+		fixed_point_t siege_speed = fixed_point_t::_1;
+		for (ArmyInstance const& army : province.get_armies()) {
+			if (&army.get_country() != besieger) {
+				continue;
+			}
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				siege_speed += fixed_point_t(1) / 8 + regiment.get_regiment_type().siege / 10;
+			}
+		}
+		siege_speed = std::min(siege_speed, fixed_point_t(4));
+		siege.progress += siege_speed;
+		siege.days = siege.progress.floor<int32_t>();
 
 		if (siege.days >= siege.days_required) {
 			province.set_controller(besieger);
@@ -748,6 +848,109 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	}
 }
 
+void WarManager::update_attrition(InstanceManager& instance_manager) {
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+
+	// Share of the maximum strength lost each day outside of the own lands, and extra for armies without supplies
+	const fixed_point_t base_attrition = fixed_point_t(2) / 1000;
+	const fixed_point_t supply_attrition = fixed_point_t(3) / 1000;
+	// Attrition never kills a regiment: it stops at this share of the strength
+	const fixed_point_t floor_share = fixed_point_t(1) / 5;
+
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (province.get_armies().empty() || province.province_definition.is_water()) {
+			continue;
+		}
+		CountryInstance const* const owner = province.get_owner();
+
+		for (ArmyInstance& army : province.get_armies()) {
+			CountryInstance& country = army.get_country();
+			if (country.is_rebel_country()) {
+				continue;
+			}
+
+			const bool friendly = owner == &country || (owner != nullptr && country.has_alliance_with(*owner));
+			// Only countries at war need supplies
+			const fixed_point_t supply = country.is_at_war() ? country.get_army_supply_ratio() : fixed_point_t::_1;
+
+			fixed_point_t rate = fixed_point_t::_0;
+			if (!friendly) {
+				rate += base_attrition;
+			}
+			if (supply < fixed_point_t::_1) {
+				rate += supply_attrition * (fixed_point_t::_1 - supply) * (friendly ? fixed_point_t::_0_50 : fixed_point_t::_1);
+			}
+			if (rate <= fixed_point_t::_0) {
+				continue;
+			}
+
+			// Modifiers of the country (technology, ...) and the general change the attrition
+			fixed_point_t multiplier = fixed_point_t::_1;
+			if (cache.get_land_attrition() != nullptr) {
+				multiplier += country.get_modifier_effect_value(*cache.get_land_attrition());
+			}
+			multiplier += get_leader_bonus(army, cache).attrition;
+			if (multiplier <= fixed_point_t::_0) {
+				continue;
+			}
+			rate *= multiplier;
+
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				const fixed_point_t floor_strength = regiment.get_max_strength() * floor_share;
+				if (regiment.get_strength() <= floor_strength) {
+					continue;
+				}
+				const fixed_point_t loss = std::min(regiment.get_max_strength() * rate, regiment.get_strength() - floor_strength);
+				regiment.take_damage(fixed_point_t::_0, loss);
+			}
+		}
+	}
+}
+
+void WarManager::update_leaders(InstanceManager& instance_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	const Date today = instance_manager.get_today();
+
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (country.is_rebel_country() || !country.exists()) {
+			continue;
+		}
+
+		const size_t army_count = country.get_armies().size();
+		if (army_count == 0) {
+			continue;
+		}
+
+		// Once a month new generals are made as long as there are leadership points and armies without a general
+		if (today.is_month_start() && country.get_auto_create_leaders() && country.get_create_leader_count() > 0
+			&& country.get_leaders<unit_branch_t::LAND>().size() < army_count) {
+			unit_manager.create_leader(country, unit_branch_t::LAND, today);
+		}
+
+		if (!country.get_auto_assign_leaders()) {
+			continue;
+		}
+
+		// Free generals (the best prestige first) go to armies that have none
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.get_leader() != nullptr || army.empty()) {
+				continue;
+			}
+			LeaderInstance* best = nullptr;
+			for (LeaderInstance& leader : country.get_leaders<unit_branch_t::LAND>()) {
+				if (leader.get_unit_instance_group() == nullptr && leader.get_can_be_used()
+					&& (best == nullptr || leader.get_prestige() > best->get_prestige())) {
+					best = &leader;
+				}
+			}
+			if (best == nullptr) {
+				break;
+			}
+			army.set_leader(best);
+		}
+	}
+}
+
 void WarManager::tick(InstanceManager& instance_manager) {
 	fought_today.clear();
 
@@ -778,6 +981,8 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_sieges(instance_manager);
 	update_scores(instance_manager);
 	update_army_recovery(instance_manager);
+	update_attrition(instance_manager);
+	update_leaders(instance_manager);
 	update_auto_plan(instance_manager);
 	update_fronts(instance_manager);
 }

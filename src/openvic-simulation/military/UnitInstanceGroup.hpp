@@ -290,6 +290,9 @@ namespace OpenVic {
 		// Deletes a group and all of its units, the group must not be used after this call.
 		void destroy_group(UnitInstanceGroup& group);
 
+		// Deletes a leader (died in a battle), takes it off its army
+		void destroy_leader(LeaderInstance& leader);
+
 		LeaderInstance* get_leader_instance_by_unique_id(unique_id_t unique_id);
 		UnitInstance* get_unit_instance_by_unique_id(unique_id_t unique_id);
 		UnitInstanceGroup* get_unit_instance_group_by_unique_id(unique_id_t unique_id);

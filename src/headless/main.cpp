@@ -274,6 +274,75 @@ static bool test_armies(InstanceManager& instance_manager, DefinitionManager con
 	return ok;
 }
 
+// A battle between two armies and the siege of a province after it, printed with the "BATTLE" prefix
+static bool test_battle(InstanceManager& instance_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("BATTLE {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	ArmyInstance* army_a = nullptr;
+	ArmyInstance* army_b = nullptr;
+	for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+		if (candidate.get_country().is_rebel_country() || candidate.get_unit_count() < 2) {
+			continue;
+		}
+		ArmyInstance* mutable_army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+		if (army_a == nullptr) {
+			army_a = mutable_army;
+		} else if (&mutable_army->get_country() != &army_a->get_country()
+			&& !mutable_army->get_country().has_alliance_with(army_a->get_country())) {
+			army_b = mutable_army;
+			break;
+		}
+	}
+	if (army_a == nullptr || army_b == nullptr) {
+		fmt::println("BATTLE FAIL : no two armies of different countries");
+		return false;
+	}
+
+	CountryInstance& country_a = army_a->get_country();
+	CountryInstance& country_b = army_b->get_country();
+	check(instance_manager.get_war_manager().declare_war(instance_manager, country_a, country_b), "declare war");
+	fmt::println("BATTLE {} (leader: {}) vs {} (leader: {})", country_a.get_identifier(),
+		army_a->get_leader() != nullptr ? army_a->get_leader()->get_name() : "none",
+		country_b.get_identifier(), army_b->get_leader() != nullptr ? army_b->get_leader()->get_name() : "none");
+
+	// B attacks the province of A
+	army_a->clear_path();
+	army_b->clear_path();
+	army_b->set_location(army_a->get_location());
+	ProvinceInstance& province = army_a->get_location();
+	const unique_id_t id_a = army_a->unique_id;
+	const unique_id_t id_b = army_b->unique_id;
+	fmt::println("BATTLE regiments A={} B={} in province {}", army_a->get_unit_count(), army_b->get_unit_count(), province.get_identifier());
+
+	int day = 0;
+	for (; day < 90; ++day) {
+		instance_manager.force_tick_and_update();
+		UnitInstanceGroup* const a = unit_manager.get_unit_instance_group_by_unique_id(id_a);
+		UnitInstanceGroup* const b = unit_manager.get_unit_instance_group_by_unique_id(id_b);
+		if (day % 5 == 0 || a == nullptr || b == nullptr) {
+			fmt::println("BATTLE day {:2}: A {} org {:.2f} str {:.2f} | B {} org {:.2f} str {:.2f}", day + 1,
+				a != nullptr ? a->get_unit_count() : 0, a != nullptr ? static_cast<double>(a->get_organisation_proportion()) : 0.0,
+				a != nullptr ? static_cast<double>(a->get_strength_proportion()) : 0.0,
+				b != nullptr ? b->get_unit_count() : 0, b != nullptr ? static_cast<double>(b->get_organisation_proportion()) : 0.0,
+				b != nullptr ? static_cast<double>(b->get_strength_proportion()) : 0.0);
+		}
+		const bool a_here = a != nullptr && &a->get_location() == &province;
+		const bool b_here = b != nullptr && &b->get_location() == &province;
+		if (!(a_here && b_here)) {
+			fmt::println("BATTLE ended after {} days: A {} B {}", day + 1, a == nullptr ? "destroyed" : (a_here ? "holds" : "retreated"),
+				b == nullptr ? "destroyed" : (b_here ? "holds" : "retreated"));
+			break;
+		}
+	}
+	check(day < 90, "battle is decided within 90 days");
+	return ok;
+}
+
 static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
@@ -602,6 +671,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && run_army_test) {
 		SPDLOG_INFO("===== Army test... =====");
 		ret &= test_armies(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
+		ret &= test_battle(*game_manager.get_instance_manager());
 	}
 
 	if (ret && economy_report_days > 0) {

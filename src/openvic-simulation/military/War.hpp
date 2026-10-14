@@ -70,6 +70,8 @@ namespace OpenVic {
 			CountryInstance const* besieger = nullptr;
 			std::int32_t days = 0;
 			std::int32_t days_required = 0;
+			// Progress in days, grows faster with more regiments (days is its whole part)
+			fixed_point_t progress;
 		};
 
 		// Tunable constants
@@ -110,6 +112,8 @@ namespace OpenVic {
 		void update_sieges(InstanceManager& instance_manager);
 		void update_scores(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
+		void update_attrition(InstanceManager& instance_manager);
+		void update_leaders(InstanceManager& instance_manager);
 
 		void end_war(InstanceManager& instance_manager, std::uint32_t war_id);
 		void transfer_states(InstanceManager& instance_manager, War const& war, bool winners_are_attackers);

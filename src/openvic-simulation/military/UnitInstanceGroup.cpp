@@ -1045,3 +1045,12 @@ ArmyInstance* UnitInstanceManager::get_army_of_regiment(RegimentInstance const& 
 	}
 	return nullptr;
 }
+
+void UnitInstanceManager::destroy_leader(LeaderInstance& leader) {
+	if (UnitInstanceGroup* const group = leader.get_unit_instance_group()) {
+		group->set_leader(nullptr);
+	}
+	const_cast<CountryInstance&>(leader.country).remove_leader(leader);
+	leader_instance_map.erase(leader.unique_id);
+	leaders.erase(leaders.get_iterator(&leader));
+}
