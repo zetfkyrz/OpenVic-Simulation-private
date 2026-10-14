@@ -116,8 +116,8 @@ namespace OpenVic {
 
 		// Tunable constants
 		static constexpr std::int32_t TRUCE_DAYS = 5 * 365;
-		static constexpr std::int32_t SIEGE_BASE_DAYS = 3;
-		static constexpr std::int32_t SIEGE_DAYS_PER_FORT_LEVEL = 5;
+		static constexpr std::int32_t SIEGE_BASE_DAYS = 60;
+		static constexpr std::int32_t SIEGE_DAYS_PER_FORT_LEVEL = 100;
 		static constexpr std::int32_t CAPITAL_PROVINCE_WEIGHT = 5;
 		static constexpr std::int32_t MAX_BATTLE_SCORE = 25;
 
