@@ -325,11 +325,12 @@ bool GameActionManager::VariantVisitor::operator() (start_land_unit_recruitment_
 		return false;
 	}
 
-	//these TODO's should be implemented in ProvinceInstance and/or some military type
-	//TODO verify pop's cultural status is acceptable for regiment type
-	//TODO verify pop is recruitable and has enough size (pop.try_recruit())
-	//TODO actually instantiate a regiment in recruitment state
-	return false;
+	CountryInstance* const country = province->get_owner();
+	if (OV_unlikely(country == nullptr)) {
+		return false;
+	}
+
+	return instance_manager.get_unit_instance_manager().start_recruitment(*country, *regiment_type, *province, *pop);
 }
 
 // Diplomacy
@@ -812,5 +813,98 @@ bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t 
 	}
 
 	factory->set_open(new_open);
+	return true;
+}
+
+// Army management
+namespace {
+	// The land regiment and the army that it is in
+	RegimentInstance* find_regiment(InstanceManager& instance_manager, const unique_id_t regiment_id, ArmyInstance*& army_out) {
+		UnitInstance* const unit = instance_manager.get_unit_instance_manager().get_unit_instance_by_unique_id(regiment_id);
+		if (unit == nullptr || unit->get_branch() != unit_branch_t::LAND) {
+			return nullptr;
+		}
+		RegimentInstance& regiment = static_cast<RegimentInstance&>(*unit);
+		army_out = instance_manager.get_unit_instance_manager().get_army_of_regiment(regiment);
+		return army_out != nullptr ? &regiment : nullptr;
+	}
+
+	ArmyInstance* find_army(InstanceManager& instance_manager, const unique_id_t army_id) {
+		UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+		if (group == nullptr || group->branch != unit_branch_t::LAND) {
+			return nullptr;
+		}
+		return static_cast<ArmyInstance*>(group);
+	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (cancel_recruitment_argument_t const& argument) const {
+	const auto [country_index, order_id] = argument;
+	return instance_manager.get_unit_instance_manager().cancel_recruitment(
+		war_action_country(instance_manager, country_index), order_id
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (split_regiment_argument_t const& argument) const {
+	ArmyInstance* army = nullptr;
+	RegimentInstance* const regiment = find_regiment(instance_manager, type_safe::get(argument), army);
+	if (regiment == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().split_regiment(*army, *regiment) != nullptr;
+}
+
+bool GameActionManager::VariantVisitor::operator() (merge_armies_argument_t const& argument) const {
+	const auto [target_id, source_id] = argument;
+	ArmyInstance* const target = find_army(instance_manager, target_id);
+	ArmyInstance* const source = find_army(instance_manager, source_id);
+	if (target == nullptr || source == nullptr || target->is_in_combat() || source->is_in_combat()) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().merge_armies(*target, *source);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t const& argument) const {
+	const auto [army_id, leader_id] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	if (army == nullptr) {
+		return false;
+	}
+	// Leader 0 takes the general off the army
+	if (leader_id == 0) {
+		return army->get_leader() != nullptr && army->set_leader(nullptr);
+	}
+	LeaderInstance* const leader = instance_manager.get_unit_instance_manager().get_leader_instance_by_unique_id(leader_id);
+	if (leader == nullptr || leader->branch != unit_branch_t::LAND || &leader->country != &army->get_country() || !leader->get_can_be_used()) {
+		return false;
+	}
+	return army->set_leader(leader);
+}
+
+bool GameActionManager::VariantVisitor::operator() (disband_regiment_argument_t const& argument) const {
+	ArmyInstance* army = nullptr;
+	RegimentInstance* const regiment = find_regiment(instance_manager, type_safe::get(argument), army);
+	if (regiment == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	instance_manager.get_unit_instance_manager().disband_regiment(*army, *regiment);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (disband_army_argument_t const& argument) const {
+	ArmyInstance* const army = find_army(instance_manager, type_safe::get(argument));
+	if (army == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	// The front keeps no reference to the disbanded army
+	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+		if (front.country == &army->get_country()) {
+			instance_manager.get_war_manager().set_front_army(
+				instance_manager, army->get_country(), front.id, army->unique_id, false
+			);
+			break;
+		}
+	}
+	instance_manager.get_unit_instance_manager().destroy_group(*army);
 	return true;
 }

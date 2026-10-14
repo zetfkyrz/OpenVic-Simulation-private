@@ -116,7 +116,13 @@ X(toggle_front_province, country_index_t, std::uint32_t, province_index_t) \
 X(set_front_mode, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_front_army, country_index_t, std::uint32_t, unique_id_t, bool) \
 X(assign_free_armies, country_index_t, std::uint32_t) \
-X(set_auto_plan, country_index_t, bool)
+X(set_auto_plan, country_index_t, bool) \
+X(cancel_recruitment, country_index_t, unique_id_t) \
+X(split_regiment, unique_id_t) \
+X(merge_armies, unique_id_t, unique_id_t) \
+X(set_army_leader, unique_id_t, unique_id_t) \
+X(disband_regiment, unique_id_t) \
+X(disband_army, unique_id_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

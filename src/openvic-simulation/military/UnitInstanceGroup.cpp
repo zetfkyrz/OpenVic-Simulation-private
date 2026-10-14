@@ -109,15 +109,7 @@ void UnitInstanceGroup::tick() {
 		return;
 	}
 
-	fixed_point_t speed = units.front().get().unit_type.maximum_speed;
-	for (UnitInstance const& unit : units) {
-		if (unit.unit_type.maximum_speed < speed) {
-			speed = unit.unit_type.maximum_speed;
-		}
-	}
-	if (speed <= fixed_point_t::_0) {
-		speed = fixed_point_t::_1;
-	}
+	const fixed_point_t speed = get_movement_speed();
 
 	movement_progress += speed * MOVEMENT_SPEED_SCALE;
 
@@ -300,6 +292,47 @@ fixed_point_t UnitInstanceGroup::get_average_max_organisation() const {
 	return !units.empty() ? total_max_organisation / static_cast<int32_t>(units.size()) : fixed_point_t::_0;
 }
 
+fixed_point_t UnitInstanceGroup::get_movement_speed() const {
+	if (units.empty()) {
+		return fixed_point_t::_1;
+	}
+
+	fixed_point_t speed = units.front().get().unit_type.maximum_speed;
+	for (UnitInstance const& unit : units) {
+		if (unit.unit_type.maximum_speed < speed) {
+			speed = unit.unit_type.maximum_speed;
+		}
+	}
+	if (speed <= fixed_point_t::_0) {
+		speed = fixed_point_t::_1;
+	}
+	return speed;
+}
+
+int32_t UnitInstanceGroup::get_movement_days_left() const {
+	if (path.empty()) {
+		return 0;
+	}
+
+	// The distance along the path left to cover divided by the distance covered each day
+	fixed_point_t remaining = -movement_progress;
+	ProvinceInstance const* from = &location.get();
+	for (ProvinceInstance const& to : path) {
+		ProvinceDefinition::adjacency_t const* const adjacency = from->province_definition.get_adjacency_to(to.province_definition);
+		if (adjacency == nullptr) {
+			break;
+		}
+		remaining += adjacency->get_distance();
+		from = &to;
+	}
+
+	const fixed_point_t per_day = get_movement_speed() * MOVEMENT_SPEED_SCALE;
+	if (remaining <= fixed_point_t::_0) {
+		return 1;
+	}
+	return std::max<int32_t>(1, (remaining / per_day).ceil<int32_t>());
+}
+
 bool UnitInstanceGroup::is_moving() const {
 	return !path.empty();
 }
@@ -326,6 +359,27 @@ void UnitInstanceGroupBranched<LAND>::update_gamestate() {
 
 void UnitInstanceGroupBranched<LAND>::tick() {
 	UnitInstanceGroup::tick();
+}
+
+void UnitInstanceGroupBranched<LAND>::reset_dig_in() {
+	idle_days = 0;
+	dig_in_level = 0;
+}
+
+void UnitInstanceGroupBranched<LAND>::advance_dig_in(const int32_t days_per_level, const int32_t cap) {
+	if (is_moving() || is_in_combat()) {
+		reset_dig_in();
+		return;
+	}
+
+	if (days_per_level <= 0 || dig_in_level >= cap) {
+		return;
+	}
+
+	if (++idle_days >= days_per_level) {
+		idle_days = 0;
+		++dig_in_level;
+	}
 }
 
 UnitInstanceGroupBranched<NAVAL>::UnitInstanceGroupBranched(
@@ -541,6 +595,47 @@ void UnitInstanceManager::update_gamestate() {
 void UnitInstanceManager::tick() {
 	for (ArmyInstance& army : armies) {
 		army.tick();
+		army.advance_dig_in(
+			static_cast<int32_t>(military_defines.get_dig_in_increase_each_days().to_int()),
+			army.get_country().get_dig_in_cap()
+		);
+	}
+
+	// Recruitment: the regiment appears in the province when the time is up
+	for (size_t i = 0; i < recruitment_orders.size();) {
+		RecruitmentOrder& order = recruitment_orders[i];
+		if (--order.days_left > 0) {
+			++i;
+			continue;
+		}
+
+		CountryInstance& country = *order.country;
+		ProvinceInstance& province = *order.province;
+		RegimentType const& regiment_type = *order.regiment_type;
+		Pop* const pop = order.pop;
+		recruitment_orders.erase(recruitment_orders.begin() + i);
+
+		const unique_id_t regiment_id = unique_id_counter++;
+		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
+			regiment_id, fmt::format("{} {}", regiment_type.get_identifier(), regiment_id), regiment_type, pop, false
+		});
+		unit_instance_map.emplace(regiment.unique_id, regiment);
+
+		// Joins a standing army of the country in the province or forms a new one
+		ArmyInstance* target = nullptr;
+		for (ArmyInstance& army : province.get_armies()) {
+			if (&army.get_country() == &country && !army.is_moving() && !army.is_in_combat()) {
+				target = &army;
+				break;
+			}
+		}
+		if (target == nullptr) {
+			const unique_id_t army_id = unique_id_counter++;
+			target = &*armies.emplace(army_id, fmt::format("Army {}", army_id), country, province);
+			unit_instance_group_map.emplace(target->unique_id, *target);
+		}
+		target->add_unit(regiment);
+		target->update_gamestate();
 	}
 	for (NavyInstance& navy : navies) {
 		navy.tick();
@@ -671,6 +766,11 @@ bool UnitInstanceManager::order_move(
 }
 
 void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& group) {
+	if (unit.get_branch() == LAND) {
+		if (Pop* const pop = static_cast<RegimentInstance&>(unit).get_pop()) {
+			pop->release_recruit();
+		}
+	}
 	group.remove_unit(unit);
 	unit_instance_map.erase(unit.unique_id);
 
@@ -695,6 +795,11 @@ void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
 	}
 
 	for (UnitInstance* unit : group_units) {
+		if (unit->get_branch() == LAND) {
+			if (Pop* const pop = static_cast<RegimentInstance&>(*unit).get_pop()) {
+				pop->release_recruit();
+			}
+		}
 		group.remove_unit(*unit);
 		unit_instance_map.erase(unit->unique_id);
 		if (unit->get_branch() == LAND) {
@@ -799,4 +904,144 @@ bool UnitInstanceManager::create_leader(
 	});
 
 	return true;
+}
+int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country, RegimentType const& regiment_type) {
+	// The build time of the unit scaled by the recruitment time modifier of the country, at least a day
+	const fixed_point_t days = fixed_point_t::parse_unsafe(static_cast<int32_t>(regiment_type.build_time.to_int()))
+		* country.get_recruit_time();
+	return std::max<int32_t>(1, days.ceil<int32_t>());
+}
+
+std::string_view UnitInstanceManager::get_recruitment_block_reason(
+	CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
+) {
+	if (!country.is_unit_type_unlocked(regiment_type)) {
+		return "Тип полка ещё не открыт";
+	}
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return "Набор возможен только в своей, не оккупированной провинции";
+	}
+	if (&pop.get_location() != &province) {
+		return "Население не из этой провинции";
+	}
+	if (!pop.get_type().can_be_recruited) {
+		return "Этот тип населения не призывается";
+	}
+	if (!Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
+		return "Культура населения не допускается к службе";
+	}
+	if (pop.get_regiment_count() >= pop.get_max_supported_regiments()) {
+		return "Население не может выставить больше полков";
+	}
+	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return "На складе страны не хватает товаров";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::start_recruitment(
+	CountryInstance& country, RegimentType const& regiment_type, ProvinceInstance& province, Pop& pop
+) {
+	if (!get_recruitment_block_reason(country, regiment_type, province, pop).empty()) {
+		return false;
+	}
+
+	if (!pop.try_recruit()) {
+		return false;
+	}
+
+	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+		good_data.stockpile_amount -= quantity;
+		good_data.stockpile_change_yesterday -= quantity;
+	}
+
+	const int32_t days = get_recruitment_days(country, regiment_type);
+	recruitment_orders.push_back({ unique_id_counter++, &country, &regiment_type, &province, &pop, days, days });
+	return true;
+}
+
+bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const unique_id_t order_id) {
+	for (auto it = recruitment_orders.begin(); it != recruitment_orders.end(); ++it) {
+		if (it->id != order_id) {
+			continue;
+		}
+		if (it->country != &country) {
+			return false;
+		}
+
+		for (auto const& [good, quantity] : it->regiment_type->get_build_cost()) {
+			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+			good_data.stockpile_amount += quantity;
+			good_data.stockpile_change_yesterday += quantity;
+		}
+		it->pop->release_recruit();
+		recruitment_orders.erase(it);
+		return true;
+	}
+	return false;
+}
+
+ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentInstance& regiment) {
+	if (army.get_unit_count() < 2) {
+		return nullptr;
+	}
+
+	const unique_id_t new_army_id = unique_id_counter++;
+	ArmyInstance& new_army = *armies.emplace(
+		new_army_id, fmt::format("{} ({})", army.get_name(), new_army_id), army.get_country(), army.get_location()
+	);
+	unit_instance_group_map.emplace(new_army.unique_id, new_army);
+
+	if (!army.remove_unit(regiment)) {
+		destroy_group(new_army);
+		return nullptr;
+	}
+	new_army.add_unit(regiment);
+	army.update_gamestate();
+	new_army.update_gamestate();
+	return &new_army;
+}
+
+bool UnitInstanceManager::merge_armies(ArmyInstance& target, ArmyInstance& source) {
+	if (&target == &source || &target.get_country() != &source.get_country() ||
+		&target.get_location() != &source.get_location() || source.is_moving() || target.is_moving()) {
+		return false;
+	}
+
+	memory::vector<UnitInstance*> moved;
+	for (UnitInstance& unit : source.get_units()) {
+		moved.push_back(&unit);
+	}
+	for (UnitInstance* unit : moved) {
+		source.remove_unit(*unit);
+		target.add_unit(*unit);
+	}
+
+	if (target.get_leader() == nullptr && source.get_leader() != nullptr) {
+		LeaderInstance* const leader = source.get_leader();
+		source.set_leader(nullptr);
+		target.set_leader(leader);
+	}
+
+	destroy_group(source);
+	target.update_gamestate();
+	return true;
+}
+
+void UnitInstanceManager::disband_regiment(ArmyInstance& army, RegimentInstance& regiment) {
+	destroy_unit(regiment, army);
+}
+
+ArmyInstance* UnitInstanceManager::get_army_of_regiment(RegimentInstance const& regiment) {
+	for (ArmyInstance& army : armies) {
+		for (UnitInstance const& unit : army.get_units()) {
+			if (&unit == &regiment) {
+				return &army;
+			}
+		}
+	}
+	return nullptr;
 }

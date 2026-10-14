@@ -17,6 +17,9 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/military/UnitInstanceGroup.hpp>
+#include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
@@ -50,6 +53,7 @@ inline static void print_memory_usage( //
 
 // Days to simulate for the economy report (-e), 0 = no report
 static size_t economy_report_days = 0;
+static bool run_army_test = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -135,6 +139,139 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		static_cast<double>(country_cash), static_cast<double>(pop_cash), static_cast<double>(budgets),
 		static_cast<double>(country_cash + pop_cash + budgets)
 	);
+}
+
+// Exercises the army actions (split, merge, dig in, recruitment, disband) and prints the results with the "ARMY" prefix
+static bool test_armies(InstanceManager& instance_manager, DefinitionManager const& definition_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("ARMY {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	ArmyInstance* army = nullptr;
+	for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+		if (candidate.get_unit_count() >= 3 && !candidate.get_country().is_rebel_country()) {
+			army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (army == nullptr) {
+		fmt::println("ARMY FAIL : no army with 3 regiments");
+		return false;
+	}
+	CountryInstance& country = army->get_country();
+	const size_t count_before = army->get_unit_count();
+	fmt::println("ARMY using {} army \"{}\" with {} regiments", country.get_identifier(), army->get_name(), count_before);
+
+	// Split and merge
+	RegimentInstance& regiment = static_cast<RegimentInstance&>(army->get_units().back().get());
+	ArmyInstance* const split = unit_manager.split_regiment(*army, regiment);
+	check(split != nullptr && split->get_unit_count() == 1 && army->get_unit_count() == count_before - 1, "split_regiment");
+	check(split != nullptr && &split->get_location() == &army->get_location(), "split army is in the same province");
+	if (split != nullptr) {
+		check(unit_manager.merge_armies(*army, *split) && army->get_unit_count() == count_before, "merge_armies");
+	}
+
+	// Dig in grows while the army stays put
+	army->clear_path();
+	for (int day = 0; day < 40; ++day) {
+		instance_manager.force_tick_and_update();
+	}
+	fmt::println("ARMY dig_in_level after 40 days: {} (cap {})", static_cast<int>(army->get_dig_in_level()), country.get_dig_in_cap());
+	check(army->get_dig_in_level() > 0 || country.get_dig_in_cap() == 0, "dig in grows");
+
+	// Recruitment
+	RegimentType const* regiment_type = nullptr;
+	for (RegimentType const& type : definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+		if (country.is_unit_type_unlocked(type)) {
+			regiment_type = &type;
+			break;
+		}
+	}
+	Pop* recruit_pop = nullptr;
+	ProvinceInstance* recruit_province = nullptr;
+	if (regiment_type != nullptr) {
+		for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+			if (province.get_owner() != &country || province.get_controller() != &country) {
+				continue;
+			}
+			for (Pop& pop : province.get_mutable_pops()) {
+				if (pop.get_type().can_be_recruited && pop.get_regiment_count() < pop.get_max_supported_regiments() &&
+					Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
+					recruit_pop = &pop;
+					recruit_province = &province;
+					break;
+				}
+			}
+			if (recruit_pop != nullptr) {
+				break;
+			}
+		}
+	}
+	check(regiment_type != nullptr && recruit_pop != nullptr, "found a pop that can recruit");
+	if (regiment_type != nullptr && recruit_pop != nullptr) {
+		// Without goods the order is refused
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = 0;
+		}
+		if (!regiment_type->get_build_cost().empty()) {
+			check(!unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "recruitment refused without goods");
+		}
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = quantity * 2;
+		}
+		const size_t pop_regiments = recruit_pop->get_regiment_count();
+		const size_t orders_before = unit_manager.get_recruitment_orders().size();
+		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment");
+		check(unit_manager.get_recruitment_orders().size() == orders_before + 1, "order queued");
+		check(recruit_pop->get_regiment_count() == pop_regiments + 1, "pop slot taken");
+
+		// Cancel returns the goods and the slot
+		const unique_id_t order_id = unit_manager.get_recruitment_orders().back().id;
+		check(unit_manager.cancel_recruitment(country, order_id) && recruit_pop->get_regiment_count() == pop_regiments, "cancel_recruitment");
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			check(country.get_good_data(*good).stockpile_amount == quantity * 2, "goods refunded");
+			break;
+		}
+
+		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment again");
+		const int32_t days = UnitInstanceManager::get_recruitment_days(country, *regiment_type);
+		size_t regiments_in_province_before = 0;
+		for (ArmyInstance const& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				regiments_in_province_before += a.get_unit_count();
+			}
+		}
+		for (int32_t day = 0; day <= days; ++day) {
+			instance_manager.force_tick_and_update();
+		}
+		size_t regiments_in_province_after = 0;
+		for (ArmyInstance const& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				regiments_in_province_after += a.get_unit_count();
+			}
+		}
+		fmt::println("ARMY recruit days={} regiments in province {} -> {}", days, regiments_in_province_before, regiments_in_province_after);
+		check(regiments_in_province_after >= regiments_in_province_before + 1, "regiment appeared in the province");
+
+		// Disband the new regiment: the pop slot is free again
+		for (ArmyInstance& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				for (UnitInstance& unit : a.get_units()) {
+					RegimentInstance& r = static_cast<RegimentInstance&>(unit);
+					if (r.get_pop() == recruit_pop) {
+						unit_manager.disband_regiment(a, r);
+						check(recruit_pop->get_regiment_count() == pop_regiments, "disband frees the pop slot");
+						return ok;
+					}
+				}
+			}
+		}
+		check(false, "recruited regiment found for disband");
+	}
+	return ok;
 }
 
 static void print_help(FILE* file, std::string_view program_name) {
@@ -462,6 +599,11 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && run_army_test) {
+		SPDLOG_INFO("===== Army test... =====");
+		ret &= test_armies(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
+	}
+
 	if (ret && economy_report_days > 0) {
 		InstanceManager& instance_manager = *game_manager.get_instance_manager();
 		if (subsidise_all) {
@@ -532,6 +674,8 @@ int main(int argc, char const* argv[]) {
 			return 0;
 		} else if (strcmp(arg, "-t") == 0) {
 			run_tests = true;
+		} else if (strcmp(arg, "-A") == 0) {
+			run_army_test = true;
 		} else if (strcmp(arg, "-S") == 0) {
 			subsidise_all = true;
 		} else if (strcmp(arg, "-k") == 0) {

@@ -240,5 +240,7 @@ namespace OpenVic {
 		//recruit or conscript
 		bool try_recruit();
 		bool try_recruit_understrength();
+		// Frees a regiment slot when a regiment backed by this pop is disbanded
+		void release_recruit();
 	};
 }

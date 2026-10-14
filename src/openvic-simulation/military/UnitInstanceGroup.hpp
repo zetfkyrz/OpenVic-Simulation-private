@@ -101,6 +101,10 @@ namespace OpenVic {
 		// Whether a group of the given country may enter the province (own/allied/access/hostile land)
 		static bool can_country_enter(CountryInstance const& country, ProvinceInstance const& province);
 
+		// Distance covered each day by the group (the slowest unit decides)
+		fixed_point_t get_movement_speed() const;
+		// Days until the group reaches the end of its path
+		int32_t get_movement_days_left() const;
 		bool is_moving() const;
 		// The adjacent province that the unit will arrive in next, not necessarily the final destination of its current path
 		ProvinceInstance const* get_movement_destination_province() const;
@@ -118,6 +122,7 @@ namespace OpenVic {
 	private:
 		NavyInstance* PROPERTY_PTR(transport_navy, nullptr);
 		dig_in_level_t PROPERTY(dig_in_level, 0);
+		uint16_t idle_days = 0; // Days spent without moving or fighting, dig in grows with them
 
 		bool PROPERTY_RW_CUSTOM_NAME(exiled, is_exiled, set_is_exiled, false);
 
@@ -132,6 +137,11 @@ namespace OpenVic {
 
 		void update_gamestate();
 		void tick();
+
+		// Called daily: an army that stays still gains a dig in level every days_per_level days (up to cap),
+		// moving or fighting resets it
+		void advance_dig_in(const int32_t days_per_level, const int32_t cap);
+		void reset_dig_in();
 
 		// TODO - do these work fine when units is empty?
 		std::span<const std::reference_wrapper<RegimentInstance>> get_regiment_instances() {
@@ -182,6 +192,17 @@ namespace OpenVic {
 	struct MilitaryDefines;
 	struct Pop;
 
+	// A regiment that is being recruited from a pop, it appears in the province when the days run out
+	struct RecruitmentOrder {
+		unique_id_t id;
+		CountryInstance* country;
+		RegimentType const* regiment_type;
+		ProvinceInstance* province;
+		Pop* pop;
+		int32_t days_total;
+		int32_t days_left;
+	};
+
 	struct UnitInstanceManager {
 	private:
 		// Used for leader pictures and names
@@ -209,6 +230,8 @@ namespace OpenVic {
 		ordered_map<unique_id_t, std::reference_wrapper<UnitInstanceGroup>> PROPERTY(unit_instance_group_map);
 
 		OV_UNIT_BRANCHED_GETTER(get_unit_instance_groups, armies, navies);
+
+		memory::vector<RecruitmentOrder> PROPERTY(recruitment_orders);
 
 		Pop* recruit_pop_in(ProvinceInstance& province, const bool is_rebel) const;
 		template<unit_branch_t Branch>
@@ -240,6 +263,27 @@ namespace OpenVic {
 		// With append = true the route starts at the end of the army's current route and is added to it
 		bool order_move(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance, bool append = false);
 
+		// Empty if the regiment can be recruited from the pop, otherwise the reason it cannot (shown to the player)
+		static std::string_view get_recruitment_block_reason(
+			CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
+		);
+		// Starts recruiting a regiment from the pop. Takes the build cost from the national stockpile, false if
+		// get_recruitment_block_reason is not empty.
+		bool start_recruitment(
+			CountryInstance& country, RegimentType const& regiment_type, ProvinceInstance& province, Pop& pop
+		);
+		// Cancels an order of the country, the goods are returned
+		bool cancel_recruitment(CountryInstance& country, unique_id_t order_id);
+		// Days the regiment takes to recruit for the country
+		static int32_t get_recruitment_days(CountryInstance const& country, RegimentType const& regiment_type);
+
+		// Moves a regiment out of its army into a new army in the same province
+		ArmyInstance* split_regiment(ArmyInstance& army, RegimentInstance& regiment);
+		// Moves all the regiments of the source army into the target army (same country and province), deletes the source
+		bool merge_armies(ArmyInstance& target, ArmyInstance& source);
+		// Disbands one regiment (the army is deleted with its last regiment), frees the pop slot
+		void disband_regiment(ArmyInstance& army, RegimentInstance& regiment);
+
 		// Removes a unit from its group and deletes it, the group is deleted too if it becomes empty.
 		// The unit and, possibly, its group must not be used after this call.
 		void destroy_unit(UnitInstance& unit, UnitInstanceGroup& group);
@@ -249,6 +293,8 @@ namespace OpenVic {
 		LeaderInstance* get_leader_instance_by_unique_id(unique_id_t unique_id);
 		UnitInstance* get_unit_instance_by_unique_id(unique_id_t unique_id);
 		UnitInstanceGroup* get_unit_instance_group_by_unique_id(unique_id_t unique_id);
+		// The army that the regiment is in
+		ArmyInstance* get_army_of_regiment(RegimentInstance const& regiment);
 
 		// Creates a new leader of the specified branch and adds it to the specified country. The leader's name and traits
 		// can be specified, but if they are not, the leader will be generated with a random name and traits. The country's
