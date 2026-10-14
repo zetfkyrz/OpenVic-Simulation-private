@@ -163,7 +163,9 @@ void PopsAggregate::add_pops_aggregate(Pop const& pop) {
 	const pop_size_t pop_size = pop.get_size();
 
 	total_population += pop_size;
-	yesterdays_import_value += pop.get_yesterdays_import_value().get_copy_of_value();
+	// Summed into the running total, which is stored in the normalisation step (writing the property directly
+	// would be overwritten with the running total of the parts and the tariffs would never see any import)
+	_yesterdays_import_value_running_total += pop.get_yesterdays_import_value().get_copy_of_value();
 	const int64_t pop_size_v = type_safe::get(pop_size);
 	update_running_total_raw_128(literacy_running_total_raw, pop_size, pop.get_literacy());
 	update_running_total_raw_128(consciousness_running_total_raw, pop_size, pop.get_consciousness());
@@ -204,7 +206,6 @@ void PopsAggregate::add_pops_aggregate(Pop const& pop) {
 	if (pop_type.can_be_recruited) {
 		max_supported_regiment_count += pop.get_max_supported_regiments();
 	}
-	yesterdays_import_value.set(_yesterdays_import_value_running_total);
 }
 
 constexpr void normalise(fixed_point_t& value, const boost::int128::int128_t running_total_raw, const pop_sum_t population) {
@@ -214,6 +215,7 @@ constexpr void normalise(fixed_point_t& value, const boost::int128::int128_t run
 }
 
 void PopsAggregate::normalise_pops_aggregate() {
+	yesterdays_import_value.set(_yesterdays_import_value_running_total);
 	if (total_population > 0) {
 		const int64_t total_population_v = type_safe::get(total_population);
 		average_literacy = fixed_point_t::parse_raw(static_cast<int64_t>(literacy_running_total_raw / total_population_v));
