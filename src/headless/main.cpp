@@ -1,4 +1,6 @@
 #include <chrono>
+#include <fstream>
+#include <sstream>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -28,6 +30,7 @@
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
+#include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/population/Pop.hpp>
@@ -65,6 +68,8 @@ static bool tariff_test = false;
 static bool recommended_rules = false;
 static bool politics_report = false;
 static bool research_test = false;
+// Replay save test: -W <file> writes the action history after the economy run, -L <file> replays it before the run
+static std::string replay_save_path, replay_load_path;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -606,6 +611,29 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 }
 
 // Total population by pop type, printed with the "POP" prefix
+// A checksum of the state that the economy and the population drive, to compare a replay with the original game
+static void print_state_checksum(InstanceManager& instance_manager) {
+	std::int64_t pop_total = 0, cash_raw = 0, army_count = 0, province_owner_hash = 0;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			pop_total += type_safe::get(pop.get_size());
+			cash_raw += pop.get_cash().get_copy_of_value().get_raw_value();
+		}
+		if (province.get_owner() != nullptr) {
+			province_owner_hash = province_owner_hash * 31 + type_safe::get(province.get_owner()->index) + 1;
+		}
+	}
+	std::int64_t treasury_raw = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		treasury_raw += country.get_cash_stockpile().load().get_raw_value();
+	}
+	army_count = static_cast<std::int64_t>(instance_manager.get_unit_instance_manager().get_armies().size());
+	SPDLOG_INFO(
+		"CHECKSUM {} pops={} popcash={} treasury={} owners={} armies={} actions={}", instance_manager.get_today(), pop_total,
+		cash_raw, treasury_raw, province_owner_hash, army_count, instance_manager.get_action_history().size()
+	);
+}
+
 static void print_population_report(InstanceManager& instance_manager) {
 	std::map<std::string, std::int64_t> by_type;
 	std::map<std::string, double> life_by_type, cash_by_type, income_by_type, expenses_by_type;
@@ -1056,6 +1084,24 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 
 	print_memory_usage("Game Session Post-Start");
 
+	if (!replay_load_path.empty()) {
+		std::ifstream file(replay_load_path);
+		std::stringstream buffer;
+		buffer << file.rdbuf();
+		std::vector<ReplayEntry> entries;
+		if (!Replay::deserialise(buffer.str(), entries)) {
+			spdlog::error_s("Could not read the replay {}", replay_load_path);
+			ret = false;
+		} else {
+			ret &= game_manager.get_instance_manager()->replay_actions(entries, [](size_t done, size_t total) {
+				if (done == total) {
+					SPDLOG_INFO("Replayed {} actions", done);
+				}
+			});
+			print_state_checksum(*game_manager.get_instance_manager());
+		}
+	}
+
 	// TODO - REMOVE TEST CODE
 	SPDLOG_INFO("===== Ranking system test... =====");
 	if (game_manager.get_instance_manager()) {
@@ -1214,6 +1260,14 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && economy_report_days > 0) {
+		print_state_checksum(*game_manager.get_instance_manager());
+		if (!replay_save_path.empty()) {
+			std::ofstream file(replay_save_path);
+			file << Replay::serialise(game_manager.get_instance_manager()->get_action_history());
+		}
+	}
+
 	SPDLOG_INFO("===== Ending game session... =====");
 	ret &= game_manager.end_game_session();
 
@@ -1269,6 +1323,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if ((strcmp(arg, "-W") == 0 || strcmp(arg, "-L") == 0) && argn + 1 < argc) {
+			(arg[1] == 'W' ? replay_save_path : replay_load_path) = argv[++argn];
 		} else if (strcmp(arg, "-X") == 0) {
 			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {

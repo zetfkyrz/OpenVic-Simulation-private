@@ -153,6 +153,7 @@ struct ARG_TYPE(name) \
 	  detail::ts_op_structured_binding_passthrough { \
 	using strong_typedef::strong_typedef; \
 	using reduce_helper_t = detail::reduce_tuple<__VA_ARGS__>; \
+	static constexpr const char* action_name = #name; \
 	using underlying_type = reduce_helper_t::type; \
 \
 	constexpr ARG_TYPE(name)(underlying_type const& value) : strong_typedef(value) {} \
@@ -229,4 +230,3 @@ namespace std {
 }
 
 #undef ARG_TYPE
-#undef FOR_EACH_GAME_ACTION

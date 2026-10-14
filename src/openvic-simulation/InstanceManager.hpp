@@ -1,5 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <vector>
+#include "openvic-simulation/misc/Replay.hpp"
+
 #include <utility>
 
 #include <function2/function2.hpp>
@@ -88,6 +92,10 @@ namespace OpenVic {
 
 		void execute_game_actions();
 
+		// Every executed game action that changes the simulation, for saving the game as a replay
+		std::vector<ReplayEntry> action_history;
+		std::uint32_t current_batch = 0;
+
 	public:
 		DefinitionManager const& definition_manager;
 
@@ -119,6 +127,13 @@ namespace OpenVic {
 			);
 		}
 		bool queue_game_action(game_action_t&& game_action);
+
+		std::vector<ReplayEntry> const& get_action_history() const {
+			return action_history;
+		}
+		// Re-executes recorded actions batch by batch on a freshly started session (same bookmark and game rules).
+		// progress is called with the number of the replayed entries and the total
+		bool replay_actions(std::vector<ReplayEntry> const& entries, std::function<void(size_t, size_t)> progress = {});
 		// Runs an action at once instead of queueing it: for the AI, which acts inside the tick (when the queue is closed)
 		template<typename T, typename... Args>
 		bool run_game_action_now(Args&&... args) {

@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "InstanceManager.hpp"
 
 #include "openvic-simulation/ai/CountryAI.hpp"
@@ -228,7 +229,11 @@ void InstanceManager::execute_game_actions() {
 	// Temporary gamestate/UI update trigger, to be replaced with a more sophisticated targeted system
 	bool needs_gamestate_update = false;
 
+	current_batch++;
 	for (game_action_t const& game_action : game_action_queue) {
+		if (Replay::is_recorded(game_action)) {
+			action_history.push_back({ current_batch, game_action });
+		}
 		needs_gamestate_update |= game_action_manager.execute_game_action(game_action);
 	}
 
@@ -285,6 +290,8 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 
 	today = bookmark->date;
 
+	// Pop generation uses rand(): a fixed seed keeps the start of every game identical (needed for replay saves)
+	std::srand(20240229);
 	politics_instance_manager.setup_starting_ideologies();
 	bool ret = map_instance.apply_history_to_provinces(
 		definition_manager.get_history_manager().get_province_manager(), today,
@@ -379,6 +386,27 @@ void InstanceManager::update_modifier_sums() {
 	map_instance.update_modifier_sums(
 		today, definition_manager.get_modifier_manager().get_static_modifier_cache()
 	);
+}
+
+bool InstanceManager::replay_actions(std::vector<ReplayEntry> const& entries, std::function<void(size_t, size_t)> progress) {
+	if (!is_game_session_started()) {
+		spdlog::error_s("Cannot replay actions - game session not started!");
+		return false;
+	}
+	size_t index = 0;
+	while (index < entries.size()) {
+		const std::uint32_t batch = entries[index].batch;
+		while (index < entries.size() && entries[index].batch == batch) {
+			game_action_queue.push_back(entries[index].action);
+			index++;
+		}
+		execute_game_actions();
+		update_gamestate();
+		if (progress) {
+			progress(index, entries.size());
+		}
+	}
+	return true;
 }
 
 bool InstanceManager::queue_game_action(game_action_t&& game_action) {
