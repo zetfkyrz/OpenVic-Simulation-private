@@ -130,7 +130,8 @@ X(start_ship_building, ship_type_index_t, province_index_t) \
 X(declare_war_goal, country_index_t, country_index_t, std::uint32_t, province_index_t) \
 X(set_peace_demand, country_index_t, std::uint32_t, std::uint32_t, province_index_t, bool) \
 X(send_peace_offer, country_index_t, std::uint32_t) \
-X(answer_peace_offer, country_index_t, std::uint32_t, bool)
+X(answer_peace_offer, country_index_t, std::uint32_t, bool) \
+X(enact_reform, country_index_t, reform_index_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

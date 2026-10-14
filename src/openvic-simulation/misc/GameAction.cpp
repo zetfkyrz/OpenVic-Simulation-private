@@ -1,5 +1,7 @@
 #include "GameAction.hpp"
 
+#include "openvic-simulation/politics/PoliticsDynamics.hpp"
+
 #include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
@@ -1029,4 +1031,18 @@ bool GameActionManager::VariantVisitor::operator() (answer_peace_offer_argument_
 	return instance_manager.get_war_manager().answer_peace_offer(
 		instance_manager, war_action_country(instance_manager, country_index), war_id, accept
 	);
+}
+
+// Politics
+bool GameActionManager::VariantVisitor::operator() (enact_reform_argument_t const& argument) const {
+	const auto [country_index, reform_index] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	Reform const* const reform = instance_manager.definition_manager.get_politics_manager().get_issue_manager().get_reform_by_index(reform_index);
+	if (reform == nullptr) {
+		return false;
+	}
+	if (!PoliticsDynamics::get_reform_status(instance_manager, country, *reform).can_enact) {
+		return false;
+	}
+	return country.add_reform(*reform);
 }

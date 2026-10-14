@@ -1,5 +1,6 @@
 #include "InstanceManager.hpp"
 
+#include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/population/PopDynamics.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
@@ -202,6 +203,8 @@ void InstanceManager::tick() {
 	if (today.is_month_start()) {
 		market_instance.record_price_history();
 		PopDynamics::monthly_update(*this, pop_deps);
+		PoliticsDynamics::monthly_update(*this);
+		RebelDynamics::monthly_update(*this);
 	}
 }
 

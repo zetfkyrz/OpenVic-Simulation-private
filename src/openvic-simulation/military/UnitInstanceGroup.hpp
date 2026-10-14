@@ -308,6 +308,11 @@ namespace OpenVic {
 		bool start_ship_building(CountryInstance& country, ShipType const& ship_type, ProvinceInstance& province);
 		// Drowns the carried armies that do not fit in the transport ships that are left
 		void enforce_transport_capacity(NavyInstance& navy);
+		// An army of regiments that need no pop (rebels), appears in the province at once
+		ArmyInstance* create_army_with_regiments(
+			CountryInstance& country, ProvinceInstance& province, RegimentType const& regiment_type, size_t count,
+			std::string_view army_name
+		);
 		// Cancels an order of the country, the goods are returned
 		bool cancel_recruitment(CountryInstance& country, unique_id_t order_id);
 		// Days the regiment takes to recruit for the country

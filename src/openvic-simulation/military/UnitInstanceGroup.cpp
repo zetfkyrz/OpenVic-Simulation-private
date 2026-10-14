@@ -1400,3 +1400,26 @@ bool UnitInstanceManager::start_ship_building(CountryInstance& country, ShipType
 	recruitment_orders.push_back({ unique_id_counter++, &country, nullptr, &ship_type, &province, nullptr, days, days });
 	return true;
 }
+
+ArmyInstance* UnitInstanceManager::create_army_with_regiments(
+	CountryInstance& country, ProvinceInstance& province, RegimentType const& regiment_type, const size_t count,
+	std::string_view army_name
+) {
+	if (count == 0) {
+		return nullptr;
+	}
+	const unique_id_t army_id = unique_id_counter++;
+	ArmyInstance& army = *armies.emplace(army_id, fmt::format("{}", army_name), country, province);
+	unit_instance_group_map.emplace(army.unique_id, army);
+
+	for (size_t i = 0; i < count; ++i) {
+		const unique_id_t regiment_id = unique_id_counter++;
+		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
+			regiment_id, fmt::format("{} {}", regiment_type.get_identifier(), regiment_id), regiment_type, nullptr, false
+		});
+		unit_instance_map.emplace(regiment.unique_id, regiment);
+		army.add_unit(regiment);
+	}
+	army.update_gamestate();
+	return &army;
+}

@@ -857,12 +857,8 @@ void Pop::set_political_support(
 }
 
 void Pop::set_party_votes(fixed_point_map_t<CountryParty const*> const& votes) {
-	memory::vector<CountryParty const*> parties;
-	for (auto const& entry : vote_equivalents_by_party) {
-		parties.push_back(entry.first);
-	}
-	for (CountryParty const* party : parties) {
-		const auto it = votes.find(party);
-		vote_equivalents_by_party[party] = it != votes.end() ? it.value() : fixed_point_t::_0;
+	vote_equivalents_by_party.clear();
+	for (auto const& entry : votes) {
+		vote_equivalents_by_party[entry.first] = entry.second;
 	}
 }

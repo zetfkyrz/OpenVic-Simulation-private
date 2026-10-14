@@ -19,6 +19,9 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/politics/PoliticsDynamics.hpp>
+#include <openvic-simulation/politics/PoliticsManager.hpp>
+#include <openvic-simulation/country/CountryParty.hpp>
 #include <openvic-simulation/military/UnitInstanceGroup.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/population/PopType.hpp>
@@ -58,6 +61,7 @@ static size_t economy_report_days = 0;
 static bool run_army_test = false;
 static bool tariff_test = false;
 static bool recommended_rules = false;
+static bool politics_report = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -708,6 +712,58 @@ static void print_pop_flows(InstanceManager& instance_manager) {
 	}
 }
 
+// Parties, ideologies and reforms of the biggest countries, printed with the "POLITICS" prefix
+static void print_politics_report(InstanceManager& instance_manager) {
+	PoliticsManager const& politics = instance_manager.definition_manager.get_politics_manager();
+	fmt::println("POLITICS {}", instance_manager.get_today());
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_total_rank() == 0 || country.get_total_rank() > 4) {
+			continue;
+		}
+		std::string line = fmt::format("POLITICS   {} ruling={} last_election={} |", country.get_identifier(),
+			country.get_ruling_party_untracked() != nullptr ? country.get_ruling_party_untracked()->get_identifier() : "none",
+			country.get_last_election());
+		const double total = static_cast<double>(type_safe::get(country.get_total_population()));
+		for (Ideology const& ideology : politics.get_ideology_manager().get_ideologies()) {
+			const double share = total > 0 ? 100.0 * static_cast<double>(country.get_supporter_equivalents_by_ideology()[ideology.index]) / total : 0.0;
+			line += fmt::format(" {}={:.0f}%", ideology.get_identifier(), share);
+		}
+		{
+			ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+			line += " | vote effects:";
+			for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+				line += fmt::format(" {}={:.2f}", strata.get_identifier(),
+					static_cast<double>(country.get_modifier_effect_value(*cache.get_strata_effects(strata).get_vote())));
+			}
+			line += fmt::format(" culture rules: primary={} culture={} all={}", country.get_rule_set().is_primary_culture_voting_set(),
+				country.get_rule_set().is_culture_voting_set(), country.get_rule_set().is_all_voting_set());
+		}
+		line += " | votes:";
+		double votes_total = 0.0;
+		for (CountryParty const& party : country.country_definition.get_parties()) {
+			votes_total += static_cast<double>(country.get_vote_equivalents_by_party(party));
+		}
+		line += fmt::format(" voters={:.0f}%", total > 0 ? 100.0 * votes_total / total : 0.0);
+		for (CountryParty const& party : country.country_definition.get_parties()) {
+			const double votes = static_cast<double>(country.get_vote_equivalents_by_party(party));
+			if (votes_total > 0 && votes / votes_total > 0.03) {
+				line += fmt::format(" {}={:.0f}%", party.get_identifier(), 100.0 * votes / votes_total);
+			}
+		}
+		fmt::println("{}", line);
+		// Reforms that the country could enact now
+		size_t shown = 0;
+		for (Reform const& reform : politics.get_issue_manager().get_reforms()) {
+			auto status = PoliticsDynamics::get_reform_status(instance_manager, country, reform);
+			if (status.can_enact && shown < 6) {
+				++shown;
+				fmt::println("POLITICS     can enact {} (support {:.0f}% of the group, upper house {:.0f}%)", reform.get_identifier(),
+					100.0 * static_cast<double>(status.support), 100.0 * static_cast<double>(status.upper_house));
+			}
+		}
+	}
+}
+
 // Tariffs of the biggest countries: slider, effective rate, imports and the income, printed with the "TARIFF" prefix
 static void print_tariff_report(InstanceManager& instance_manager) {
 	fmt::println("TARIFF {}", instance_manager.get_today());
@@ -1098,6 +1154,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			if (day % 30 == 0) {
 				print_economy_report(instance_manager);
 				print_population_report(instance_manager);
+				if (politics_report) {
+					print_politics_report(instance_manager);
+				}
 				if (day % 90 == 0) {
 					print_pop_flows(instance_manager);
 				}
@@ -1163,6 +1222,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-P") == 0) {
+			politics_report = true;
 		} else if (strcmp(arg, "-R") == 0) {
 			recommended_rules = true;
 		} else if (strcmp(arg, "-T") == 0) {

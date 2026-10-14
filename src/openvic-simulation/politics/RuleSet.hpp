@@ -189,6 +189,12 @@ namespace OpenVic {
 		}
 		#undef ADD_IF_NOT_UNSPECIFIED
 
+	//voting (read without the warnings of the select_with_priority helpers)
+		bool is_primary_culture_voting_set() const { return primary_culture_voting == OptionalBool::TRUE; }
+		bool is_culture_voting_set() const { return culture_voting == OptionalBool::TRUE; }
+		bool is_all_voting_set() const { return all_voting == OptionalBool::TRUE; }
+		bool is_rich_only_set() const { return rich_only == OptionalBool::TRUE; }
+		bool is_same_as_ruling_party_set() const { return same_as_ruling_party == OptionalBool::TRUE; }
 	//political
 		ApportionmentMethod get_apportionment_method() const {
 			const RuleDefinition rules[] {
