@@ -1,6 +1,7 @@
 #include "InstanceManager.hpp"
 
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
+#include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/population/PopDynamics.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
@@ -205,6 +206,7 @@ void InstanceManager::tick() {
 		PopDynamics::monthly_update(*this, pop_deps);
 		PoliticsDynamics::monthly_update(*this);
 		RebelDynamics::monthly_update(*this);
+		ResearchDynamics::monthly_update(*this);
 	}
 }
 

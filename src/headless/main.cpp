@@ -19,6 +19,8 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/research/ResearchManager.hpp>
+#include <openvic-simulation/research/Technology.hpp>
 #include <openvic-simulation/politics/PoliticsDynamics.hpp>
 #include <openvic-simulation/politics/PoliticsManager.hpp>
 #include <openvic-simulation/country/CountryParty.hpp>
@@ -62,6 +64,7 @@ static bool run_army_test = false;
 static bool tariff_test = false;
 static bool recommended_rules = false;
 static bool politics_report = false;
+static bool research_test = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -764,6 +767,47 @@ static void print_politics_report(InstanceManager& instance_manager) {
 	}
 }
 
+// Research of the biggest countries: they always research the cheapest available technology ("RESEARCH" prefix)
+static void run_research_step(InstanceManager& instance_manager, const bool report) {
+	TechnologyManager const& technologies = instance_manager.definition_manager.get_research_manager().get_technology_manager();
+	const Date today = instance_manager.get_today();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_total_rank() == 0 || country.get_total_rank() > 8) {
+			continue;
+		}
+		if (country.get_current_research_untracked() == nullptr) {
+			Technology const* best = nullptr;
+			for (Technology const& technology : technologies.get_technologies()) {
+				if (country.can_research_tech(technology, today) && (best == nullptr || technology.cost < best->cost)) {
+					best = &technology;
+				}
+			}
+			if (best != nullptr) {
+				instance_manager.queue_game_action<start_research_argument_t>(country.index, best->index);
+			}
+		}
+		if (report && country.get_total_rank() == 1) {
+			size_t linked = 0, techs_with = 0;
+			for (Technology const& technology : technologies.get_technologies()) {
+				linked += technology.get_inventions().size();
+				techs_with += technology.get_inventions().empty() ? 0 : 1;
+			}
+			fmt::println("RESEARCH links: {} invention links on {} technologies, {} inventions in total", linked, techs_with,
+				instance_manager.definition_manager.get_research_manager().get_invention_manager().get_inventions().size());
+		}
+		if (report) {
+			size_t unlocked = 0;
+			for (Technology const& technology : technologies.get_technologies()) {
+				unlocked += country.is_technology_unlocked(technology) ? 1 : 0;
+			}
+			fmt::println("RESEARCH   #{} {} techs={} inventions={} daily_points={:.2f} researching={}", country.get_total_rank(),
+				country.get_identifier(), unlocked, country.get_inventions_count_untracked(),
+				static_cast<double>(country.get_daily_research_points_untracked()),
+				country.get_current_research_untracked() != nullptr ? country.get_current_research_untracked()->get_identifier() : "-");
+		}
+	}
+}
+
 // Tariffs of the biggest countries: slider, effective rate, imports and the income, printed with the "TARIFF" prefix
 static void print_tariff_report(InstanceManager& instance_manager) {
 	fmt::println("TARIFF {}", instance_manager.get_today());
@@ -1151,6 +1195,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		print_population_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
+			if (research_test && day % 5 == 0) {
+				run_research_step(instance_manager, day % 90 == 0);
+			}
 			if (day % 30 == 0) {
 				print_economy_report(instance_manager);
 				print_population_report(instance_manager);
@@ -1222,6 +1269,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-X") == 0) {
+			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {
 			politics_report = true;
 		} else if (strcmp(arg, "-R") == 0) {

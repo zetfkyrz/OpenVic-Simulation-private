@@ -359,6 +359,7 @@ bool WarManager::declare_war(
 		}
 	}
 
+	instance_manager.get_notification_log().add(instance_manager.get_today(), &attacker, "war_declared", "", &defender);
 	SPDLOG_INFO(
 		"War {} started: {} (+{} allies) attacks {} (+{} allies)",
 		war.id, attacker.get_identifier(), war.attackers.size() - 1, defender.get_identifier(), war.defenders.size() - 1
@@ -544,6 +545,9 @@ void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t 
 	);
 
 	SPDLOG_INFO("War {} ended", war_id);
+	if (!war.attackers.empty() && !war.defenders.empty()) {
+		instance_manager.get_notification_log().add(today, war.attackers.front(), "peace_signed", "", war.defenders.front());
+	}
 
 	MapInstance& map_instance = instance_manager.get_map_instance();
 

@@ -296,6 +296,7 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				country.set_last_election(today);
 				if (winner != nullptr && country.get_ruling_party_untracked() != winner) {
 					SPDLOG_INFO("Election in {}: {} comes to power", country.get_identifier(), winner->get_identifier());
+					instance_manager.get_notification_log().add(today, &country, "election", winner->get_identifier());
 					country.set_ruling_party(*winner);
 				}
 			}
@@ -527,6 +528,7 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 						uprising_started()[province] = today;
 						has_uprising = true;
 						SPDLOG_INFO("Uprising in {} ({}): {} rebel regiments", province->get_identifier(), country.get_identifier(), count);
+						instance_manager.get_notification_log().add(today, &country, "uprising", province->get_identifier());
 					}
 				}
 			}
