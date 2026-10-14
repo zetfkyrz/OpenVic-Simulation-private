@@ -808,3 +808,57 @@ bool Pop::try_recruit_understrength() {
 	++regiment_count;
 	return true;
 }
+
+void Pop::release_recruit() {
+	if (regiment_count > 0) {
+		--regiment_count;
+	}
+}
+
+void Pop::clear_dynamics_record() {
+	total_change = 0;
+	num_grown = 0;
+	num_promoted = 0;
+	num_demoted = 0;
+	num_migrated_internal = 0;
+	num_migrated_external = 0;
+	num_migrated_colonial = 0;
+}
+
+void Pop::change_size(const std::int32_t delta, const std::int32_t kind) {
+	std::int32_t applied = delta;
+	if (type_safe::get(size) + applied < 0) {
+		applied = -type_safe::get(size);
+	}
+	size += pop_size_t(applied);
+	total_change += pop_size_t(applied);
+	switch (kind) {
+	case 0: num_grown += pop_size_t(applied); break;
+	case 1: num_promoted += pop_size_t(applied); break;
+	case 2: num_demoted += pop_size_t(applied); break;
+	case 3: num_migrated_internal += pop_size_t(applied); break;
+	default: break;
+	}
+}
+
+void Pop::set_political_support(
+	std::span<const fixed_point_t> ideology_support, std::span<const fixed_point_t> party_policy_support,
+	std::span<const fixed_point_t> reform_support
+) {
+	for (size_t i = 0; i < ideology_support.size() && i < static_cast<size_t>(type_safe::get(supporter_equivalents_by_ideology.size())); ++i) {
+		supporter_equivalents_by_ideology[ideology_index_t(i)] = ideology_support[i];
+	}
+	for (size_t i = 0; i < party_policy_support.size() && i < static_cast<size_t>(type_safe::get(supporter_equivalents_by_party_policy.size())); ++i) {
+		supporter_equivalents_by_party_policy[party_policy_index_t(i)] = party_policy_support[i];
+	}
+	for (size_t i = 0; i < reform_support.size() && i < static_cast<size_t>(type_safe::get(supporter_equivalents_by_reform.size())); ++i) {
+		supporter_equivalents_by_reform[reform_index_t(i)] = reform_support[i];
+	}
+}
+
+void Pop::set_party_votes(fixed_point_map_t<CountryParty const*> const& votes) {
+	vote_equivalents_by_party.clear();
+	for (auto const& entry : votes) {
+		vote_equivalents_by_party[entry.first] = entry.second;
+	}
+}

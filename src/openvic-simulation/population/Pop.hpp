@@ -50,6 +50,12 @@ namespace OpenVic {
 	public:
 		Culture const& culture;
 		Religion const& religion;
+
+		// A copy with another type, culture and size (the militancy and consciousness are kept), for pops that are created
+		// by the changes of the population
+		PopBase with_changes(PopType const& new_type, Culture const& new_culture, pop_size_t new_size) const {
+			return { new_type, new_culture, religion, new_size, militancy, consciousness, rebel_type };
+		}
 	};
 
 	#define OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(F) \
@@ -237,8 +243,27 @@ namespace OpenVic {
 		// Takes at most the amount out of the cash of the pop (e.g. a debt that is collected), returns what was taken
 		fixed_point_t take_cash(const fixed_point_t amount);
 		void hire(pop_size_t count);
+
+
+		// Political support computed by the politics module: all values are already scaled to the size of the pop
+		void set_political_support(
+			std::span<const fixed_point_t> ideology_support, std::span<const fixed_point_t> party_policy_support,
+			std::span<const fixed_point_t> reform_support
+		);
+		void set_party_votes(fixed_point_map_t<CountryParty const*> const& votes);
+
+		// Population dynamics (monthly): people join or leave the pop, the change is recorded for the interface.
+		// The size never goes below zero. kind: 0 growth, 1 promotion (arrived by promotion), 2 demotion, 3 internal migration
+		void change_size(std::int32_t delta, std::int32_t kind);
+		// Fraction of a person that growth could not add yet
+		fixed_point_t growth_remainder;
+		fixed_point_t assimilation_remainder;
+		fixed_point_t migration_remainder;
+		void clear_dynamics_record();
 		//recruit or conscript
 		bool try_recruit();
 		bool try_recruit_understrength();
+		// Frees a regiment slot when a regiment backed by this pop is disbanded
+		void release_recruit();
 	};
 }

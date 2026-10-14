@@ -198,6 +198,13 @@ bool ProvinceInstance::add_pop_vec(
 	}
 }
 
+Pop* ProvinceInstance::add_pop(PopBase const& pop_base, PopDeps const& pop_deps) {
+	if (province_definition.is_water()) {
+		return nullptr;
+	}
+	return &*pops.emplace(*this, pop_base, pop_deps, ++last_pop_id);
+}
+
 size_t ProvinceInstance::get_pop_count() const {
 	return pops.size();
 }

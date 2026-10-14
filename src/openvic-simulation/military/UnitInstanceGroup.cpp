@@ -8,6 +8,8 @@
 
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/defines/MilitaryDefines.hpp"
+#include "openvic-simulation/economy/BuildingInstance.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/military/Deployment.hpp"
@@ -72,6 +74,47 @@ bool UnitInstanceGroup::can_country_enter(CountryInstance const& country, Provin
 	return controller != nullptr && country.has_alliance_with(*controller);
 }
 
+bool UnitInstanceGroup::can_navy_enter(CountryInstance const& country, ProvinceInstance const& province) {
+	if (province.province_definition.is_water()) {
+		return true;
+	}
+	if (!province.province_definition.has_port()) {
+		return false;
+	}
+	// Ships dock only in the ports of the country and of its friends
+	CountryInstance const* const owner = province.get_owner();
+	if (owner == nullptr) {
+		return false;
+	}
+	return owner == &country || province.get_controller() == &country || country.has_alliance_with(*owner)
+		|| country.has_military_access_to(*owner);
+}
+
+namespace {
+	// Distance used between a port and its sea, they are not connected by a measured adjacency
+	constexpr int32_t PORT_STEP_DISTANCE = 10;
+}
+
+fixed_point_t UnitInstanceGroup::get_step_distance(ProvinceInstance const& from, ProvinceInstance const& to) const {
+	ProvinceDefinition::adjacency_t const* const adjacency = from.province_definition.get_adjacency_to(to.province_definition);
+	if (branch == LAND) {
+		return adjacency != nullptr ? adjacency->get_distance() : fixed_point_t(-1);
+	}
+
+	// Ships: sea to sea, or a port and the sea next to it
+	const bool from_water = from.province_definition.is_water();
+	const bool to_water = to.province_definition.is_water();
+	if (from_water && to_water) {
+		return adjacency != nullptr ? adjacency->get_distance() : fixed_point_t(-1);
+	}
+	ProvinceDefinition const& port = from_water ? to.province_definition : from.province_definition;
+	ProvinceDefinition const& sea = from_water ? from.province_definition : to.province_definition;
+	if (!port.has_port() || port.get_port_adjacent_province() != &sea) {
+		return fixed_point_t(-1);
+	}
+	return adjacency != nullptr ? adjacency->get_distance() : fixed_point_t(PORT_STEP_DISTANCE);
+}
+
 void UnitInstanceGroup::set_path(memory::vector<std::reference_wrapper<ProvinceInstance>>&& new_path) {
 	if (new_path.empty() || path.empty() || &new_path.front().get() != &path.front().get()) {
 		movement_progress = fixed_point_t::_0;
@@ -96,33 +139,24 @@ void UnitInstanceGroup::tick() {
 
 	ProvinceInstance& next = path.front();
 
-	if (!can_country_enter(country.get(), next)) {
+	if (branch == LAND ? !can_country_enter(country.get(), next) : !can_navy_enter(country.get(), next)) {
 		// Access was lost (peace, alliance ended...), stop
 		clear_path();
 		return;
 	}
 
-	ProvinceDefinition::adjacency_t const* const adjacency =
-		location.get().province_definition.get_adjacency_to(next.province_definition);
-	if (OV_unlikely(adjacency == nullptr)) {
+	const fixed_point_t step_distance = get_step_distance(location.get(), next);
+	if (OV_unlikely(step_distance < fixed_point_t::_0)) {
 		clear_path();
 		return;
 	}
 
-	fixed_point_t speed = units.front().get().unit_type.maximum_speed;
-	for (UnitInstance const& unit : units) {
-		if (unit.unit_type.maximum_speed < speed) {
-			speed = unit.unit_type.maximum_speed;
-		}
-	}
-	if (speed <= fixed_point_t::_0) {
-		speed = fixed_point_t::_1;
-	}
+	const fixed_point_t speed = get_movement_speed();
 
 	movement_progress += speed * MOVEMENT_SPEED_SCALE;
 
-	if (movement_progress >= adjacency->get_distance()) {
-		movement_progress -= adjacency->get_distance();
+	if (movement_progress >= step_distance) {
+		movement_progress -= step_distance;
 		set_location(next);
 		path.erase(path.begin());
 		if (path.empty()) {
@@ -300,6 +334,47 @@ fixed_point_t UnitInstanceGroup::get_average_max_organisation() const {
 	return !units.empty() ? total_max_organisation / static_cast<int32_t>(units.size()) : fixed_point_t::_0;
 }
 
+fixed_point_t UnitInstanceGroup::get_movement_speed() const {
+	if (units.empty()) {
+		return fixed_point_t::_1;
+	}
+
+	fixed_point_t speed = units.front().get().unit_type.maximum_speed;
+	for (UnitInstance const& unit : units) {
+		if (unit.unit_type.maximum_speed < speed) {
+			speed = unit.unit_type.maximum_speed;
+		}
+	}
+	if (speed <= fixed_point_t::_0) {
+		speed = fixed_point_t::_1;
+	}
+	return speed;
+}
+
+int32_t UnitInstanceGroup::get_movement_days_left() const {
+	if (path.empty()) {
+		return 0;
+	}
+
+	// The distance along the path left to cover divided by the distance covered each day
+	fixed_point_t remaining = -movement_progress;
+	ProvinceInstance const* from = &location.get();
+	for (ProvinceInstance const& to : path) {
+		const fixed_point_t distance = get_step_distance(*from, to);
+		if (distance < fixed_point_t::_0) {
+			break;
+		}
+		remaining += distance;
+		from = &to;
+	}
+
+	const fixed_point_t per_day = get_movement_speed() * MOVEMENT_SPEED_SCALE;
+	if (remaining <= fixed_point_t::_0) {
+		return 1;
+	}
+	return std::max<int32_t>(1, (remaining / per_day).ceil<int32_t>());
+}
+
 bool UnitInstanceGroup::is_moving() const {
 	return !path.empty();
 }
@@ -328,6 +403,27 @@ void UnitInstanceGroupBranched<LAND>::tick() {
 	UnitInstanceGroup::tick();
 }
 
+void UnitInstanceGroupBranched<LAND>::reset_dig_in() {
+	idle_days = 0;
+	dig_in_level = 0;
+}
+
+void UnitInstanceGroupBranched<LAND>::advance_dig_in(const int32_t days_per_level, const int32_t cap) {
+	if (is_moving() || is_in_combat()) {
+		reset_dig_in();
+		return;
+	}
+
+	if (days_per_level <= 0 || dig_in_level >= cap) {
+		return;
+	}
+
+	if (++idle_days >= days_per_level) {
+		idle_days = 0;
+		++dig_in_level;
+	}
+}
+
 UnitInstanceGroupBranched<NAVAL>::UnitInstanceGroupBranched(
 	unique_id_t new_unique_id,
 	std::string_view new_name,
@@ -340,7 +436,96 @@ void UnitInstanceGroupBranched<NAVAL>::update_gamestate() {
 }
 
 void UnitInstanceGroupBranched<NAVAL>::tick() {
+	ProvinceInstance* const old_location = &get_location();
 	UnitInstanceGroup::tick();
+
+	// The armies on board travel with the ships
+	if (&get_location() != old_location) {
+		for (ArmyInstance& army : carried_armies) {
+			army.clear_path();
+			army.set_location(get_location());
+		}
+	}
+}
+
+size_t UnitInstanceGroupBranched<NAVAL>::get_transport_capacity() const {
+	size_t capacity = 0;
+	for (ShipInstance const& ship : get_ship_instances()) {
+		if (ship.get_ship_type().is_transport) {
+			capacity += REGIMENTS_PER_TRANSPORT;
+		}
+	}
+	return capacity;
+}
+
+size_t UnitInstanceGroupBranched<NAVAL>::get_carried_regiment_count() const {
+	size_t count = 0;
+	for (ArmyInstance const& army : carried_armies) {
+		count += army.get_unit_count();
+	}
+	return count;
+}
+
+bool UnitInstanceGroupBranched<NAVAL>::load_army(ArmyInstance& army) {
+	if (&army.get_country() != &get_country() || &army.get_location() != &get_location() || army.is_moving()
+		|| army.is_in_combat() || army.get_transport_navy() != nullptr || get_location().province_definition.is_water()) {
+		return false;
+	}
+	if (get_carried_regiment_count() + army.get_unit_count() > get_transport_capacity()) {
+		return false;
+	}
+	army.set_transport_navy(this);
+	army.clear_path();
+	carried_armies.emplace_back(army);
+	return true;
+}
+
+void UnitInstanceGroupBranched<NAVAL>::forget_carried_army(ArmyInstance const& army) {
+	carried_armies.erase(
+		std::remove_if(carried_armies.begin(), carried_armies.end(), [&army](std::reference_wrapper<ArmyInstance> other) -> bool {
+			return &other.get() == &army;
+		}),
+		carried_armies.end()
+	);
+}
+
+bool UnitInstanceGroupBranched<NAVAL>::unload_army(ArmyInstance& army) {
+	if (army.get_transport_navy() != this || get_location().province_definition.is_water()) {
+		return false;
+	}
+	army.set_transport_navy(nullptr);
+	forget_carried_army(army);
+	return true;
+}
+
+bool UnitInstanceGroupBranched<NAVAL>::land_army(ArmyInstance& army, ProvinceInstance& target) {
+	if (army.get_transport_navy() != this || !get_location().province_definition.is_water()
+		|| target.province_definition.is_water() || is_in_combat()) {
+		return false;
+	}
+	// The coast must touch the sea the ships are in
+	ProvinceDefinition::adjacency_t const* const adjacency =
+		get_location().province_definition.get_adjacency_to(target.province_definition);
+	const bool touches_coast = adjacency != nullptr && adjacency->get_type() == ProvinceDefinition::adjacency_t::type_t::COASTAL;
+	const bool is_port_of_sea = target.province_definition.has_port()
+		&& target.province_definition.get_port_adjacent_province() == &get_location().province_definition;
+	if (!touches_coast && !is_port_of_sea) {
+		return false;
+	}
+	if (!can_country_enter(get_country(), target)) {
+		return false;
+	}
+
+	army.set_transport_navy(nullptr);
+	forget_carried_army(army);
+	army.clear_path();
+	army.set_location(target);
+	// The men are tired after the landing
+	for (RegimentInstance& regiment : army.get_regiment_instances()) {
+		regiment.take_damage(regiment.get_organisation() * (LANDING_ORGANISATION_DIVISOR - 1) / LANDING_ORGANISATION_DIVISOR, fixed_point_t::_0);
+	}
+	army.reset_dig_in();
+	return true;
 }
 
 fixed_point_t UnitInstanceGroupBranched<NAVAL>::get_total_consumed_supply() const {
@@ -541,6 +726,74 @@ void UnitInstanceManager::update_gamestate() {
 void UnitInstanceManager::tick() {
 	for (ArmyInstance& army : armies) {
 		army.tick();
+		army.advance_dig_in(
+			static_cast<int32_t>(military_defines.get_dig_in_increase_each_days().to_int()),
+			army.get_country().get_dig_in_cap()
+		);
+	}
+
+	// Recruitment: the regiment appears in the province when the time is up
+	for (size_t i = 0; i < recruitment_orders.size();) {
+		RecruitmentOrder& order = recruitment_orders[i];
+		if (--order.days_left > 0) {
+			++i;
+			continue;
+		}
+
+		CountryInstance& country = *order.country;
+		ProvinceInstance& province = *order.province;
+		RegimentType const* const regiment_type = order.regiment_type;
+		ShipType const* const ship_type = order.ship_type;
+		Pop* const pop = order.pop;
+		recruitment_orders.erase(recruitment_orders.begin() + i);
+
+		if (ship_type != nullptr) {
+			// A ship joins a fleet standing in the port or forms a new one
+			const unique_id_t ship_id = unique_id_counter++;
+			ShipInstance& ship = *ships.insert(ShipInstance {
+				ship_id, fmt::format("{} {}", ship_type->get_identifier(), ship_id), *ship_type
+			});
+			unit_instance_map.emplace(ship.unique_id, ship);
+
+			NavyInstance* fleet = nullptr;
+			for (NavyInstance& navy : province.get_navies()) {
+				if (&navy.get_country() == &country && !navy.is_moving() && !navy.is_in_combat()) {
+					fleet = &navy;
+					break;
+				}
+			}
+			if (fleet == nullptr) {
+				const unique_id_t navy_id = unique_id_counter++;
+				fleet = &*navies.emplace(navy_id, fmt::format("Fleet {}", navy_id), country, province);
+				unit_instance_group_map.emplace(fleet->unique_id, *fleet);
+			}
+			fleet->add_unit(ship);
+			fleet->update_gamestate();
+			continue;
+		}
+
+		const unique_id_t regiment_id = unique_id_counter++;
+		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
+			regiment_id, fmt::format("{} {}", regiment_type->get_identifier(), regiment_id), *regiment_type, pop, false
+		});
+		unit_instance_map.emplace(regiment.unique_id, regiment);
+
+		// Joins a standing army of the country in the province or forms a new one
+		ArmyInstance* target = nullptr;
+		for (ArmyInstance& army : province.get_armies()) {
+			if (&army.get_country() == &country && !army.is_moving() && !army.is_in_combat()
+				&& army.get_transport_navy() == nullptr) {
+				target = &army;
+				break;
+			}
+		}
+		if (target == nullptr) {
+			const unique_id_t army_id = unique_id_counter++;
+			target = &*armies.emplace(army_id, fmt::format("Army {}", army_id), country, province);
+			unit_instance_group_map.emplace(target->unique_id, *target);
+		}
+		target->add_unit(regiment);
+		target->update_gamestate();
 	}
 	for (NavyInstance& navy : navies) {
 		navy.tick();
@@ -578,27 +831,36 @@ UnitInstanceGroup* UnitInstanceManager::get_unit_instance_group_by_unique_id(uni
 }
 
 bool UnitInstanceManager::order_move(
-	ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance, const bool append
+	UnitInstanceGroup& group, ProvinceInstance& destination, MapInstance& map_instance, const bool append
 ) {
-	if (destination.province_definition.is_water() || army.empty()) {
+	if (group.empty()) {
+		return false;
+	}
+	const bool naval = group.branch == NAVAL;
+	// Armies carried by a navy move with it
+	if (!naval && static_cast<ArmyInstance&>(group).get_transport_navy() != nullptr) {
+		return false;
+	}
+	if (naval ? !(destination.province_definition.is_water() || destination.province_definition.has_port())
+		: destination.province_definition.is_water()) {
 		return false;
 	}
 
-	const bool extend_route = append && army.is_moving();
-	ProvinceInstance& start = extend_route ? army.get_path().back().get() : army.get_location();
+	const bool extend_route = append && group.is_moving();
+	ProvinceInstance& start = extend_route ? group.get_path().back().get() : group.get_location();
 	if (&start == &destination) {
 		if (!extend_route) {
-			army.clear_path();
+			group.clear_path();
 		}
 		return true;
 	}
 
-	CountryInstance const& country = army.get_country();
-	if (!UnitInstanceGroup::can_country_enter(country, destination)) {
+	CountryInstance const& country = group.get_country();
+	if (naval ? !UnitInstanceGroup::can_navy_enter(country, destination) : !UnitInstanceGroup::can_country_enter(country, destination)) {
 		return false;
 	}
 
-	// Dijkstra over land adjacencies by distance
+	// Dijkstra over the adjacencies by distance
 	using entry_t = std::pair<fixed_point_t, ProvinceInstance*>;
 	struct entry_greater {
 		bool operator()(entry_t const& lhs, entry_t const& rhs) const {
@@ -611,6 +873,20 @@ bool UnitInstanceManager::order_move(
 
 	cost[&start] = fixed_point_t::_0;
 	queue.emplace(fixed_point_t::_0, &start);
+
+	const auto relax = [&](ProvinceInstance* current, fixed_point_t current_cost, ProvinceInstance& to) -> void {
+		const fixed_point_t step = group.get_step_distance(*current, to);
+		if (step < fixed_point_t::_0) {
+			return;
+		}
+		const fixed_point_t new_cost = current_cost + step;
+		const auto it = cost.find(&to);
+		if (it == cost.end() || new_cost < it->second) {
+			cost[&to] = new_cost;
+			previous[&to] = current;
+			queue.emplace(new_cost, &to);
+		}
+	};
 
 	while (!queue.empty()) {
 		const auto [current_cost, current] = queue.top();
@@ -625,25 +901,39 @@ bool UnitInstanceManager::order_move(
 			continue;
 		}
 
-		for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
-			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
-				continue;
+		if (!naval) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
+					continue;
+				}
+				ProvinceDefinition const& to_definition = adjacency.get_to();
+				if (to_definition.is_water()) {
+					continue;
+				}
+				ProvinceInstance& to = map_instance.get_province_instance_by_definition(to_definition);
+				if (!UnitInstanceGroup::can_country_enter(country, to)) {
+					continue;
+				}
+				relax(current, current_cost, to);
 			}
-			ProvinceDefinition const& to_definition = adjacency.get_to();
-			if (to_definition.is_water()) {
-				continue;
+		} else if (current->province_definition.is_water()) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				ProvinceDefinition const& to_definition = adjacency.get_to();
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE) {
+					continue;
+				}
+				ProvinceInstance& to = map_instance.get_province_instance_by_definition(to_definition);
+				if (to_definition.is_water()) {
+					relax(current, current_cost, to);
+				} else if (&to == &destination && to_definition.has_port() && to_definition.get_port_adjacent_province() == &current->province_definition
+					&& UnitInstanceGroup::can_navy_enter(country, to)) {
+					// A port is only a destination, never a way through
+					relax(current, current_cost, to);
+				}
 			}
-			ProvinceInstance& to = map_instance.get_province_instance_by_definition(to_definition);
-			if (!UnitInstanceGroup::can_country_enter(country, to)) {
-				continue;
-			}
-			const fixed_point_t new_cost = current_cost + adjacency.get_distance();
-			const auto it = cost.find(&to);
-			if (it == cost.end() || new_cost < it->second) {
-				cost[&to] = new_cost;
-				previous[&to] = current;
-				queue.emplace(new_cost, &to);
-			}
+		} else if (ProvinceDefinition const* sea = current->province_definition.get_port_adjacent_province()) {
+			// Leaving the port (only the start of the route can be a port)
+			relax(current, current_cost, map_instance.get_province_instance_by_definition(*sea));
 		}
 	}
 
@@ -659,18 +949,68 @@ bool UnitInstanceManager::order_move(
 
 	if (extend_route) {
 		memory::vector<std::reference_wrapper<ProvinceInstance>> full_path;
-		for (ProvinceInstance& step : army.get_path()) {
+		for (ProvinceInstance& step : group.get_path()) {
 			full_path.emplace_back(step);
 		}
 		full_path.insert(full_path.end(), path.begin(), path.end());
 		path = std::move(full_path);
 	}
 
-	army.set_path(std::move(path));
+	group.set_path(std::move(path));
 	return true;
 }
 
+ProvinceInstance* UnitInstanceManager::find_nearest_port(
+	CountryInstance const& country, ProvinceInstance& from, MapInstance& map_instance
+) {
+	// Breadth first search over the sea (and the sea next to the start) until a port the country can dock in is found
+	std::queue<ProvinceInstance*> queue;
+	std::unordered_map<ProvinceInstance*, bool> seen;
+
+	ProvinceInstance* start = &from;
+	if (!from.province_definition.is_water()) {
+		if (from.province_definition.has_port() && UnitInstanceGroup::can_navy_enter(country, from)) {
+			return &from;
+		}
+		if (ProvinceDefinition const* sea = from.province_definition.get_port_adjacent_province()) {
+			start = &map_instance.get_province_instance_by_definition(*sea);
+		} else {
+			return nullptr;
+		}
+	}
+	queue.push(start);
+	seen[start] = true;
+
+	while (!queue.empty()) {
+		ProvinceInstance* const current = queue.front();
+		queue.pop();
+
+		for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+			ProvinceDefinition const& to_definition = adjacency.get_to();
+			if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE) {
+				continue;
+			}
+			ProvinceInstance& to = map_instance.get_province_instance_by_definition(to_definition);
+			if (to_definition.is_water()) {
+				if (!seen[&to]) {
+					seen[&to] = true;
+					queue.push(&to);
+				}
+			} else if (to_definition.has_port() && to_definition.get_port_adjacent_province() == &current->province_definition
+				&& UnitInstanceGroup::can_navy_enter(country, to)) {
+				return &to;
+			}
+		}
+	}
+	return nullptr;
+}
+
 void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& group) {
+	if (unit.get_branch() == LAND) {
+		if (Pop* const pop = static_cast<RegimentInstance&>(unit).get_pop()) {
+			pop->release_recruit();
+		}
+	}
 	group.remove_unit(unit);
 	unit_instance_map.erase(unit.unique_id);
 
@@ -688,6 +1028,26 @@ void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& gr
 }
 
 void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
+	// The armies on board of a destroyed navy are lost with it
+	if (group.branch == NAVAL) {
+		NavyInstance& navy = static_cast<NavyInstance&>(group);
+		memory::vector<ArmyInstance*> carried;
+		for (ArmyInstance& army : navy.get_carried_armies()) {
+			carried.push_back(&army);
+		}
+		for (ArmyInstance* army : carried) {
+			navy.forget_carried_army(*army);
+			army->set_transport_navy(nullptr);
+			destroy_group(*army);
+		}
+	} else {
+		ArmyInstance& army = static_cast<ArmyInstance&>(group);
+		if (army.get_transport_navy() != nullptr) {
+			const_cast<NavyInstance*>(army.get_transport_navy())->forget_carried_army(army);
+			army.set_transport_navy(nullptr);
+		}
+	}
+
 	// Delete the units first, copy the list since destroying a unit edits the group
 	memory::vector<UnitInstance*> group_units;
 	for (UnitInstance& unit : group.get_units()) {
@@ -695,6 +1055,11 @@ void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
 	}
 
 	for (UnitInstance* unit : group_units) {
+		if (unit->get_branch() == LAND) {
+			if (Pop* const pop = static_cast<RegimentInstance&>(*unit).get_pop()) {
+				pop->release_recruit();
+			}
+		}
 		group.remove_unit(*unit);
 		unit_instance_map.erase(unit->unique_id);
 		if (unit->get_branch() == LAND) {
@@ -799,4 +1164,262 @@ bool UnitInstanceManager::create_leader(
 	});
 
 	return true;
+}
+int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country, UnitType const& unit_type) {
+	// The build time of the unit scaled by the recruitment time modifier of the country, at least a day
+	const fixed_point_t days = fixed_point_t::parse_unsafe(static_cast<int32_t>(unit_type.build_time.to_int()))
+		* country.get_recruit_time();
+	return std::max<int32_t>(1, days.ceil<int32_t>());
+}
+
+std::string_view UnitInstanceManager::get_recruitment_block_reason(
+	CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
+) {
+	if (!country.is_unit_type_unlocked(regiment_type)) {
+		return "Тип полка ещё не открыт";
+	}
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return "Набор возможен только в своей, не оккупированной провинции";
+	}
+	if (&pop.get_location() != &province) {
+		return "Население не из этой провинции";
+	}
+	if (!pop.get_type().can_be_recruited) {
+		return "Этот тип населения не призывается";
+	}
+	if (!Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
+		return "Культура населения не допускается к службе";
+	}
+	if (pop.get_regiment_count() >= pop.get_max_supported_regiments()) {
+		return "Население не может выставить больше полков";
+	}
+	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return "На складе страны не хватает товаров";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::start_recruitment(
+	CountryInstance& country, RegimentType const& regiment_type, ProvinceInstance& province, Pop& pop
+) {
+	if (!get_recruitment_block_reason(country, regiment_type, province, pop).empty()) {
+		return false;
+	}
+
+	if (!pop.try_recruit()) {
+		return false;
+	}
+
+	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+		good_data.stockpile_amount -= quantity;
+		good_data.stockpile_change_yesterday -= quantity;
+	}
+
+	const int32_t days = get_recruitment_days(country, regiment_type);
+	recruitment_orders.push_back({ unique_id_counter++, &country, &regiment_type, nullptr, &province, &pop, days, days });
+	return true;
+}
+
+bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const unique_id_t order_id) {
+	for (auto it = recruitment_orders.begin(); it != recruitment_orders.end(); ++it) {
+		if (it->id != order_id) {
+			continue;
+		}
+		if (it->country != &country) {
+			return false;
+		}
+
+		UnitType const& unit_type = it->ship_type != nullptr ? static_cast<UnitType const&>(*it->ship_type)
+			: static_cast<UnitType const&>(*it->regiment_type);
+		for (auto const& [good, quantity] : unit_type.get_build_cost()) {
+			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+			good_data.stockpile_amount += quantity;
+			good_data.stockpile_change_yesterday += quantity;
+		}
+		if (it->pop != nullptr) {
+			it->pop->release_recruit();
+		}
+		recruitment_orders.erase(it);
+		return true;
+	}
+	return false;
+}
+
+ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentInstance& regiment) {
+	if (army.get_unit_count() < 2) {
+		return nullptr;
+	}
+
+	const unique_id_t new_army_id = unique_id_counter++;
+	ArmyInstance& new_army = *armies.emplace(
+		new_army_id, fmt::format("{} ({})", army.get_name(), new_army_id), army.get_country(), army.get_location()
+	);
+	unit_instance_group_map.emplace(new_army.unique_id, new_army);
+
+	if (!army.remove_unit(regiment)) {
+		destroy_group(new_army);
+		return nullptr;
+	}
+	new_army.add_unit(regiment);
+	army.update_gamestate();
+	new_army.update_gamestate();
+	return &new_army;
+}
+
+bool UnitInstanceManager::merge_armies(ArmyInstance& target, ArmyInstance& source) {
+	if (&target == &source || &target.get_country() != &source.get_country() ||
+		&target.get_location() != &source.get_location() || source.is_moving() || target.is_moving()) {
+		return false;
+	}
+
+	memory::vector<UnitInstance*> moved;
+	for (UnitInstance& unit : source.get_units()) {
+		moved.push_back(&unit);
+	}
+	for (UnitInstance* unit : moved) {
+		source.remove_unit(*unit);
+		target.add_unit(*unit);
+	}
+
+	if (target.get_leader() == nullptr && source.get_leader() != nullptr) {
+		LeaderInstance* const leader = source.get_leader();
+		source.set_leader(nullptr);
+		target.set_leader(leader);
+	}
+
+	destroy_group(source);
+	target.update_gamestate();
+	return true;
+}
+
+void UnitInstanceManager::disband_regiment(ArmyInstance& army, RegimentInstance& regiment) {
+	destroy_unit(regiment, army);
+}
+
+ArmyInstance* UnitInstanceManager::get_army_of_regiment(RegimentInstance const& regiment) {
+	for (ArmyInstance& army : armies) {
+		for (UnitInstance const& unit : army.get_units()) {
+			if (&unit == &regiment) {
+				return &army;
+			}
+		}
+	}
+	return nullptr;
+}
+
+void UnitInstanceManager::destroy_leader(LeaderInstance& leader) {
+	if (UnitInstanceGroup* const group = leader.get_unit_instance_group()) {
+		group->set_leader(nullptr);
+	}
+	const_cast<CountryInstance&>(leader.country).remove_leader(leader);
+	leader_instance_map.erase(leader.unique_id);
+	leaders.erase(leaders.get_iterator(&leader));
+}
+
+void UnitInstanceManager::enforce_transport_capacity(NavyInstance& navy) {
+	// Armies that do not fit in the remaining transports sink, the last loaded first
+	while (navy.get_carried_regiment_count() > navy.get_transport_capacity() && !navy.get_carried_armies().empty()) {
+		ArmyInstance& army = navy.get_carried_armies().back().get();
+		navy.forget_carried_army(army);
+		army.set_transport_navy(nullptr);
+		destroy_group(army);
+	}
+}
+
+std::string_view UnitInstanceManager::get_ship_block_reason(
+	CountryInstance const& country, ShipType const& ship_type, ProvinceInstance const& province
+) const {
+	if (!country.is_unit_type_unlocked(ship_type)) {
+		return "Тип корабля ещё не открыт";
+	}
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return "Корабли строятся только в своей, не оккупированной провинции";
+	}
+	if (!province.province_definition.has_port()) {
+		return "В провинции нет порта";
+	}
+	if (!ship_type.can_build_overseas) {
+		ProvinceInstance const* const capital = country.get_capital();
+		if (capital != nullptr && capital->province_definition.get_continent() != province.province_definition.get_continent()) {
+			return "Этот корабль нельзя строить за морем";
+		}
+	}
+
+	// The level of the naval base limits the ships
+	uint32_t port_level = 0;
+	for (BuildingInstance const& building : province.get_buildings()) {
+		if (building.building_type.get_identifier() == "naval_base") {
+			port_level = static_cast<uint32_t>(type_safe::get(building.get_level()));
+		}
+	}
+	if (port_level < ship_type.min_port_level) {
+		return "Нужна военно-морская база более высокого уровня";
+	}
+	if (ship_type.limit_per_port >= 0) {
+		int32_t existing = 0;
+		for (NavyInstance const& navy : province.get_navies()) {
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				if (&ship.get_ship_type() == &ship_type) {
+					++existing;
+				}
+			}
+		}
+		for (RecruitmentOrder const& order : recruitment_orders) {
+			if (order.ship_type == &ship_type && order.province == &province) {
+				++existing;
+			}
+		}
+		if (existing >= ship_type.limit_per_port) {
+			return "В порту уже максимум кораблей этого типа";
+		}
+	}
+
+	for (auto const& [good, quantity] : ship_type.get_build_cost()) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return "На складе страны не хватает товаров";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::start_ship_building(CountryInstance& country, ShipType const& ship_type, ProvinceInstance& province) {
+	if (!get_ship_block_reason(country, ship_type, province).empty()) {
+		return false;
+	}
+
+	for (auto const& [good, quantity] : ship_type.get_build_cost()) {
+		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+		good_data.stockpile_amount -= quantity;
+		good_data.stockpile_change_yesterday -= quantity;
+	}
+
+	const int32_t days = get_recruitment_days(country, ship_type);
+	recruitment_orders.push_back({ unique_id_counter++, &country, nullptr, &ship_type, &province, nullptr, days, days });
+	return true;
+}
+
+ArmyInstance* UnitInstanceManager::create_army_with_regiments(
+	CountryInstance& country, ProvinceInstance& province, RegimentType const& regiment_type, const size_t count,
+	std::string_view army_name
+) {
+	if (count == 0) {
+		return nullptr;
+	}
+	const unique_id_t army_id = unique_id_counter++;
+	ArmyInstance& army = *armies.emplace(army_id, fmt::format("{}", army_name), country, province);
+	unit_instance_group_map.emplace(army.unique_id, army);
+
+	for (size_t i = 0; i < count; ++i) {
+		const unique_id_t regiment_id = unique_id_counter++;
+		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
+			regiment_id, fmt::format("{} {}", regiment_type.get_identifier(), regiment_id), regiment_type, nullptr, false
+		});
+		unit_instance_map.emplace(regiment.unique_id, regiment);
+		army.add_unit(regiment);
+	}
+	army.update_gamestate();
+	return &army;
 }

@@ -1,5 +1,7 @@
 #include "GameAction.hpp"
 
+#include "openvic-simulation/politics/PoliticsDynamics.hpp"
+
 #include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
@@ -325,11 +327,12 @@ bool GameActionManager::VariantVisitor::operator() (start_land_unit_recruitment_
 		return false;
 	}
 
-	//these TODO's should be implemented in ProvinceInstance and/or some military type
-	//TODO verify pop's cultural status is acceptable for regiment type
-	//TODO verify pop is recruitable and has enough size (pop.try_recruit())
-	//TODO actually instantiate a regiment in recruitment state
-	return false;
+	CountryInstance* const country = province->get_owner();
+	if (OV_unlikely(country == nullptr)) {
+		return false;
+	}
+
+	return instance_manager.get_unit_instance_manager().start_recruitment(*country, *regiment_type, *province, *pop);
 }
 
 // Diplomacy
@@ -357,7 +360,7 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 	const auto [unique_id, province_index] = argument;
 
 	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
-	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+	if (OV_unlikely(group == nullptr)) {
 		spdlog::error_s("GAME_ACTION_MOVE_ARMY called with invalid army unique id: {}", unique_id);
 		return false;
 	}
@@ -378,16 +381,14 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 		}
 	}
 
-	return instance_manager.get_unit_instance_manager().order_move(
-		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance()
-	);
+	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance());
 }
 
 bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t const& argument) const {
 	const auto [unique_id, province_index] = argument;
 
 	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(unique_id);
-	if (OV_unlikely(group == nullptr || group->branch != unit_branch_t::LAND)) {
+	if (OV_unlikely(group == nullptr)) {
 		spdlog::error_s("GAME_ACTION_QUEUE_ARMY_MOVE called with invalid army unique id: {}", unique_id);
 		return false;
 	}
@@ -408,9 +409,7 @@ bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t c
 		}
 	}
 
-	return instance_manager.get_unit_instance_manager().order_move(
-		static_cast<ArmyInstance&>(*group), *province, instance_manager.get_map_instance(), true
-	);
+	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance(), true);
 }
 
 bool GameActionManager::VariantVisitor::operator() (stop_army_argument_t const& argument) const {
@@ -819,4 +818,258 @@ bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t 
 
 	factory->set_open(new_open);
 	return true;
+}
+
+// Army management
+namespace {
+	// The land regiment and the army that it is in
+	RegimentInstance* find_regiment(InstanceManager& instance_manager, const unique_id_t regiment_id, ArmyInstance*& army_out) {
+		UnitInstance* const unit = instance_manager.get_unit_instance_manager().get_unit_instance_by_unique_id(regiment_id);
+		if (unit == nullptr || unit->get_branch() != unit_branch_t::LAND) {
+			return nullptr;
+		}
+		RegimentInstance& regiment = static_cast<RegimentInstance&>(*unit);
+		army_out = instance_manager.get_unit_instance_manager().get_army_of_regiment(regiment);
+		return army_out != nullptr ? &regiment : nullptr;
+	}
+
+	ArmyInstance* find_army(InstanceManager& instance_manager, const unique_id_t army_id) {
+		UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+		if (group == nullptr || group->branch != unit_branch_t::LAND) {
+			return nullptr;
+		}
+		return static_cast<ArmyInstance*>(group);
+	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (cancel_recruitment_argument_t const& argument) const {
+	const auto [country_index, order_id] = argument;
+	return instance_manager.get_unit_instance_manager().cancel_recruitment(
+		war_action_country(instance_manager, country_index), order_id
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (split_regiment_argument_t const& argument) const {
+	ArmyInstance* army = nullptr;
+	RegimentInstance* const regiment = find_regiment(instance_manager, type_safe::get(argument), army);
+	if (regiment == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().split_regiment(*army, *regiment) != nullptr;
+}
+
+bool GameActionManager::VariantVisitor::operator() (merge_armies_argument_t const& argument) const {
+	const auto [target_id, source_id] = argument;
+	ArmyInstance* const target = find_army(instance_manager, target_id);
+	ArmyInstance* const source = find_army(instance_manager, source_id);
+	if (target == nullptr || source == nullptr || target->is_in_combat() || source->is_in_combat()) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().merge_armies(*target, *source);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t const& argument) const {
+	const auto [army_id, leader_id] = argument;
+	// Generals lead armies, admirals lead fleets
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+	if (group == nullptr) {
+		return false;
+	}
+	// Leader 0 takes the leader off the group
+	if (leader_id == 0) {
+		return group->get_leader() != nullptr && group->set_leader(nullptr);
+	}
+	LeaderInstance* const leader = instance_manager.get_unit_instance_manager().get_leader_instance_by_unique_id(leader_id);
+	if (leader == nullptr || leader->branch != group->branch || &leader->country != &group->get_country() || !leader->get_can_be_used()) {
+		return false;
+	}
+	return group->set_leader(leader);
+}
+
+bool GameActionManager::VariantVisitor::operator() (disband_regiment_argument_t const& argument) const {
+	ArmyInstance* army = nullptr;
+	RegimentInstance* const regiment = find_regiment(instance_manager, type_safe::get(argument), army);
+	if (regiment == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	instance_manager.get_unit_instance_manager().disband_regiment(*army, *regiment);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (disband_army_argument_t const& argument) const {
+	ArmyInstance* const army = find_army(instance_manager, type_safe::get(argument));
+	if (army == nullptr || army->is_in_combat()) {
+		return false;
+	}
+	// The front keeps no reference to the disbanded army
+	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+		if (front.country == &army->get_country()) {
+			instance_manager.get_war_manager().set_front_army(
+				instance_manager, army->get_country(), front.id, army->unique_id, false
+			);
+			break;
+		}
+	}
+	instance_manager.get_unit_instance_manager().destroy_group(*army);
+	return true;
+}
+
+// Ships and transport
+bool GameActionManager::VariantVisitor::operator() (load_army_argument_t const& argument) const {
+	const auto [army_id, navy_id] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(navy_id);
+	if (army == nullptr || group == nullptr || group->branch != unit_branch_t::NAVAL) {
+		return false;
+	}
+	return static_cast<NavyInstance*>(group)->load_army(*army);
+}
+
+bool GameActionManager::VariantVisitor::operator() (unload_army_argument_t const& argument) const {
+	ArmyInstance* const army = find_army(instance_manager, type_safe::get(argument));
+	if (army == nullptr || army->get_transport_navy() == nullptr) {
+		return false;
+	}
+	return const_cast<NavyInstance*>(army->get_transport_navy())->unload_army(*army);
+}
+
+bool GameActionManager::VariantVisitor::operator() (land_army_argument_t const& argument) const {
+	const auto [army_id, province_index] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (army == nullptr || province == nullptr || army->get_transport_navy() == nullptr) {
+		return false;
+	}
+	return const_cast<NavyInstance*>(army->get_transport_navy())->land_army(*army, *province);
+}
+
+bool GameActionManager::VariantVisitor::operator() (start_ship_building_argument_t const& argument) const {
+	const auto [ship_type_index, province_index] = argument;
+	ShipType const* const ship_type = instance_manager.definition_manager
+		.get_military_manager()
+		.get_unit_type_manager()
+		.get_ship_type_by_index(ship_type_index);
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(ship_type == nullptr || province == nullptr)) {
+		return false;
+	}
+	CountryInstance* const country = province->get_owner();
+	if (country == nullptr) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().start_ship_building(*country, *ship_type, *province);
+}
+
+// Peace negotiations
+bool GameActionManager::VariantVisitor::operator() (declare_war_goal_argument_t const& argument) const {
+	const auto [attacker_index, defender_index, goal_type, province_index] = argument;
+	CountryInstance& attacker = war_action_country(instance_manager, attacker_index);
+	CountryInstance& defender = war_action_country(instance_manager, defender_index);
+
+	WarGoal goal;
+	if (goal_type > static_cast<std::uint32_t>(WarGoal::type_t::REPARATIONS)) {
+		return false;
+	}
+	goal.type = static_cast<WarGoal::type_t>(goal_type);
+	if (goal.type == WarGoal::type_t::CONQUER_STATE) {
+		goal.state_province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (goal.state_province == nullptr) {
+			return false;
+		}
+	}
+	return instance_manager.get_war_manager().declare_war(instance_manager, attacker, defender, goal);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t const& argument) const {
+	const auto [country_index, war_id, kind, province_index, enabled] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	WarManager& manager = instance_manager.get_war_manager();
+
+	if (manager.get_war_by_id(war_id) == nullptr) {
+		return false;
+	}
+	PeaceTerms& draft = manager.get_peace_draft(country, war_id);
+
+	switch (kind) {
+	case 0: { // a state
+		ProvinceInstance const* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (province == nullptr) {
+			return false;
+		}
+		const auto it = std::find_if(draft.states.begin(), draft.states.end(), [province](ProvinceInstance const* other) -> bool {
+			return other == province || (other->get_state() != nullptr && other->get_state() == province->get_state());
+		});
+		if (enabled && it == draft.states.end()) {
+			draft.states.push_back(province);
+		} else if (!enabled && it != draft.states.end()) {
+			draft.states.erase(it);
+		}
+		return true;
+	}
+	case 1:
+		draft.reparations = enabled;
+		return true;
+	case 2:
+		draft.humiliate = enabled;
+		return true;
+	case 3: // the side gives instead of demanding, the states listed make no sense then
+		draft.concede = enabled;
+		draft.states.clear();
+		return true;
+	case 4:
+		manager.clear_peace_draft(country);
+		return true;
+	}
+	return false;
+}
+
+bool GameActionManager::VariantVisitor::operator() (send_peace_offer_argument_t const& argument) const {
+	const auto [country_index, war_id] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	WarManager& manager = instance_manager.get_war_manager();
+
+	PeaceTerms terms = manager.get_peace_draft(country, war_id);
+	return manager.send_peace_offer(instance_manager, country, terms);
+}
+
+bool GameActionManager::VariantVisitor::operator() (answer_peace_offer_argument_t const& argument) const {
+	const auto [country_index, war_id, accept] = argument;
+	return instance_manager.get_war_manager().answer_peace_offer(
+		instance_manager, war_action_country(instance_manager, country_index), war_id, accept
+	);
+}
+
+// Politics
+bool GameActionManager::VariantVisitor::operator() (enact_reform_argument_t const& argument) const {
+	const auto [country_index, reform_index] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	Reform const* const reform = instance_manager.definition_manager.get_politics_manager().get_issue_manager().get_reform_by_index(reform_index);
+	if (reform == nullptr) {
+		return false;
+	}
+	if (!PoliticsDynamics::get_reform_status(instance_manager, country, *reform).can_enact) {
+		return false;
+	}
+	return country.add_reform(*reform);
+}
+
+// Colonisation
+bool GameActionManager::VariantVisitor::operator() (start_colonisation_argument_t const& argument) const {
+	const auto [country_index, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr) {
+		return false;
+	}
+	return instance_manager.get_colonisation_manager().start_project(
+		instance_manager, war_action_country(instance_manager, country_index), *province
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (cancel_colonisation_argument_t const& argument) const {
+	const auto [country_index, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr) {
+		return false;
+	}
+	return instance_manager.get_colonisation_manager().cancel_project(war_action_country(instance_manager, country_index), *province);
 }

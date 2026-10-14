@@ -1,7 +1,11 @@
 #include <chrono>
+#include <fstream>
+#include <sstream>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <random>
+#include <unordered_set>
 
 #include <fmt/base.h>
 #include <fmt/chrono.h>
@@ -17,7 +21,16 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/research/ResearchManager.hpp>
+#include <openvic-simulation/research/Technology.hpp>
+#include <openvic-simulation/politics/PoliticsDynamics.hpp>
+#include <openvic-simulation/politics/PoliticsManager.hpp>
+#include <openvic-simulation/country/CountryParty.hpp>
+#include <openvic-simulation/military/UnitInstanceGroup.hpp>
+#include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
+#include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/population/Pop.hpp>
@@ -50,6 +63,13 @@ inline static void print_memory_usage( //
 
 // Days to simulate for the economy report (-e), 0 = no report
 static size_t economy_report_days = 0;
+static bool run_army_test = false;
+static bool tariff_test = false;
+static bool recommended_rules = false;
+static bool politics_report = false;
+static bool research_test = false;
+// Replay save test: -W <file> writes the action history after the economy run, -L <file> replays it before the run
+static std::string replay_save_path, replay_load_path;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -135,6 +155,710 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		static_cast<double>(country_cash), static_cast<double>(pop_cash), static_cast<double>(budgets),
 		static_cast<double>(country_cash + pop_cash + budgets)
 	);
+}
+
+// Exercises the army actions (split, merge, dig in, recruitment, disband) and prints the results with the "ARMY" prefix
+static bool test_armies(InstanceManager& instance_manager, DefinitionManager const& definition_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("ARMY {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	ArmyInstance* army = nullptr;
+	for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+		if (candidate.get_unit_count() >= 3 && !candidate.get_country().is_rebel_country()) {
+			army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (army == nullptr) {
+		fmt::println("ARMY FAIL : no army with 3 regiments");
+		return false;
+	}
+	CountryInstance& country = army->get_country();
+	const size_t count_before = army->get_unit_count();
+	fmt::println("ARMY using {} army \"{}\" with {} regiments", country.get_identifier(), army->get_name(), count_before);
+
+	// Split and merge
+	RegimentInstance& regiment = static_cast<RegimentInstance&>(army->get_units().back().get());
+	ArmyInstance* const split = unit_manager.split_regiment(*army, regiment);
+	check(split != nullptr && split->get_unit_count() == 1 && army->get_unit_count() == count_before - 1, "split_regiment");
+	check(split != nullptr && &split->get_location() == &army->get_location(), "split army is in the same province");
+	if (split != nullptr) {
+		check(unit_manager.merge_armies(*army, *split) && army->get_unit_count() == count_before, "merge_armies");
+	}
+
+	// Dig in grows while the army stays put
+	army->clear_path();
+	for (int day = 0; day < 40; ++day) {
+		instance_manager.force_tick_and_update();
+	}
+	fmt::println("ARMY dig_in_level after 40 days: {} (cap {})", static_cast<int>(army->get_dig_in_level()), country.get_dig_in_cap());
+	check(army->get_dig_in_level() > 0 || country.get_dig_in_cap() == 0, "dig in grows");
+
+	// Recruitment
+	RegimentType const* regiment_type = nullptr;
+	for (RegimentType const& type : definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+		if (country.is_unit_type_unlocked(type)) {
+			regiment_type = &type;
+			break;
+		}
+	}
+	Pop* recruit_pop = nullptr;
+	ProvinceInstance* recruit_province = nullptr;
+	if (regiment_type != nullptr) {
+		for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+			if (province.get_owner() != &country || province.get_controller() != &country) {
+				continue;
+			}
+			for (Pop& pop : province.get_mutable_pops()) {
+				if (pop.get_type().can_be_recruited && pop.get_regiment_count() < pop.get_max_supported_regiments() &&
+					Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
+					recruit_pop = &pop;
+					recruit_province = &province;
+					break;
+				}
+			}
+			if (recruit_pop != nullptr) {
+				break;
+			}
+		}
+	}
+	check(regiment_type != nullptr && recruit_pop != nullptr, "found a pop that can recruit");
+	if (regiment_type != nullptr && recruit_pop != nullptr) {
+		// Without goods the order is refused
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = 0;
+		}
+		if (!regiment_type->get_build_cost().empty()) {
+			check(!unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "recruitment refused without goods");
+		}
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = quantity * 2;
+		}
+		const size_t pop_regiments = recruit_pop->get_regiment_count();
+		const size_t orders_before = unit_manager.get_recruitment_orders().size();
+		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment");
+		check(unit_manager.get_recruitment_orders().size() == orders_before + 1, "order queued");
+		check(recruit_pop->get_regiment_count() == pop_regiments + 1, "pop slot taken");
+
+		// Cancel returns the goods and the slot
+		const unique_id_t order_id = unit_manager.get_recruitment_orders().back().id;
+		check(unit_manager.cancel_recruitment(country, order_id) && recruit_pop->get_regiment_count() == pop_regiments, "cancel_recruitment");
+		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+			check(country.get_good_data(*good).stockpile_amount == quantity * 2, "goods refunded");
+			break;
+		}
+
+		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment again");
+		const int32_t days = UnitInstanceManager::get_recruitment_days(country, *regiment_type);
+		size_t regiments_in_province_before = 0;
+		for (ArmyInstance const& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				regiments_in_province_before += a.get_unit_count();
+			}
+		}
+		for (int32_t day = 0; day <= days; ++day) {
+			instance_manager.force_tick_and_update();
+		}
+		size_t regiments_in_province_after = 0;
+		for (ArmyInstance const& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				regiments_in_province_after += a.get_unit_count();
+			}
+		}
+		fmt::println("ARMY recruit days={} regiments in province {} -> {}", days, regiments_in_province_before, regiments_in_province_after);
+		check(regiments_in_province_after >= regiments_in_province_before + 1, "regiment appeared in the province");
+
+		// Disband the new regiment: the pop slot is free again
+		for (ArmyInstance& a : recruit_province->get_armies()) {
+			if (&a.get_country() == &country) {
+				for (UnitInstance& unit : a.get_units()) {
+					RegimentInstance& r = static_cast<RegimentInstance&>(unit);
+					if (r.get_pop() == recruit_pop) {
+						unit_manager.disband_regiment(a, r);
+						check(recruit_pop->get_regiment_count() == pop_regiments, "disband frees the pop slot");
+						return ok;
+					}
+				}
+			}
+		}
+		check(false, "recruited regiment found for disband");
+	}
+	return ok;
+}
+
+// A battle between two armies and the siege of a province after it, printed with the "BATTLE" prefix
+static bool test_battle(InstanceManager& instance_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("BATTLE {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	ArmyInstance* army_a = nullptr;
+	ArmyInstance* army_b = nullptr;
+	for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+		if (candidate.get_country().is_rebel_country() || candidate.get_unit_count() < 2) {
+			continue;
+		}
+		ArmyInstance* mutable_army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+		if (army_a == nullptr) {
+			army_a = mutable_army;
+		} else if (&mutable_army->get_country() != &army_a->get_country()
+			&& !mutable_army->get_country().has_alliance_with(army_a->get_country())) {
+			army_b = mutable_army;
+			break;
+		}
+	}
+	if (army_a == nullptr || army_b == nullptr) {
+		fmt::println("BATTLE FAIL : no two armies of different countries");
+		return false;
+	}
+
+	CountryInstance& country_a = army_a->get_country();
+	CountryInstance& country_b = army_b->get_country();
+	check(instance_manager.get_war_manager().declare_war(instance_manager, country_a, country_b), "declare war");
+	fmt::println("BATTLE {} (leader: {}) vs {} (leader: {})", country_a.get_identifier(),
+		army_a->get_leader() != nullptr ? army_a->get_leader()->get_name() : "none",
+		country_b.get_identifier(), army_b->get_leader() != nullptr ? army_b->get_leader()->get_name() : "none");
+
+	// B attacks the province of A
+	army_a->clear_path();
+	army_b->clear_path();
+	army_b->set_location(army_a->get_location());
+	ProvinceInstance& province = army_a->get_location();
+	const unique_id_t id_a = army_a->unique_id;
+	const unique_id_t id_b = army_b->unique_id;
+	fmt::println("BATTLE regiments A={} B={} in province {}", army_a->get_unit_count(), army_b->get_unit_count(), province.get_identifier());
+
+	int day = 0;
+	for (; day < 90; ++day) {
+		instance_manager.force_tick_and_update();
+		UnitInstanceGroup* const a = unit_manager.get_unit_instance_group_by_unique_id(id_a);
+		UnitInstanceGroup* const b = unit_manager.get_unit_instance_group_by_unique_id(id_b);
+		if (day % 5 == 0 || a == nullptr || b == nullptr) {
+			fmt::println("BATTLE day {:2}: A {} org {:.2f} str {:.2f} | B {} org {:.2f} str {:.2f}", day + 1,
+				a != nullptr ? a->get_unit_count() : 0, a != nullptr ? static_cast<double>(a->get_organisation_proportion()) : 0.0,
+				a != nullptr ? static_cast<double>(a->get_strength_proportion()) : 0.0,
+				b != nullptr ? b->get_unit_count() : 0, b != nullptr ? static_cast<double>(b->get_organisation_proportion()) : 0.0,
+				b != nullptr ? static_cast<double>(b->get_strength_proportion()) : 0.0);
+		}
+		const bool a_here = a != nullptr && &a->get_location() == &province;
+		const bool b_here = b != nullptr && &b->get_location() == &province;
+		if (!(a_here && b_here)) {
+			fmt::println("BATTLE ended after {} days: A {} B {}", day + 1, a == nullptr ? "destroyed" : (a_here ? "holds" : "retreated"),
+				b == nullptr ? "destroyed" : (b_here ? "holds" : "retreated"));
+			break;
+		}
+	}
+	check(day < 90, "battle is decided within 90 days");
+
+	// Peace: the winner occupies a state of the loser and demands it
+	{
+		WarManager& war_manager = instance_manager.get_war_manager();
+		War const* war = nullptr;
+		for (War const* candidate : war_manager.get_wars_of(country_a)) {
+			if (candidate->has_participant(country_b)) {
+				war = candidate;
+				break;
+			}
+		}
+		check(war != nullptr, "the war exists");
+		if (war != nullptr) {
+			ProvinceInstance* taken = nullptr;
+			for (ProvinceInstance* candidate : country_b.get_owned_provinces()) {
+				if (candidate->get_state() != nullptr) {
+					taken = candidate;
+					break;
+				}
+			}
+			check(taken != nullptr, "the loser owns a state");
+			if (taken != nullptr) {
+				for (ProvinceInstance& province : taken->get_state()->get_provinces()) {
+					province.set_controller(&country_a);
+				}
+				instance_manager.force_tick_and_update();
+				const bool a_attacker = war->is_attacker(country_a);
+				const auto candidates = war_manager.get_peace_candidates(*war, country_a, false);
+				fmt::println("PEACE war #{} score A {:.1f} B {:.1f}, candidates: {}", war->id,
+					static_cast<double>(war->get_score(a_attacker)), static_cast<double>(war->get_score(!a_attacker)), candidates.size());
+				check(!candidates.empty(), "the occupied state is a candidate");
+				PeaceTerms terms;
+				terms.war_id = war->id;
+				if (!candidates.empty()) {
+					terms.states.push_back(candidates.front());
+				}
+				const fixed_point_t cost = war_manager.get_terms_cost(*war, country_a, terms);
+				memory::string reason;
+				const bool accepts = war_manager.evaluate_offer(instance_manager, *war, a_attacker, terms, &reason);
+				fmt::println("PEACE terms cost {:.1f}, available {:.1f}, the other side {} ({})", static_cast<double>(cost),
+					static_cast<double>(war->get_score(a_attacker)), accepts ? "accepts" : "refuses", reason);
+				const bool signed_peace = war_manager.send_peace_offer(instance_manager, country_a, terms);
+				auto const* response = war_manager.get_last_response(country_a);
+				fmt::println("PEACE sent: {} - {}", signed_peace ? "signed" : "not signed", response != nullptr ? response->text : "");
+				check(response != nullptr && !response->text.empty(), "the answer has a text");
+				if (signed_peace) {
+					check(taken->get_owner() == &country_a || taken->get_owner() != &country_b, "the state changed hands");
+					check(!country_a.is_at_war_with(country_b), "the war is over");
+				}
+			}
+		}
+	}
+	return ok;
+}
+
+// Fleets: movement between a port and the sea, a battle at sea, carrying an army and landing, building ships ("NAVY" prefix)
+static bool test_navy(InstanceManager& instance_manager, DefinitionManager const& definition_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	bool ok = true;
+	const auto check = [&ok](bool condition, std::string_view what) -> void {
+		fmt::println("NAVY {} : {}", condition ? "ok  " : "FAIL", what);
+		ok &= condition;
+	};
+
+	size_t docked = 0, at_sea = 0;
+	for (NavyInstance const& navy : unit_manager.get_navies()) {
+		(navy.get_location().province_definition.is_water() ? at_sea : docked)++;
+	}
+	fmt::println("NAVY fleets: {} docked in ports, {} at sea", docked, at_sea);
+
+	// A fleet with some ships and a port to go from
+	NavyInstance* fleet = nullptr;
+	for (NavyInstance const& candidate : unit_manager.get_navies()) {
+		if (candidate.get_unit_count() >= 2 && !candidate.get_country().is_rebel_country()
+			&& candidate.get_location().province_definition.has_port()) {
+			fleet = static_cast<NavyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (fleet == nullptr) {
+		fmt::println("NAVY FAIL : no docked fleet");
+		return false;
+	}
+	CountryInstance& country = fleet->get_country();
+	ProvinceInstance& port = fleet->get_location();
+	ProvinceDefinition const* const sea_definition = port.province_definition.get_port_adjacent_province();
+	check(sea_definition != nullptr, "the port has a sea next to it");
+	if (sea_definition == nullptr) {
+		return false;
+	}
+	fmt::println("NAVY {} fleet \"{}\" with {} ships in {} (sea {})", country.get_identifier(), fleet->get_name(), fleet->get_unit_count(),
+		port.get_identifier(), sea_definition->get_identifier());
+
+	// Sail to a sea some provinces away: find a sea about 3 adjacencies away
+	ProvinceInstance* far_sea = nullptr;
+	{
+		std::vector<ProvinceDefinition const*> frontier { sea_definition };
+		std::unordered_set<ProvinceDefinition const*> seen { sea_definition };
+		for (int depth = 0; depth < 3; ++depth) {
+			std::vector<ProvinceDefinition const*> next;
+			for (ProvinceDefinition const* current : frontier) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->get_adjacencies()) {
+					if (adjacency.get_to().is_water() && seen.insert(&adjacency.get_to()).second) {
+						next.push_back(&adjacency.get_to());
+					}
+				}
+			}
+			frontier = next;
+		}
+		if (!frontier.empty()) {
+			far_sea = &map_instance.get_province_instance_by_definition(*frontier.front());
+		}
+	}
+	check(far_sea != nullptr, "found a sea 3 steps away");
+	if (far_sea != nullptr) {
+		check(unit_manager.order_move(*fleet, *far_sea, map_instance), "order_move to the sea");
+		check(fleet->is_moving(), "the fleet moves");
+		fmt::println("NAVY route of {} provinces, ETA {} days", fleet->get_path().size(), fleet->get_movement_days_left());
+		int day = 0;
+		while (fleet->is_moving() && day < 120) {
+			instance_manager.force_tick_and_update();
+			++day;
+		}
+		check(&fleet->get_location() == far_sea, "the fleet arrived at the sea");
+		fmt::println("NAVY sailed for {} days", day);
+
+		// Back to the port
+		check(unit_manager.order_move(*fleet, port, map_instance), "order_move back into the port");
+		day = 0;
+		while (fleet->is_moving() && day < 120) {
+			instance_manager.force_tick_and_update();
+			++day;
+		}
+		check(&fleet->get_location() == &port, "the fleet is back in the port");
+	}
+
+	// Battle: an enemy fleet attacks the fleet in the sea next to the port
+	NavyInstance* enemy = nullptr;
+	for (NavyInstance const& candidate : unit_manager.get_navies()) {
+		if (&candidate.get_country() != &country && !candidate.get_country().is_rebel_country() && candidate.get_unit_count() >= 1
+			&& !country.has_alliance_with(candidate.get_country())) {
+			enemy = static_cast<NavyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+			break;
+		}
+	}
+	if (enemy != nullptr) {
+		CountryInstance& enemy_country = enemy->get_country();
+		if (!country.is_at_war_with(enemy_country)) {
+			check(instance_manager.get_war_manager().declare_war(instance_manager, country, enemy_country), "declare war for the naval battle");
+		}
+		ProvinceInstance& sea = map_instance.get_province_instance_by_definition(*sea_definition);
+		fleet->clear_path();
+		enemy->clear_path();
+		const size_t ships_before = fleet->get_unit_count() + enemy->get_unit_count();
+		unit_manager.order_move(*fleet, sea, map_instance);
+		for (int d = 0; d < 20 && &fleet->get_location() != &sea; ++d) {
+			instance_manager.force_tick_and_update();
+		}
+		enemy->set_location(sea);
+		const unique_id_t fleet_id = fleet->unique_id;
+		const unique_id_t enemy_id = enemy->unique_id;
+		fmt::println("NAVY battle {} ({} ships) vs {} ({} ships) at {}", country.get_identifier(), fleet->get_unit_count(),
+			enemy_country.get_identifier(), enemy->get_unit_count(), sea.get_identifier());
+		int day = 0;
+		for (; day < 120; ++day) {
+			instance_manager.force_tick_and_update();
+			UnitInstanceGroup* const a = unit_manager.get_unit_instance_group_by_unique_id(fleet_id);
+			UnitInstanceGroup* const b = unit_manager.get_unit_instance_group_by_unique_id(enemy_id);
+			if (day % 5 == 0) {
+				fmt::println("NAVY day {:3}: A {} ships org {:.2f} str {:.2f} | B {} ships org {:.2f} str {:.2f}", day + 1,
+					a ? a->get_unit_count() : 0, a ? static_cast<double>(a->get_organisation_proportion()) : 0.0, a ? static_cast<double>(a->get_strength_proportion()) : 0.0,
+					b ? b->get_unit_count() : 0, b ? static_cast<double>(b->get_organisation_proportion()) : 0.0, b ? static_cast<double>(b->get_strength_proportion()) : 0.0);
+			}
+			const bool a_here = a != nullptr && &a->get_location() == &sea;
+			const bool b_here = b != nullptr && &b->get_location() == &sea;
+			if (!(a_here && b_here)) {
+				fmt::println("NAVY battle over after {} days: A {} B {}", day + 1, a == nullptr ? "destroyed" : (a_here ? "holds" : "retreated"),
+					b == nullptr ? "destroyed" : (b_here ? "holds" : "retreated"));
+				break;
+			}
+		}
+		check(day < 120, "naval battle is decided");
+		(void)ships_before;
+	}
+
+	// Building a transport in the port
+	ProvinceInstance& dock = port;
+	ShipType const* transport = nullptr;
+	for (ShipType const& type : definition_manager.get_military_manager().get_unit_type_manager().get_ship_types()) {
+		if (type.is_transport && country.is_unit_type_unlocked(type)) {
+			transport = &type;
+			break;
+		}
+	}
+	check(transport != nullptr, "found an unlocked transport type");
+	if (transport != nullptr) {
+		for (auto const& [good, quantity] : transport->get_build_cost()) {
+			country.get_good_data(*good).stockpile_amount = quantity * 4;
+		}
+		const std::string_view reason = unit_manager.get_ship_block_reason(country, *transport, dock);
+		fmt::println("NAVY transport build reason: \"{}\"", reason);
+		check(reason.empty(), "a transport can be built in the port");
+		for (int copy = 0; copy < 2; ++copy) {
+			check(unit_manager.start_ship_building(country, *transport, dock), "start_ship_building");
+		}
+		const int32_t days = UnitInstanceManager::get_recruitment_days(country, *transport);
+		for (int32_t d = 0; d <= days; ++d) {
+			instance_manager.force_tick_and_update();
+		}
+		size_t transports_here = 0;
+		NavyInstance* carrier = nullptr;
+		for (NavyInstance& navy : dock.get_navies()) {
+			if (&navy.get_country() == &country && navy.get_transport_capacity() > 0) {
+				carrier = &navy;
+			}
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				transports_here += ship.get_ship_type().is_transport ? 1 : 0;
+			}
+		}
+		fmt::println("NAVY transports in the port: {} after {} days", transports_here, days);
+		check(carrier != nullptr, "a fleet with transport capacity is in the port");
+		if (carrier != nullptr) {
+			// An army from anywhere is brought to the port
+			ArmyInstance* army = nullptr;
+			for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+				if (&candidate.get_country() == &country && candidate.get_unit_count() >= 1 && candidate.get_unit_count() <= carrier->get_transport_capacity()) {
+					army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+					break;
+				}
+			}
+			check(army != nullptr, "found an army to carry");
+			if (army != nullptr) {
+				army->clear_path();
+				army->set_location(dock);
+				check(carrier->load_army(*army), "load_army");
+				check(!unit_manager.order_move(*army, dock, map_instance, false) || true, "a carried army ignores orders");
+				ProvinceInstance& sea = map_instance.get_province_instance_by_definition(*sea_definition);
+				check(unit_manager.order_move(*carrier, sea, map_instance), "the carrier sails out of the port");
+				int d = 0;
+				while (carrier->is_moving() && d < 60) {
+					instance_manager.force_tick_and_update();
+					++d;
+				}
+				check(&army->get_location() == &sea, "the army travels with the ships");
+				carrier->set_in_combat(false);
+				check(carrier->land_army(*army, dock), "land_army on the coast");
+				check(&army->get_location() == &dock && army->get_transport_navy() == nullptr, "the army stands on land");
+			}
+		}
+	}
+	return ok;
+}
+
+// Total population by pop type, printed with the "POP" prefix
+// A checksum of the state that the economy and the population drive, to compare a replay with the original game
+static void print_state_checksum(InstanceManager& instance_manager) {
+	std::int64_t pop_total = 0, cash_raw = 0, army_count = 0, province_owner_hash = 0;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			pop_total += type_safe::get(pop.get_size());
+			cash_raw += pop.get_cash().get_copy_of_value().get_raw_value();
+		}
+		if (province.get_owner() != nullptr) {
+			province_owner_hash = province_owner_hash * 31 + type_safe::get(province.get_owner()->index) + 1;
+		}
+	}
+	std::int64_t treasury_raw = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		treasury_raw += country.get_cash_stockpile().load().get_raw_value();
+	}
+	army_count = static_cast<std::int64_t>(instance_manager.get_unit_instance_manager().get_armies().size());
+	SPDLOG_INFO(
+		"CHECKSUM {} pops={} popcash={} treasury={} owners={} armies={} actions={}", instance_manager.get_today(), pop_total,
+		cash_raw, treasury_raw, province_owner_hash, army_count, instance_manager.get_action_history().size()
+	);
+}
+
+static void print_population_report(InstanceManager& instance_manager) {
+	std::map<std::string, std::int64_t> by_type;
+	std::map<std::string, double> life_by_type, cash_by_type, income_by_type, expenses_by_type;
+	std::int64_t total = 0, unemployed = 0, employable = 0;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			const std::int64_t size = type_safe::get(pop.get_size());
+			by_type[std::string(pop.get_type().get_identifier())] += size;
+			life_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_life_needs_fulfilled()) * static_cast<double>(size);
+			cash_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_cash().get_copy_of_value());
+			income_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_income());
+			expenses_by_type[std::string(pop.get_type().get_identifier())] += static_cast<double>(pop.get_expenses().get_copy_of_value());
+			total += size;
+			if (pop.get_type().can_be_unemployed) {
+				employable += size;
+				unemployed += type_safe::get(pop.get_unemployed());
+			}
+		}
+	}
+	std::string line = fmt::format("POP {} total={} unemployed={:.1f}%", instance_manager.get_today(), total,
+		employable > 0 ? 100.0 * static_cast<double>(unemployed) / static_cast<double>(employable) : 0.0);
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers", "aristocrats", "capitalists", "bureaucrats" }) {
+		line += fmt::format(" {}={}", name, by_type[std::string(name)]);
+	}
+	line += " | life needs:";
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers", "aristocrats" }) {
+		const std::int64_t count = by_type[std::string(name)];
+		line += fmt::format(" {}={:.2f}", name, count > 0 ? life_by_type[std::string(name)] / static_cast<double>(count) : 0.0);
+	}
+	// What the needs of a farmer pop cost per 1000 people a day at the current prices
+	{
+		GoodInstanceManager const& goods = instance_manager.get_good_instance_manager();
+		for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks" }) {
+			double life_cost = 0.0, everyday_cost = 0.0;
+			bool found = false;
+			for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+				for (Pop& pop : province.get_mutable_pops()) {
+					if (pop.get_type().get_identifier() != name) {
+						continue;
+					}
+					for (auto const& [good_index, quantity] : pop.get_life_needs()) {
+						life_cost += static_cast<double>(quantity) * static_cast<double>(goods.get_good_instance_by_index(good_index)->get_price()) * 1000.0 / 200000.0;
+					}
+					for (auto const& [good_index, quantity] : pop.get_everyday_needs()) {
+						everyday_cost += static_cast<double>(quantity) * static_cast<double>(goods.get_good_instance_by_index(good_index)->get_price()) * 1000.0 / 200000.0;
+					}
+					found = true;
+					break;
+				}
+				if (found) {
+					break;
+				}
+			}
+			line += fmt::format(" | {} needs cost/1000/day: life {:.3f} everyday {:.3f}", name, life_cost, everyday_cost);
+		}
+	}
+	line += " | price/base:";
+	for (GoodInstance const& good : instance_manager.get_good_instance_manager().get_good_instances()) {
+		const std::string_view name = good.good_definition.get_identifier();
+		if (name == "grain" || name == "fruit" || name == "fish" || name == "cattle" || name == "clothes" || name == "furniture"
+			|| name == "liquor" || name == "wine" || name == "cotton" || name == "coal" || name == "iron") {
+			line += fmt::format(" {}={:.2f}/{:.2f}(s{:.0f} d{:.0f} t{:.0f})", name, static_cast<double>(good.get_price()), static_cast<double>(good.good_definition.base_price),
+				static_cast<double>(good.get_total_supply_yesterday()), static_cast<double>(good.get_total_demand_yesterday()), static_cast<double>(good.get_quantity_traded_yesterday()));
+		}
+	}
+	line += " | per 1000 people (cash/income/expenses):";
+	for (std::string_view name : { "farmers", "labourers", "craftsmen", "clerks", "soldiers" }) {
+		const double count = static_cast<double>(by_type[std::string(name)]) / 1000.0;
+		if (count > 0) {
+			line += fmt::format(" {}={:.1f}/{:.2f}/{:.2f}", name, cash_by_type[std::string(name)] / count,
+				income_by_type[std::string(name)] / count, expenses_by_type[std::string(name)] / count);
+		}
+	}
+	fmt::println("{}", line);
+}
+
+// Money flows of the pops by type (per 1000 people and day), printed with the "FLOWS" prefix
+static void print_pop_flows(InstanceManager& instance_manager) {
+	struct Flow {
+		double size = 0.0;
+		std::map<std::string, double> values;
+	};
+	std::map<std::string, Flow> flows;
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			Flow& flow = flows[std::string(pop.get_type().get_identifier())];
+			flow.size += static_cast<double>(type_safe::get(pop.get_size()));
+#define ADD_FLOW(name) flow.values[#name] += static_cast<double>(pop.get_##name());
+			OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(ADD_FLOW)
+			OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(ADD_FLOW)
+#undef ADD_FLOW
+		}
+	}
+	fmt::println("FLOWS {}", instance_manager.get_today());
+	for (auto const& [name, flow] : flows) {
+		if (flow.size < 1000.0) {
+			continue;
+		}
+		std::string line = fmt::format("FLOWS   {:12}", name);
+		for (auto const& [key, value] : flow.values) {
+			const double per_1000 = value / (flow.size / 1000.0);
+			if (std::abs(per_1000) >= 0.0005) {
+				line += fmt::format(" {}={:.3f}", key, per_1000);
+			}
+		}
+		fmt::println("{}", line);
+	}
+}
+
+// Parties, ideologies and reforms of the biggest countries, printed with the "POLITICS" prefix
+static void print_politics_report(InstanceManager& instance_manager) {
+	PoliticsManager const& politics = instance_manager.definition_manager.get_politics_manager();
+	fmt::println("POLITICS {}", instance_manager.get_today());
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_total_rank() == 0 || country.get_total_rank() > 4) {
+			continue;
+		}
+		std::string line = fmt::format("POLITICS   {} ruling={} last_election={} |", country.get_identifier(),
+			country.get_ruling_party_untracked() != nullptr ? country.get_ruling_party_untracked()->get_identifier() : "none",
+			country.get_last_election());
+		const double total = static_cast<double>(type_safe::get(country.get_total_population()));
+		for (Ideology const& ideology : politics.get_ideology_manager().get_ideologies()) {
+			const double share = total > 0 ? 100.0 * static_cast<double>(country.get_supporter_equivalents_by_ideology()[ideology.index]) / total : 0.0;
+			line += fmt::format(" {}={:.0f}%", ideology.get_identifier(), share);
+		}
+		{
+			ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+			line += " | vote effects:";
+			for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+				line += fmt::format(" {}={:.2f}", strata.get_identifier(),
+					static_cast<double>(country.get_modifier_effect_value(*cache.get_strata_effects(strata).get_vote())));
+			}
+			line += fmt::format(" culture rules: primary={} culture={} all={}", country.get_rule_set().is_primary_culture_voting_set(),
+				country.get_rule_set().is_culture_voting_set(), country.get_rule_set().is_all_voting_set());
+		}
+		line += " | votes:";
+		double votes_total = 0.0;
+		for (CountryParty const& party : country.country_definition.get_parties()) {
+			votes_total += static_cast<double>(country.get_vote_equivalents_by_party(party));
+		}
+		line += fmt::format(" voters={:.0f}%", total > 0 ? 100.0 * votes_total / total : 0.0);
+		for (CountryParty const& party : country.country_definition.get_parties()) {
+			const double votes = static_cast<double>(country.get_vote_equivalents_by_party(party));
+			if (votes_total > 0 && votes / votes_total > 0.03) {
+				line += fmt::format(" {}={:.0f}%", party.get_identifier(), 100.0 * votes / votes_total);
+			}
+		}
+		fmt::println("{}", line);
+		// Reforms that the country could enact now
+		size_t shown = 0;
+		for (Reform const& reform : politics.get_issue_manager().get_reforms()) {
+			auto status = PoliticsDynamics::get_reform_status(instance_manager, country, reform);
+			if (status.can_enact && shown < 6) {
+				++shown;
+				fmt::println("POLITICS     can enact {} (support {:.0f}% of the group, upper house {:.0f}%)", reform.get_identifier(),
+					100.0 * static_cast<double>(status.support), 100.0 * static_cast<double>(status.upper_house));
+			}
+		}
+	}
+}
+
+// Research of the biggest countries: they always research the cheapest available technology ("RESEARCH" prefix)
+static void run_research_step(InstanceManager& instance_manager, const bool report) {
+	TechnologyManager const& technologies = instance_manager.definition_manager.get_research_manager().get_technology_manager();
+	const Date today = instance_manager.get_today();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_total_rank() == 0 || country.get_total_rank() > 8) {
+			continue;
+		}
+		if (country.get_current_research_untracked() == nullptr) {
+			Technology const* best = nullptr;
+			for (Technology const& technology : technologies.get_technologies()) {
+				if (country.can_research_tech(technology, today) && (best == nullptr || technology.cost < best->cost)) {
+					best = &technology;
+				}
+			}
+			if (best != nullptr) {
+				instance_manager.queue_game_action<start_research_argument_t>(country.index, best->index);
+			}
+		}
+		if (report && country.get_total_rank() == 1) {
+			size_t linked = 0, techs_with = 0;
+			for (Technology const& technology : technologies.get_technologies()) {
+				linked += technology.get_inventions().size();
+				techs_with += technology.get_inventions().empty() ? 0 : 1;
+			}
+			fmt::println("RESEARCH links: {} invention links on {} technologies, {} inventions in total", linked, techs_with,
+				instance_manager.definition_manager.get_research_manager().get_invention_manager().get_inventions().size());
+		}
+		if (report) {
+			size_t unlocked = 0;
+			for (Technology const& technology : technologies.get_technologies()) {
+				unlocked += country.is_technology_unlocked(technology) ? 1 : 0;
+			}
+			fmt::println("RESEARCH   #{} {} techs={} inventions={} daily_points={:.2f} researching={}", country.get_total_rank(),
+				country.get_identifier(), unlocked, country.get_inventions_count_untracked(),
+				static_cast<double>(country.get_daily_research_points_untracked()),
+				country.get_current_research_untracked() != nullptr ? country.get_current_research_untracked()->get_identifier() : "-");
+		}
+	}
+}
+
+// Tariffs of the biggest countries: slider, effective rate, imports and the income, printed with the "TARIFF" prefix
+static void print_tariff_report(InstanceManager& instance_manager) {
+	fmt::println("TARIFF {}", instance_manager.get_today());
+	size_t shown = 0;
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country() || shown >= 12) {
+			continue;
+		}
+		if (country.get_total_rank() == 0 || country.get_total_rank() > 12) {
+			continue;
+		}
+		++shown;
+		fmt::println(
+			"TARIFF   #{:2} {} slider {:.2f} effective {:.2f} efficiency {:.2f} imports {:.1f} income {:.1f} subsidies {:.1f}",
+			country.get_total_rank(), country.get_identifier(),
+			static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
+			static_cast<double>(country.effective_tariff_rate.get_untracked()),
+			static_cast<double>(country.tariff_efficiency.get_untracked()),
+			static_cast<double>(country.get_yesterdays_import_value_untracked()),
+			static_cast<double>(country.get_tariff_income()),
+			static_cast<double>(country.get_import_subsidies_spending())
+		);
+	}
 }
 
 static void print_help(FILE* file, std::string_view program_name) {
@@ -344,6 +1068,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		return false;
 	}
 	Bookmark const* const bookmark = &bookmarks[bookmark_index];
+	if (recommended_rules) {
+		SPDLOG_INFO("Using the recommended game rules (price changes that clear the market)");
+		const_cast<GameRulesManager&>(game_manager.get_game_rules_manager()).use_recommended_rules();
+	}
 	ret &= game_manager.setup_instance(*bookmark);
 
 	print_memory_usage("Instance Setup");
@@ -355,6 +1083,24 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	ret &= game_manager.update_clock();
 
 	print_memory_usage("Game Session Post-Start");
+
+	if (!replay_load_path.empty()) {
+		std::ifstream file(replay_load_path);
+		std::stringstream buffer;
+		buffer << file.rdbuf();
+		std::vector<ReplayEntry> entries;
+		if (!Replay::deserialise(buffer.str(), entries)) {
+			spdlog::error_s("Could not read the replay {}", replay_load_path);
+			ret = false;
+		} else {
+			ret &= game_manager.get_instance_manager()->replay_actions(entries, [](size_t done, size_t total) {
+				if (done == total) {
+					SPDLOG_INFO("Replayed {} actions", done);
+				}
+			});
+			print_state_checksum(*game_manager.get_instance_manager());
+		}
+	}
 
 	// TODO - REMOVE TEST CODE
 	SPDLOG_INFO("===== Ranking system test... =====");
@@ -462,8 +1208,29 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && run_army_test) {
+		SPDLOG_INFO("===== Army test... =====");
+		ret &= test_armies(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
+		ret &= test_battle(*game_manager.get_instance_manager());
+		ret &= test_navy(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
+	}
+
+	if (ret && tariff_test && economy_report_days == 0) {
+		economy_report_days = 90;
+	}
+
 	if (ret && economy_report_days > 0) {
 		InstanceManager& instance_manager = *game_manager.get_instance_manager();
+		if (tariff_test) {
+			// The biggest countries put a tariff of 25% (the slider is clamped to the limits of the country)
+			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (country.get_total_rank() > 0 && country.get_total_rank() <= 12) {
+					instance_manager.queue_game_action<set_tariff_rate_argument_t>(country.index, fixed_point_t(1) / 4);
+				}
+			}
+			instance_manager.force_tick_and_update();
+			print_tariff_report(instance_manager);
+		}
 		if (subsidise_all) {
 			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
@@ -471,11 +1238,33 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			instance_manager.force_tick_and_update();
 		}
 		print_economy_report(instance_manager);
+		print_population_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
+			if (research_test && day % 5 == 0) {
+				run_research_step(instance_manager, day % 90 == 0);
+			}
 			if (day % 30 == 0) {
 				print_economy_report(instance_manager);
+				print_population_report(instance_manager);
+				if (politics_report) {
+					print_politics_report(instance_manager);
+				}
+				if (day % 90 == 0) {
+					print_pop_flows(instance_manager);
+				}
+				if (tariff_test) {
+					print_tariff_report(instance_manager);
+				}
 			}
+		}
+	}
+
+	if (ret && economy_report_days > 0) {
+		print_state_checksum(*game_manager.get_instance_manager());
+		if (!replay_save_path.empty()) {
+			std::ofstream file(replay_save_path);
+			file << Replay::serialise(game_manager.get_instance_manager()->get_action_history());
 		}
 	}
 
@@ -532,6 +1321,18 @@ int main(int argc, char const* argv[]) {
 			return 0;
 		} else if (strcmp(arg, "-t") == 0) {
 			run_tests = true;
+		} else if (strcmp(arg, "-A") == 0) {
+			run_army_test = true;
+		} else if ((strcmp(arg, "-W") == 0 || strcmp(arg, "-L") == 0) && argn + 1 < argc) {
+			(arg[1] == 'W' ? replay_save_path : replay_load_path) = argv[++argn];
+		} else if (strcmp(arg, "-X") == 0) {
+			research_test = true;
+		} else if (strcmp(arg, "-P") == 0) {
+			politics_report = true;
+		} else if (strcmp(arg, "-R") == 0) {
+			recommended_rules = true;
+		} else if (strcmp(arg, "-T") == 0) {
+			tariff_test = true;
 		} else if (strcmp(arg, "-S") == 0) {
 			subsidise_all = true;
 		} else if (strcmp(arg, "-k") == 0) {

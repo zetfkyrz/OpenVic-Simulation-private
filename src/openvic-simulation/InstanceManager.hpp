@@ -1,5 +1,9 @@
 #pragma once
 
+#include <functional>
+#include <vector>
+#include "openvic-simulation/misc/Replay.hpp"
+
 #include <utility>
 
 #include <function2/function2.hpp>
@@ -8,6 +12,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/country/CountryInstanceDeps.hpp"
+#include "openvic-simulation/country/Colonisation.hpp"
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
@@ -20,6 +25,7 @@
 #include "openvic-simulation/map/ProvinceInstanceDeps.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
+#include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
 #include "openvic-simulation/misc/SimulationClock.hpp"
 #include "openvic-simulation/politics/PoliticsInstanceManager.hpp"
@@ -59,6 +65,8 @@ namespace OpenVic {
 		CountryInstanceManager PROPERTY_REF(country_instance_manager);
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
+		NotificationLog PROPERTY_REF(notification_log);
+		ColonisationManager PROPERTY_REF(colonisation_manager);
 		CreditManager PROPERTY_REF(credit_manager);
 		PoliticsInstanceManager PROPERTY_REF(politics_instance_manager);
 		/* Near the end so it is freed after other managers that may depend on it,
@@ -83,6 +91,10 @@ namespace OpenVic {
 		void tick();
 
 		void execute_game_actions();
+
+		// Every executed game action that changes the simulation, for saving the game as a replay
+		std::vector<ReplayEntry> action_history;
+		std::uint32_t current_batch = 0;
 
 	public:
 		DefinitionManager const& definition_manager;
@@ -115,5 +127,17 @@ namespace OpenVic {
 			);
 		}
 		bool queue_game_action(game_action_t&& game_action);
+
+		std::vector<ReplayEntry> const& get_action_history() const {
+			return action_history;
+		}
+		// Re-executes recorded actions batch by batch on a freshly started session (same bookmark and game rules).
+		// progress is called with the number of the replayed entries and the total
+		bool replay_actions(std::vector<ReplayEntry> const& entries, std::function<void(size_t, size_t)> progress = {});
+		// Runs an action at once instead of queueing it: for the AI, which acts inside the tick (when the queue is closed)
+		template<typename T, typename... Args>
+		bool run_game_action_now(Args&&... args) {
+			return game_action_manager.execute_game_action(game_action_t(std::in_place_type<T>, std::forward<Args>(args)...));
+		}
 	};
 }

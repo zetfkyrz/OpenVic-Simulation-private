@@ -359,11 +359,32 @@ namespace OpenVic {
 
 		/* Diplomacy */
 		OV_STATE_PROPERTY(fixed_point_t, prestige);
+	public:
+		void add_prestige(const fixed_point_t delta) {
+			prestige += delta;
+		}
+		void set_last_election(const Date date) {
+			last_election = date;
+		}
+		void set_upper_house_proportion(Ideology const& ideology, fixed_point_t value);
+		// Tariffs collected / import subsidies paid yesterday
+		fixed_point_t get_tariff_income() const {
+			return actual_tariff_income.load();
+		}
+		fixed_point_t get_import_subsidies_spending() const {
+			return actual_import_subsidies_spending.load();
+		}
+	private:
 		size_t PROPERTY(prestige_rank, 0);
 		fixed_point_t PROPERTY(diplomatic_points);
 		// The last time this country lost a war, i.e. accepted a peace offer sent from their offer tab or the enemy's demand
 		// tab, even white peace. Used for the "has_recently_lost_war" condition (true if the date is less than 5 years ago).
 		Date PROPERTY(last_war_loss_date);
+	public:
+		void set_last_war_loss_date(const Date date) {
+			last_war_loss_date = date;
+		}
+	private:
 		vector_ordered_set<std::reference_wrapper<const CountryInstance>> PROPERTY(war_enemies);
 		OV_STATE_PROPERTY(CountryInstance const*, sphere_owner, nullptr);
 		// TODO - colonial power, current wars

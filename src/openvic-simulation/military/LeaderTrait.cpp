@@ -120,6 +120,18 @@ bool LeaderTraitManager::load_leader_traits_file(ModifierManager const& modifier
 			root
 		);
 
+	// Reserving space again for the background traits can move the traits that are already stored, so the pointers to
+	// the personality traits taken earlier would dangle: build both lists again from the final storage
+	personality_traits.clear();
+	background_traits.clear();
+	for (LeaderTrait const& trait : leader_traits.get_items()) {
+		if (trait.is_personality_trait()) {
+			personality_traits.push_back(&trait);
+		} else {
+			background_traits.push_back(&trait);
+		}
+	}
+
 	lock_leader_traits();
 
 	return ret;

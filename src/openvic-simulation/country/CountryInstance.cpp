@@ -2674,3 +2674,7 @@ CountryInstance::good_data_t& CountryInstance::get_good_data(GoodDefinition cons
 CountryInstance::good_data_t const& CountryInstance::get_good_data(GoodDefinition const& good_definition) const {
 	return goods_data.at_index(good_definition.index);
 }
+
+void CountryInstance::set_upper_house_proportion(Ideology const& ideology, const fixed_point_t value) {
+	upper_house_proportion_by_ideology.at(ideology) = value;
+}

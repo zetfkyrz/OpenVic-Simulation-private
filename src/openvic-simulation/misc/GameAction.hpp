@@ -117,7 +117,24 @@ X(toggle_front_province, country_index_t, std::uint32_t, province_index_t) \
 X(set_front_mode, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_front_army, country_index_t, std::uint32_t, unique_id_t, bool) \
 X(assign_free_armies, country_index_t, std::uint32_t) \
-X(set_auto_plan, country_index_t, bool)
+X(set_auto_plan, country_index_t, bool) \
+X(cancel_recruitment, country_index_t, unique_id_t) \
+X(split_regiment, unique_id_t) \
+X(merge_armies, unique_id_t, unique_id_t) \
+X(set_army_leader, unique_id_t, unique_id_t) \
+X(disband_regiment, unique_id_t) \
+X(disband_army, unique_id_t) \
+X(load_army, unique_id_t, unique_id_t) \
+X(unload_army, unique_id_t) \
+X(land_army, unique_id_t, province_index_t) \
+X(start_ship_building, ship_type_index_t, province_index_t) \
+X(declare_war_goal, country_index_t, country_index_t, std::uint32_t, province_index_t) \
+X(set_peace_demand, country_index_t, std::uint32_t, std::uint32_t, province_index_t, bool) \
+X(send_peace_offer, country_index_t, std::uint32_t) \
+X(answer_peace_offer, country_index_t, std::uint32_t, bool) \
+X(enact_reform, country_index_t, reform_index_t) \
+X(start_colonisation, country_index_t, province_index_t) \
+X(cancel_colonisation, country_index_t, province_index_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action
@@ -137,6 +154,7 @@ struct ARG_TYPE(name) \
 	  detail::ts_op_structured_binding_passthrough { \
 	using strong_typedef::strong_typedef; \
 	using reduce_helper_t = detail::reduce_tuple<__VA_ARGS__>; \
+	static constexpr const char* action_name = #name; \
 	using underlying_type = reduce_helper_t::type; \
 \
 	constexpr ARG_TYPE(name)(underlying_type const& value) : strong_typedef(value) {} \
@@ -213,4 +231,3 @@ namespace std {
 }
 
 #undef ARG_TYPE
-#undef FOR_EACH_GAME_ACTION
