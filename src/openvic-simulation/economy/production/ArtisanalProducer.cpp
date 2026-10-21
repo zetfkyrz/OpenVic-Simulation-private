@@ -1,5 +1,6 @@
 #include "ArtisanalProducer.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
 
@@ -434,6 +435,12 @@ void ArtisanalProducer::subtract_from_stockpile(const good_index_t good_index, c
 
 	fixed_point_t& stockpiled_quantity = stockpile.at_index(good_index);
 	if (OV_unlikely(stockpiled_quantity < sold_quantity)) {
+		// Fixed point rounding of the sold share can exceed the stockpile by a hair: not worth an error
+		const fixed_point_t tolerance = std::max(fixed_point_t(1) / 1000, stockpiled_quantity / 100);
+		if (sold_quantity - stockpiled_quantity <= tolerance) {
+			stockpiled_quantity = 0;
+			return;
+		}
 		spdlog::error_s(
 			"Attempted to subtract more {} of {} from artisan stockpile than it has {}.",
 			sold_quantity, good_index, stockpiled_quantity
