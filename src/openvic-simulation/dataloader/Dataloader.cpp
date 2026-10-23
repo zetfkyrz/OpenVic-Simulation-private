@@ -982,6 +982,16 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load defines!");
 		ret = false;
 	}
+	{
+		// Optional: the OpenVic additions have built-in defaults, a mod may override them
+		static constexpr std::string_view openvic_defines_file = "common/openvic_defines.lua";
+		const fs::path openvic_defines_path = lookup_file(openvic_defines_file, false);
+		if (!openvic_defines_path.empty()) {
+			definition_manager.get_define_manager().get_mutable_openvic_defines().load_file(
+				parse_lua_defines(openvic_defines_path).get_file_node(), openvic_defines_file
+			);
+		}
+	}
 	if (!_load_goods(definition_manager)) {
 		spdlog::critical_s("Failed to load goods!");
 		ret = false;
