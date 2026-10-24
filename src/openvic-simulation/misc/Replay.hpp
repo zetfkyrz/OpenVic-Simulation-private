@@ -20,7 +20,8 @@ namespace OpenVic {
 		// Raise it when a change of the rules of the simulation makes the old replays end in another state
 		// 2: artisans get the whole revenue of their sales (the cost of the inputs was lost), see docs/BUGS_FIXED.md
 		// 3: prices rise when more is wanted than offered even if the buyers are short of money (stuck prices)
-		inline constexpr int SIMULATION_VERSION = 3;
+		// 4: the revenue an artisan compares with its costs is yesterday's, not the sum over the whole game (artisans never changed type)
+		inline constexpr int SIMULATION_VERSION = 4;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

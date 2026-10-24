@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "BalanceReport.hpp"
 
 #include <algorithm>
@@ -169,6 +170,12 @@ void BalanceReport::print(InstanceManager& instance_manager, const bool with_goo
 					continue;
 				}
 				ProductionType const& production_type = *artisan->get_production_type_nullable();
+				if (std::getenv("BAL_ART") != nullptr && production_type.get_identifier() == std::getenv("BAL_ART")) {
+					fmt::println("ARTPOP {} {} size={} cash={} rev={} cost={} prod={}", province.get_identifier(),
+						province.get_country_to_report_economy() != nullptr ? province.get_country_to_report_economy()->get_identifier() : "-",
+						type_safe::get(pop.get_size()), to_double(pop.get_cash().get_copy_of_value()), to_double(pop.get_artisanal_revenue()),
+						to_double(artisan->get_costs_of_production()), to_double(artisan->get_current_production()));
+				}
 				ArtisanGroup& group = artisan_groups[std::string(production_type.get_identifier())];
 				group.pops++;
 				group.people += static_cast<double>(type_safe::get(pop.get_size()));

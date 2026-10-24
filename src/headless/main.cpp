@@ -1317,7 +1317,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			if (research_test && day % 5 == 0) {
 				run_research_step(instance_manager, day % 90 == 0);
 			}
-			if (day % 30 == 0) {
+			if (day % 30 == 0 || (balance_report && std::getenv("BAL_DAILY") != nullptr && day > 60)) {
 				if (money_ledger_report) {
 					fmt::println("{}", instance_manager.get_money_ledger().report(instance_manager));
 				}

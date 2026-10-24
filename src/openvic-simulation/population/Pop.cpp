@@ -560,6 +560,9 @@ void Pop::pop_tick_without_cleanup(
 	OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(SET_TO_ZERO)
 	#undef SET_TO_ZERO
 	income = expenses = 0;
+	// Yesterday's revenue was read by the artisan tick above; start counting today's. It used to be summed up over the whole game, so an
+	// artisan that had ever sold something looked profitable for ever and never changed its production type.
+	artisanal_revenue = 0;
 
 	CountryInstance* const country_to_report_economy_nullable = get_location().get_country_to_report_economy();
 
