@@ -228,7 +228,9 @@ namespace OpenVic {
 	INT(MIN_COLONISATION_DAYS, min_colonisation_days, 30, 1, 36500)
 #define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE)
-#define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
+	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)
 #define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE)
 	// Placeholder for the credit system rework: nothing reads these yet, no logic is attached to them. 0 = not set.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \

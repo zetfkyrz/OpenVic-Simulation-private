@@ -13,6 +13,7 @@
 using namespace OpenVic;
 
 void ResearchDynamics::monthly_update(InstanceManager& instance_manager) {
+	OpenVicResearchDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().research;
 	TechnologyManager const& technologies = instance_manager.definition_manager.get_research_manager().get_technology_manager();
 	const Date today = instance_manager.get_today();
 
@@ -25,7 +26,10 @@ void ResearchDynamics::monthly_update(InstanceManager& instance_manager) {
 			continue;
 		}
 
-		const fixed_point_t rate = (BASE_PROGRESS_PERCENT + country.get_average_literacy() * LITERACY_PROGRESS_PERCENT) / 100;
+		// Monthly chance of an invention: a base share plus a share of the literacy of the country
+		const fixed_point_t rate =
+			(fixed_point_t(defines.invention_base_chance_per_month.numerator)
+				+ country.get_average_literacy() * defines.invention_literacy_chance.numerator) / Rate::DENOMINATOR;
 
 		std::int32_t unlocked = 0;
 		for (Technology const& technology : technologies.get_technologies()) {

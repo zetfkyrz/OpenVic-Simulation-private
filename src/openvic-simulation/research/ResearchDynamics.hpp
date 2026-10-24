@@ -9,10 +9,7 @@ namespace OpenVic {
 	 * (about 1.5 years for a country with 50% literacy). New technologies and inventions are written to the notification
 	 * log for the interface. */
 	namespace ResearchDynamics {
-		// Monthly progress of a possible invention at zero literacy, per cent, and how much more the literacy adds
-		inline constexpr int BASE_PROGRESS_PERCENT = 3;
-		inline constexpr int LITERACY_PROGRESS_PERCENT = 6;
-
+		// The rates are in the group ov_research of common/openvic_defines.lua
 		void monthly_update(InstanceManager& instance_manager);
 	}
 }
