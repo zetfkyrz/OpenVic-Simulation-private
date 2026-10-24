@@ -49,17 +49,7 @@ namespace OpenVic {
 	namespace RebelDynamics {
 		void monthly_update(InstanceManager& instance_manager);
 
-		// Pops with militancy above this level (of 10) are ready to rise
-		inline constexpr int MILITANT_LEVEL = 6;
-		// Militant people needed for a rising, and how many fill one rebel regiment
-		inline constexpr int MIN_MILITANT_PEOPLE = 30000;
-		inline constexpr int PEOPLE_PER_REBEL_REGIMENT = 12000;
-		inline constexpr int MAX_REBEL_REGIMENTS = 6;
-		// Share of the people of the province that must be militant, per cent
-		inline constexpr int MIN_MILITANT_PERCENT = 15;
-		// Days before a province can rise again, and days after which the government of an AI country puts a rising down
-		inline constexpr int UPRISING_COOLDOWN_DAYS = 365;
-		inline constexpr int AI_SUPPRESSION_DAYS = 90;
+		// The thresholds and rates of the unrest are in the group ov_politics of common/openvic_defines.lua
 
 		struct Uprising {
 			ProvinceInstance const* province;
