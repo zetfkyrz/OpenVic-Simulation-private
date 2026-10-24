@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -379,6 +380,8 @@ namespace OpenVic {
 		bool is_file_loaded() const {
 			return file_loaded;
 		}
+		// The text of an example common/openvic_defines.lua with every key, its default (the current value) and its range
+		std::string to_lua_text() const;
 		// The groups in a fixed order
 		std::vector<OpenVicDefineGroup*> get_groups();
 		std::vector<OpenVicDefineGroup const*> get_groups() const;

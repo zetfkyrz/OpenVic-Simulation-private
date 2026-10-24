@@ -70,6 +70,8 @@ static bool politics_report = false;
 static bool research_test = false;
 // Replay save test: -W <file> writes the action history after the economy run, -L <file> replays it before the run
 static std::string replay_save_path, replay_load_path;
+// -D <file>: write an example common/openvic_defines.lua with all the keys and their current values
+static std::string defines_dump_path;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -1084,6 +1086,15 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 
 	print_memory_usage("Game Session Post-Start");
 
+	SPDLOG_INFO(
+		"OpenVic defines hash {:016x}", game_manager.get_definition_manager().get_define_manager().get_openvic_defines().get_hash()
+	);
+	if (!defines_dump_path.empty()) {
+		std::ofstream file(defines_dump_path);
+		file << game_manager.get_definition_manager().get_define_manager().get_openvic_defines().to_lua_text();
+		SPDLOG_INFO("Wrote the OpenVic defines to {}", defines_dump_path);
+	}
+
 	if (!replay_load_path.empty()) {
 		std::ifstream file(replay_load_path);
 		std::stringstream buffer;
@@ -1323,6 +1334,8 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-D") == 0 && argn + 1 < argc) {
+			defines_dump_path = argv[++argn];
 		} else if ((strcmp(arg, "-W") == 0 || strcmp(arg, "-L") == 0) && argn + 1 < argc) {
 			(arg[1] == 'W' ? replay_save_path : replay_load_path) = argv[++argn];
 		} else if (strcmp(arg, "-X") == 0) {
