@@ -331,7 +331,9 @@ namespace OpenVic {
 	FIXED(THROTTLE_MIN, throttle_min, fixed_point_t::_0_20, 0.01, 1) \
 	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1) \
 	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
-	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650)
+	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650) \
+	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 0, 0, 3650) \
+	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1)
 	// Placeholder for the credit system rework: nothing reads these yet, no logic is attached to them. 0 = not set.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(LOAN_TERM_MIN_DAYS, loan_term_min_days, 0, 0, 36500) \

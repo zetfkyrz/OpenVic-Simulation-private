@@ -100,6 +100,9 @@ namespace OpenVic {
 
 		void execute_game_actions();
 
+		// Gives every pop the savings of a number of days of its life and everyday needs (replaces the random test cash)
+		void initialise_pop_savings();
+
 		// Every executed game action that changes the simulation, for saving the game as a replay
 		std::vector<ReplayEntry> action_history;
 		std::uint32_t current_batch = 0;

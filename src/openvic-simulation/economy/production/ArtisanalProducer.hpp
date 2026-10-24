@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/types/IndexedFlatMap.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
@@ -83,6 +84,12 @@ namespace OpenVic {
 		void subtract_from_stockpile(const good_index_t good_index, const fixed_point_t sold_quantity);
 
 		//optional to handle invalid
+		// Parameters of the OpenVic additions (group ov_economy of the defines), set by the InstanceManager
+		static inline OpenVicEconomyDefines const* openvic_defines = nullptr;
+		static void set_openvic_defines(OpenVicEconomyDefines const& defines) {
+			openvic_defines = &defines;
+		}
+
 		static std::optional<fixed_point_t> estimate_production_type_score(
 			GoodInstanceManager const& good_instance_manager,
 			ProductionType const& production_type,
