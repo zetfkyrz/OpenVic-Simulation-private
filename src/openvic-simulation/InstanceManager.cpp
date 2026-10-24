@@ -150,6 +150,7 @@ InstanceManager::InstanceManager(
 	gamestate_updated { gamestate_updated_callback ? std::move(gamestate_updated_callback) : []() {} } {
 	war_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines());
 	UnitInstanceGroup::set_war_defines(definition_manager.get_define_manager().get_openvic_defines().war);
+	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 }
 
 void InstanceManager::set_gamestate_needs_update() {

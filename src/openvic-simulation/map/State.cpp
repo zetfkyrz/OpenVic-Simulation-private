@@ -254,7 +254,7 @@ FactoryInstance const* State::find_factory(BuildingType const& building_type) co
 }
 
 bool State::has_free_factory_slot() const {
-	return factories.size() < FactoryInstance::MAX_FACTORIES_PER_STATE;
+	return factories.size() < FactoryInstance::get_max_factories_per_state();
 }
 
 FactoryInstance* State::add_factory(BuildingType const& building_type, const building_level_t level) {

@@ -305,7 +305,30 @@ namespace OpenVic {
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)
-#define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 8, 1, 64) \
+	INT(FACTORY_VALUE_PAYBACK_YEARS, factory_value_payback_years, 6, 1, 1000) \
+	INT(FACTORY_REPLACEMENT_VALUE_DIVISOR, factory_replacement_value_divisor, 4, 1, 1000) \
+	INT(DEFAULT_CONSTRUCTION_DAYS, default_construction_days, 180, 1, 36500) \
+	RATE(STARTING_BUDGET_SHARE, starting_budget_share, Rate(5, 100), 0, 10) \
+	RATE(CAPITALIST_SAVINGS_SHARE, capitalist_savings_share, Rate(3, 10), 0, 1) \
+	INT(STOCKPILE_TARGET_DAYS, stockpile_target_days, 2, 0, 365) \
+	FIXED(EXPANSION_FUND_SHARE, expansion_fund_share, fixed_point_t::_0_10 * 2, 0, 1) \
+	RATE(EXPANSION_MIN_EMPLOYMENT, expansion_min_employment, Rate(80, 100), 0, 1) \
+	INT(WORKING_CAPITAL_DAYS, working_capital_days, 5, 0, 365) \
+	INT(MIN_WORKING_CAPITAL, min_working_capital, 20, 0, 100000000) \
+	INT(DIVIDEND_EXCESS_DIVISOR, dividend_excess_divisor, 10, 1, 1000) \
+	INT(AVERAGE_PROFIT_DAYS, average_profit_days, 30, 1, 3650) \
+	INT(DAYS_OF_LOSS_BEFORE_CLOSING, days_of_loss_before_closing, 90, 1, 36500) \
+	FIXED(WAGE_SHARE, wage_share, fixed_point_t::_0_50, 0, 1) \
+	INT(EFFICIENCY_GAIN_EPSILONS, efficiency_gain_epsilons, 65, 0, 1000000) \
+	INT(EFFICIENCY_LOSS_EPSILONS, efficiency_loss_epsilons, 130, 0, 1000000) \
+	FIXED(EFFICIENCY_MAX, efficiency_max, fixed_point_t::_1 + fixed_point_t::_0_50, 0.1, 100) \
+	FIXED(EFFICIENCY_MIN, efficiency_min, fixed_point_t::_0_50 + fixed_point_t::_0_10, 0.01, 100) \
+	FIXED(THROTTLE_GAIN, throttle_gain, fixed_point_t::_0_10 / 2, 0, 1) \
+	FIXED(THROTTLE_LOSS, throttle_loss, fixed_point_t::_0_10, 0, 1) \
+	FIXED(THROTTLE_MIN, throttle_min, fixed_point_t::_0_20, 0.01, 1) \
+	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1)
 	// Placeholder for the credit system rework: nothing reads these yet, no logic is attached to them. 0 = not set.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(LOAN_TERM_MIN_DAYS, loan_term_min_days, 0, 0, 36500) \

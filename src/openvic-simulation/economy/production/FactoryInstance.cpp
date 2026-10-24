@@ -19,23 +19,11 @@
 using namespace OpenVic;
 
 namespace {
-	// Time it takes to build a level when the building type does not specify it
-	constexpr int64_t DEFAULT_CONSTRUCTION_DAYS = 180;
-	// Share of the cost of a building the factory starts with (when it is built and at the start of the game)
-	const fixed_point_t STARTING_BUDGET_SHARE = fixed_point_t(5) / 100;
-	// Share of the dividends the capitalists put into the savings fund of the state
-	const fixed_point_t CAPITALIST_SAVINGS_SHARE = fixed_point_t(3) / 10;
-	// Days of input consumption the factory tries to keep in its stockpile
-	constexpr int32_t STOCKPILE_TARGET_DAYS = 2;
-	// Share of the daily profit saved in the expansion fund until it covers the cost of an expansion
-	const fixed_point_t EXPANSION_FUND_SHARE = fixed_point_t::_0_10 * 2;
-	// The factory expands (checked at the start of each month) when at least this share of its jobs is filled
-	constexpr int32_t EXPANSION_EMPLOYMENT_PERCENT = 80;
-	// Days of input costs the factory keeps as working capital, what it has more is paid to the owners
-	constexpr int32_t WORKING_CAPITAL_DAYS = 5;
-	constexpr int32_t MIN_WORKING_CAPITAL = 20;
-	// Days of consecutive loss (at minimum throttle) after which the factory closes
-	constexpr uint32_t DAYS_OF_LOSS_BEFORE_CLOSING = 90;
+	// The parameters of the factories (budget, stockpile, wages, expansion, closing) are in the group ov_economy of the
+	// defines, see FactoryInstance::defines
+	OpenVicEconomyDefines const& get_defines() {
+		return *FactoryInstance::defines;
+	}
 }
 
 FactoryInstance::Input::Input(GoodDefinition const& new_good, const fixed_point_t new_quantity_per_level)
@@ -66,7 +54,7 @@ fixed_point_t FactoryInstance::calculate_construction_cost(
 
 Timespan FactoryInstance::calculate_construction_time(BuildingType const& building_type) {
 	const Timespan::value_t days = building_type.build_time.to_int();
-	return Timespan::from_days(days > 0 ? days : DEFAULT_CONSTRUCTION_DAYS);
+	return Timespan::from_days(days > 0 ? days : get_defines().default_construction_days);
 }
 
 bool FactoryInstance::can_be_expanded() const {
@@ -110,9 +98,9 @@ fixed_point_t FactoryInstance::get_daily_construction_goods(GoodDefinition const
 
 fixed_point_t FactoryInstance::calculate_value(MarketInstance const& market_instance) const {
 	const fixed_point_t replacement = calculate_construction_cost(building_type, market_instance) *
-		static_cast<int32_t>(type_safe::get(level)) / 4;
+		static_cast<int32_t>(type_safe::get(level)) / get_defines().factory_replacement_value_divisor;
 	const fixed_point_t from_profit = average_profit > fixed_point_t::_0
-		? average_profit * (365 * PAYBACK_YEARS)
+		? average_profit * (365 * get_defines().factory_value_payback_years)
 		: fixed_point_t::_0;
 	return std::max(from_profit, replacement);
 }
@@ -144,7 +132,7 @@ bool FactoryInstance::trade_share(
 		return false;
 	}
 	const fixed_point_t affordable = std::min(share, state.get_capitalist_fund() / value);
-	if (affordable < fixed_point_t(1) / 1000) {
+	if (affordable < get_defines().min_affordable_share.fixed()) {
 		return false;
 	}
 	country.add_cash(state.take_from_capitalist_fund(value * affordable));
@@ -189,7 +177,7 @@ void FactoryInstance::after_sell(
 
 void FactoryInstance::grant_starting_budget(MarketInstance const& market_instance, const building_level_t levels) {
 	// The factory starts with a small budget so that a first unprofitable days do not close it at once
-	budget += calculate_construction_cost(building_type, market_instance) * STARTING_BUDGET_SHARE *
+	budget += calculate_construction_cost(building_type, market_instance) * get_defines().starting_budget_share.fixed() *
 		static_cast<int32_t>(type_safe::get(levels));
 }
 
@@ -221,7 +209,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	// Workers are paid half of the value they added, as long as the budget covers it. A factory that sells its goods
 	// for less than its inputs cost does not pay wages, it is the market that decides if it keeps running.
 	const fixed_point_t value_added = revenue - consumed_value_pending;
-	fixed_point_t wages = value_added > 0 ? std::min(value_added * fixed_point_t::_0_50, budget) : fixed_point_t { 0 };
+	fixed_point_t wages = value_added > 0 ? std::min(value_added * get_defines().wage_share, budget) : fixed_point_t { 0 };
 
 	if (wages > 0 && !workers.empty()) {
 		pop_size_t total_workers { 0 };
@@ -255,16 +243,16 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		if (can_be_expanded()) {
 			const fixed_point_t cost = calculate_construction_cost(building_type, market_instance);
 			to_fund = std::min(
-				std::min(profit * EXPANSION_FUND_SHARE, std::max(cost - expansion_fund, fixed_point_t::_0)), budget
+				std::min(profit * get_defines().expansion_fund_share, std::max(cost - expansion_fund, fixed_point_t::_0)), budget
 			);
 			expansion_fund += to_fund;
 			budget -= to_fund;
 		}
 
 		// 2. What the factory has beyond its working capital is paid to the owners (the state and the capitalists)
-		const fixed_point_t working_capital = consumed_value_pending * WORKING_CAPITAL_DAYS + MIN_WORKING_CAPITAL;
+		const fixed_point_t working_capital = consumed_value_pending * get_defines().working_capital_days + get_defines().min_working_capital;
 		const fixed_point_t excess = std::max(budget - working_capital, fixed_point_t::_0);
-		const fixed_point_t dividend = std::min(excess, std::max(profit - to_fund, excess / 10));
+		const fixed_point_t dividend = std::min(excess, std::max(profit - to_fund, excess / get_defines().dividend_excess_divisor));
 		if (dividend > 0) {
 			pay_dividend(state, dividend, owner_income, state_income);
 		}
@@ -279,7 +267,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	owner_income_yesterday = owner_income;
 	state_income_yesterday = state_income;
 	profit_yesterday = profit;
-	average_profit += (profit - average_profit) / 30;
+	average_profit += (profit - average_profit) / get_defines().average_profit_days;
 
 	produced_quantity_pending = 0;
 	consumed_value_pending = 0;
@@ -292,20 +280,20 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	if (profit > 0) {
 		profitable_days++;
 		unprofitable_days = 0;
-		efficiency = std::min(efficiency + fixed_point_t::epsilon * 65, fixed_point_t::_1 + fixed_point_t::_0_50);
-		throttle = std::min(throttle + fixed_point_t::_0_10 / 2, fixed_point_t::_1);
+		efficiency = std::min(efficiency + fixed_point_t::epsilon * get_defines().efficiency_gain_epsilons, get_defines().efficiency_max);
+		throttle = std::min(throttle + get_defines().throttle_gain, fixed_point_t::_1);
 	} else {
 		unprofitable_days++;
 		profitable_days = 0;
-		efficiency = std::max(efficiency - fixed_point_t::epsilon * 130, fixed_point_t::_0_50 + fixed_point_t::_0_10);
+		efficiency = std::max(efficiency - fixed_point_t::epsilon * get_defines().efficiency_loss_epsilons, get_defines().efficiency_min);
 		if (subsidised) {
 			// The state pays for the losses: the factory neither slows down nor closes
 			throttle = fixed_point_t::_1;
 			return;
 		}
-		throttle = std::max(throttle - fixed_point_t::_0_10, fixed_point_t::_0_20);
+		throttle = std::max(throttle - get_defines().throttle_loss, get_defines().throttle_min);
 
-		if (unprofitable_days >= DAYS_OF_LOSS_BEFORE_CLOSING && throttle <= fixed_point_t::_0_20) {
+		if (unprofitable_days >= static_cast<uint32_t>(get_defines().days_of_loss_before_closing) && throttle <= get_defines().throttle_min) {
 			SPDLOG_INFO("Closing unprofitable factory {} in {}", building_type, state);
 			open = false;
 		}
@@ -378,7 +366,7 @@ void FactoryInstance::pay_dividend(
 
 		if (total_owner_size > 0) {
 			// Part of what the capitalists get is saved in the fund of the state, the rest is the income of their pops
-			const fixed_point_t saved = capitalists_part * CAPITALIST_SAVINGS_SHARE;
+			const fixed_point_t saved = capitalists_part * get_defines().capitalist_savings_share.fixed();
 			const fixed_point_t paid_to_pops = capitalists_part - saved;
 			state.add_to_capitalist_fund(saved);
 			for (Pop& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
@@ -416,7 +404,8 @@ void FactoryInstance::try_auto_expansion(const Date today, MarketInstance const&
 
 	// Most of the jobs have to be filled, otherwise a bigger factory would not find workers
 	const int32_t max_employees = type_safe::get(max_employee_count);
-	if (max_employees <= 0 || type_safe::get(employee_count) * 100 < max_employees * EXPANSION_EMPLOYMENT_PERCENT) {
+	if (max_employees <= 0 || static_cast<int64_t>(type_safe::get(employee_count)) * Rate::DENOMINATOR
+			< static_cast<int64_t>(max_employees) * get_defines().expansion_min_employment.numerator) {
 		return;
 	}
 
@@ -567,7 +556,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	{
 		fixed_point_t desired = 0;
 		for (Input const& input : inputs) {
-			const fixed_point_t wanted = input.quantity_per_level * level_value * throttle * STOCKPILE_TARGET_DAYS - input.stockpile;
+			const fixed_point_t wanted = input.quantity_per_level * level_value * throttle * get_defines().stockpile_target_days - input.stockpile;
 			if (wanted > 0 && market_instance.get_is_available(input.good.index)) {
 				desired += market_instance.get_max_money_to_allocate_to_buy_quantity(input.good.index, wanted) * tariff_multiplier;
 			}
@@ -613,7 +602,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	// Buy the inputs for the next days, only spending what the factory's own budget can afford
 	fixed_point_t budget_left = budget;
 	for (Input& input : inputs) {
-		const fixed_point_t target = input.quantity_per_level * level_value * throttle * STOCKPILE_TARGET_DAYS;
+		const fixed_point_t target = input.quantity_per_level * level_value * throttle * get_defines().stockpile_target_days;
 		const fixed_point_t wanted = target - input.stockpile;
 		if (wanted <= 0 || budget_left <= 0 || !market_instance.get_is_available(input.good.index)) {
 			continue;
