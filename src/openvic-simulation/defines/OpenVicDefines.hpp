@@ -226,8 +226,57 @@ namespace OpenVic {
 	INT(SEA_RANGE_BASE, sea_range_base, 3, 0, 1000) \
 	INT(SEA_RANGE_PER_BASE_LEVEL, sea_range_per_base_level, 2, 0, 1000) \
 	INT(MIN_COLONISATION_DAYS, min_colonisation_days, 30, 1, 36500)
-#define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE)
-#define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	INT(TRUCE_DAYS, truce_days, 1825, 0, 36500) \
+	INT(SIEGE_BASE_DAYS, siege_base_days, 3, 0, 36500) \
+	INT(SIEGE_DAYS_PER_FORT_LEVEL, siege_days_per_fort_level, 5, 0, 36500) \
+	INT(CAPITAL_PROVINCE_WEIGHT, capital_province_weight, 5, 1, 1000) \
+	INT(WAR_SCORE_MAX, war_score_max, 100, 1, 10000) \
+	INT(MAX_BATTLE_SCORE, max_battle_score, 25, 0, 10000) \
+	INT(BATTLE_SCORE_REGIMENT_CAP, battle_score_regiment_cap, 20, 0, 1000) \
+	INT(BATTLE_SCORE_REGIMENT_DIVISOR, battle_score_regiment_divisor, 4, 1, 1000) \
+	INT(NAVAL_BATTLE_SCORE_SHIP_FACTOR, naval_battle_score_ship_factor, 2, 0, 1000) \
+	INT(NAVAL_BATTLE_SCORE_SHIP_CAP, naval_battle_score_ship_cap, 12, 0, 1000) \
+	INT(LEADER_POINT_DIVISOR, leader_point_divisor, 10, 1, 1000) \
+	RATE(LEADER_MIN_MULTIPLIER, leader_min_multiplier, Rate(1, 4), 0, 1) \
+	INT(DIG_IN_DIVISOR, dig_in_divisor, 10, 1, 1000) \
+	INT(LEADER_DEATH_ODDS, leader_death_odds, 30, 1, 1000000) \
+	RATE(LEADER_VICTORY_PRESTIGE, leader_victory_prestige, Rate(1, 100), 0, 100) \
+	RATE(LEADER_DEFEAT_PRESTIGE, leader_defeat_prestige, Rate(1, 100), 0, 100) \
+	RATE(MIN_ORGANISATION_FACTOR, min_organisation_factor, Rate(3, 10), 0, 1) \
+	RATE(DEFENCE_FACTOR_MIN, defence_factor_min, Rate(1, 2), 0.01, 100) \
+	INT(DEFENCE_VALUE_DIVISOR, defence_value_divisor, 2, 1, 1000) \
+	RATE(ORGANISATION_DAMAGE, organisation_damage, Rate(5, 100), 0, 100) \
+	RATE(STRENGTH_DAMAGE, strength_damage, Rate(1, 100), 0, 100) \
+	INT(ROUT_STRENGTH_MULTIPLIER, rout_strength_multiplier, 3, 1, 1000) \
+	RATE(ROUT_THRESHOLD, rout_threshold, Rate(1, 10), 0, 1) \
+	RATE(SIEGE_SPEED_PER_REGIMENT, siege_speed_per_regiment, Rate(1, 8), 0, 100) \
+	INT(SIEGE_SKILL_DIVISOR, siege_skill_divisor, 10, 1, 1000) \
+	INT(SIEGE_SPEED_MAX, siege_speed_max, 4, 1, 1000) \
+	RATE(ORGANISATION_RECOVERY, organisation_recovery, Rate(2, 100), 0, 1) \
+	RATE(STRENGTH_RECOVERY, strength_recovery, Rate(5, 1000), 0, 1) \
+	RATE(RECOVERY_MIN_SUPPLY, recovery_min_supply, Rate(1, 4), 0, 1) \
+	RATE(STRENGTH_RECOVERY_MIN_SUPPLY, strength_recovery_min_supply, Rate(1, 2), 0, 1) \
+	RATE(NAVAL_STRENGTH_DAMAGE, naval_strength_damage, Rate(2, 100), 0, 100) \
+	RATE(NAVAL_ORGANISATION_DAMAGE, naval_organisation_damage, Rate(8, 100), 0, 100) \
+	INT(NAVAL_EVASION_DIVISOR, naval_evasion_divisor, 10, 1, 1000) \
+	INT(NAVAL_MAX_DAMAGE_RATIO, naval_max_damage_ratio, 6, 1, 1000) \
+	RATE(ATTRITION_BASE, attrition_base, Rate(2, 1000), 0, 1) \
+	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
+	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \
+	RATE(ATTRITION_FRIENDLY_MULTIPLIER, attrition_friendly_multiplier, Rate(1, 2), 0, 1) \
+	INT(BLOCKADE_SUPPLY_DIVISOR, blockade_supply_divisor, 2, 1, 1000) \
+	INT(MOVEMENT_SPEED_SCALE, movement_speed_scale, 3, 1, 1000) \
+	INT(PORT_STEP_DISTANCE, port_step_distance, 10, 1, 10000) \
+	INT(REGIMENTS_PER_TRANSPORT, regiments_per_transport, 4, 0, 1000) \
+	INT(LANDING_ORGANISATION_DIVISOR, landing_organisation_divisor, 2, 1, 1000)
+#define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	INT(WHITE_PEACE_SCORE_GAP, white_peace_score_gap, 15, 0, 10000) \
+	INT(WHITE_PEACE_WAR_DAYS, white_peace_war_days, 1095, 0, 36500) \
+	INT(SURRENDER_SCORE, surrender_score, 40, 0, 10000) \
+	INT(CAPITAL_LOST_SCORE, capital_lost_score, 25, 0, 10000) \
+	INT(LONG_WAR_DAYS, long_war_days, 1825, 0, 36500) \
+	INT(LONG_WAR_SCORE, long_war_score, 20, 0, 10000)
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)

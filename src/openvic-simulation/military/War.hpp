@@ -8,6 +8,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/types/UniqueId.hpp"
 
 namespace OpenVic {
@@ -114,14 +115,20 @@ namespace OpenVic {
 			fixed_point_t progress;
 		};
 
-		// Tunable constants
-		static constexpr std::int32_t TRUCE_DAYS = 5 * 365;
-		static constexpr std::int32_t SIEGE_BASE_DAYS = 3;
-		static constexpr std::int32_t SIEGE_DAYS_PER_FORT_LEVEL = 5;
-		static constexpr std::int32_t CAPITAL_PROVINCE_WEIGHT = 5;
-		static constexpr std::int32_t MAX_BATTLE_SCORE = 25;
+		// The parameters (truce, sieges, battles, recovery, attrition, ...) are in the groups ov_war and ov_peace of
+		// common/openvic_defines.lua, set once when the instance is created
+		void set_defines(OpenVicDefines const& new_defines) {
+			defines = &new_defines;
+		}
+		OpenVicWarDefines const& get_war_defines() const {
+			return defines->war;
+		}
+		OpenVicPeaceDefines const& get_peace_defines() const {
+			return defines->peace;
+		}
 
 	private:
+		OpenVicDefines const* defines = nullptr;
 		memory::vector<War> wars;
 		std::uint32_t next_war_id = 1;
 
@@ -194,9 +201,9 @@ namespace OpenVic {
 		Siege const* get_siege(ProvinceInstance const& province) const;
 
 		// Weight of a country's province for the war score (a capital is worth several ordinary provinces)
-		static std::int32_t get_province_weight(ProvinceInstance const& province);
+		std::int32_t get_province_weight(ProvinceInstance const& province) const;
 		// Number of days a siege of the province takes
-		static std::int32_t get_siege_days_required(ProvinceInstance const& province);
+		std::int32_t get_siege_days_required(ProvinceInstance const& province) const;
 
 		bool can_declare_war(CountryInstance const& attacker, CountryInstance const& defender, Date today) const;
 		// Starts a war, the allies of both sides who are not allied to the enemy join in automatically

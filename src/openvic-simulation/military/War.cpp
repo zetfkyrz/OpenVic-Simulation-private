@@ -91,14 +91,8 @@ namespace {
 		}
 	};
 
-	// Each point of a general's attack / defence / morale is worth this share
-	constexpr int32_t LEADER_POINT_DIVISOR = 10;
-	// Each level of dig in makes the army take this much less damage
-	constexpr int32_t DIG_IN_DIVISOR = 10;
-	constexpr std::uint64_t LEADER_DEATH_ODDS = 30;
-
-	void calculate_side(BattleSide& side, ModifierEffectCache const& cache) {
-		const fixed_point_t min_org_factor = fixed_point_t(3) / 10;
+	void calculate_side(BattleSide& side, ModifierEffectCache const& cache, OpenVicWarDefines const& wd) {
+		const fixed_point_t min_org_factor = wd.min_organisation_factor.fixed();
 
 		side.power = fixed_point_t::_0;
 		side.organisation = fixed_point_t::_0;
@@ -111,9 +105,9 @@ namespace {
 
 		for (ArmyInstance* army : side.armies) {
 			const LeaderBonus bonus = get_leader_bonus(*army, cache);
-			const fixed_point_t attack_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.attack / LEADER_POINT_DIVISOR);
-			const fixed_point_t defence_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.defence / LEADER_POINT_DIVISOR);
-			const fixed_point_t morale_multiplier = std::max(fixed_point_t::_0_25, fixed_point_t::_1 + bonus.morale);
+			const fixed_point_t attack_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.attack / wd.leader_point_divisor);
+			const fixed_point_t defence_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
+			const fixed_point_t morale_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.morale);
 
 			if (fixed_point_t(static_cast<int32_t>(army->get_dig_in_level())) > dig_in_best) {
 				dig_in_best = fixed_point_t(static_cast<int32_t>(army->get_dig_in_level()));
@@ -147,20 +141,20 @@ namespace {
 		if (side.regiment_count > 0) {
 			const int32_t count = static_cast<int32_t>(side.regiment_count);
 			// A regiment with defence 1 (value 2 here) takes the damage of the earlier model, better defence takes less
-			side.defence_factor = std::max(fixed_point_t::_0_50, defence_sum / count / 2)
-				* (fixed_point_t::_1 + dig_in_best / DIG_IN_DIVISOR);
+			side.defence_factor = std::max(wd.defence_factor_min.fixed(), defence_sum / count / wd.defence_value_divisor)
+				* (fixed_point_t::_1 + dig_in_best / wd.dig_in_divisor);
 			side.morale_factor = morale_sum / count;
 		}
 	}
 
 	// Each regiment of the target takes the same share of the damage
-	void apply_damage(BattleSide& target, fixed_point_t enemy_power) {
+	void apply_damage(BattleSide& target, fixed_point_t enemy_power, OpenVicWarDefines const& wd) {
 		if (target.regiment_count == 0) {
 			return;
 		}
 
-		const fixed_point_t organisation_damage = fixed_point_t(5) / 100;
-		const fixed_point_t strength_damage = fixed_point_t(1) / 100;
+		const fixed_point_t organisation_damage = wd.organisation_damage.fixed();
+		const fixed_point_t strength_damage = wd.strength_damage.fixed();
 
 		const fixed_point_t average_power = enemy_power / static_cast<int32_t>(target.regiment_count);
 		const fixed_point_t strength_power = average_power / target.defence_factor;
@@ -172,7 +166,7 @@ namespace {
 					continue;
 				}
 				// Regiments without organisation are routing and lose men much faster
-				const int32_t rout_factor = regiment.get_organisation() > fixed_point_t::_0 ? 1 : 3;
+				const int32_t rout_factor = regiment.get_organisation() > fixed_point_t::_0 ? 1 : wd.rout_strength_multiplier;
 				regiment.take_damage(
 					regiment.get_max_organisation() * organisation_power * organisation_damage,
 					regiment.get_max_strength() * strength_power * strength_damage * rout_factor
@@ -279,21 +273,21 @@ WarManager::Siege const* WarManager::get_siege(ProvinceInstance const& province)
 	return it != sieges.end() ? &it->second : nullptr;
 }
 
-std::int32_t WarManager::get_province_weight(ProvinceInstance const& province) {
+std::int32_t WarManager::get_province_weight(ProvinceInstance const& province) const {
 	CountryInstance const* const owner = province.get_owner();
 	if (owner != nullptr && owner->get_capital() == &province) {
-		return CAPITAL_PROVINCE_WEIGHT;
+		return get_war_defines().capital_province_weight;
 	}
 	return 1;
 }
 
-std::int32_t WarManager::get_siege_days_required(ProvinceInstance const& province) {
+std::int32_t WarManager::get_siege_days_required(ProvinceInstance const& province) const {
 	std::int32_t fort_levels = 0;
 	for (BuildingInstance const& building : province.get_buildings()) {
 		fort_levels += static_cast<std::int32_t>(type_safe::get(building.get_level()))
 			* static_cast<std::int32_t>(type_safe::get(building.building_type.fort_level));
 	}
-	return SIEGE_BASE_DAYS + fort_levels * SIEGE_DAYS_PER_FORT_LEVEL;
+	return get_war_defines().siege_base_days + fort_levels * get_war_defines().siege_days_per_fort_level;
 }
 
 bool WarManager::can_declare_war(CountryInstance const& attacker, CountryInstance const& defender, const Date today) const {
@@ -375,13 +369,14 @@ bool WarManager::would_accept_peace(
 	const std::int32_t days = (instance_manager.get_today() - war.start_date).to_int();
 	const fixed_point_t proposer_score = war.get_score(proposer_is_attacker);
 	const fixed_point_t other_score = war.get_score(!proposer_is_attacker);
+	OpenVicPeaceDefines const& pd = get_peace_defines();
 
 	switch (peace_type) {
 	case peace_type_t::WHITE_PEACE:
 		// The side that is clearly winning refuses, unless the war has dragged on for years
-		return other_score - proposer_score < 15 || days > 3 * 365;
+		return other_score - proposer_score < pd.white_peace_score_gap || days > pd.white_peace_war_days;
 	case peace_type_t::TAKE_STATES: {
-		if (proposer_score >= 40) {
+		if (proposer_score >= pd.surrender_score) {
 			return true;
 		}
 		// Surrender when the capital of the leader has fallen
@@ -390,11 +385,11 @@ bool WarManager::would_accept_peace(
 		if (!other_side.empty()) {
 			CountryInstance const* const leader = other_side.front();
 			ProvinceInstance const* const capital = leader->get_capital();
-			if (capital != nullptr && proposer_score >= 25 && contains_country(proposer_side, capital->get_controller())) {
+			if (capital != nullptr && proposer_score >= pd.capital_lost_score && contains_country(proposer_side, capital->get_controller())) {
 				return true;
 			}
 		}
-		return days > 5 * 365 && proposer_score >= 20;
+		return days > pd.long_war_days && proposer_score >= pd.long_war_score;
 	}
 	case peace_type_t::GIVE_STATES:
 		return true;
@@ -474,7 +469,7 @@ void WarManager::transfer_states(InstanceManager& instance_manager, War const& w
 				continue;
 			}
 
-			candidates.push_back({ state, loser, recipient, fixed_point_t(state_weight) / total_weight * 100 });
+			candidates.push_back({ state, loser, recipient, fixed_point_t(state_weight) / total_weight * get_war_defines().war_score_max });
 		}
 	}
 
@@ -529,7 +524,7 @@ void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t 
 
 	for (CountryInstance* attacker : war.attackers) {
 		for (CountryInstance* defender : war.defenders) {
-			truces.push_back({ attacker, defender, today + Timespan::from_days(TRUCE_DAYS) });
+			truces.push_back({ attacker, defender, today + Timespan::from_days(get_war_defines().truce_days) });
 			// Still enemies if another war keeps them apart
 			if (find_war_between(*attacker, *defender) == nullptr) {
 				attacker->set_at_war_with(*defender, false);
@@ -594,6 +589,7 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	OpenVicWarDefines const& wd = get_war_defines();
 
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		if (province.get_armies().empty() || province.province_definition.is_water()) {
@@ -653,8 +649,8 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 			}
 		}
 
-		calculate_side(side_a, cache);
-		calculate_side(side_b, cache);
+		calculate_side(side_a, cache, wd);
+		calculate_side(side_b, cache, wd);
 		if (side_a.regiment_count == 0 || side_b.regiment_count == 0) {
 			continue;
 		}
@@ -664,10 +660,10 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		const size_t regiments_a = side_a.regiment_count;
 		const size_t regiments_b = side_b.regiment_count;
 
-		apply_damage(side_b, power_a);
-		apply_damage(side_a, power_b);
-		calculate_side(side_a, cache);
-		calculate_side(side_b, cache);
+		apply_damage(side_b, power_a, wd);
+		apply_damage(side_a, power_b, wd);
+		calculate_side(side_a, cache, wd);
+		calculate_side(side_b, cache, wd);
 
 		for (ArmyInstance* army : side_a.armies) {
 			fought_today.insert(army->unique_id);
@@ -676,7 +672,7 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 			fought_today.insert(army->unique_id);
 		}
 
-		const fixed_point_t rout_threshold = fixed_point_t(1) / 10;
+		const fixed_point_t rout_threshold = wd.rout_threshold.fixed();
 		const fixed_point_t ratio_a = side_a.get_organisation_ratio();
 		const fixed_point_t ratio_b = side_b.get_organisation_ratio();
 		const bool routed_a = side_a.regiment_count == 0 || ratio_a < rout_threshold;
@@ -702,11 +698,13 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 			CountryInstance const& winner_country = winner.armies.front()->get_country();
 			CountryInstance const& loser_country = loser.armies.front()->get_country();
 			if (War* const war = find_war_between(winner_country, loser_country); war != nullptr) {
-				const fixed_point_t gain = fixed_point_t::_1 + fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser_regiments, 20))) / 4;
+				const fixed_point_t gain = fixed_point_t::_1
+					+ fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser_regiments, static_cast<size_t>(wd.battle_score_regiment_cap))))
+						/ wd.battle_score_regiment_divisor;
 				fixed_point_t& score = war->is_attacker(winner_country) ? war->attacker_battle_score : war->defender_battle_score;
 				score += gain;
-				if (score > MAX_BATTLE_SCORE) {
-					score = fixed_point_t(MAX_BATTLE_SCORE);
+				if (score > wd.max_battle_score) {
+					score = fixed_point_t(wd.max_battle_score);
 				}
 			}
 		}
@@ -714,15 +712,15 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		// The generals of the winners gain prestige, the generals of the losers lose it and may die
 		for (ArmyInstance* army : winner.armies) {
 			if (LeaderInstance* const leader = army->get_leader()) {
-				leader->add_prestige(fixed_point_t(1) / 100);
+				leader->add_prestige(wd.leader_victory_prestige.fixed());
 			}
 		}
 		for (ArmyInstance* army : loser.armies) {
 			if (LeaderInstance* const leader = army->get_leader()) {
-				leader->add_prestige(fixed_point_t(-1) / 100);
-				// A deterministic "dice": about one lost battle in LEADER_DEATH_ODDS kills the general
+				leader->add_prestige(-wd.leader_defeat_prestige.fixed());
+				// A deterministic "dice": about one lost battle in leader_death_odds kills the general
 				const std::uint64_t dice = (leader->unique_id * 2654435761ULL + static_cast<std::uint64_t>((instance_manager.get_today() - Date {}).to_int()) * 40503ULL) >> 3;
-				if (dice % LEADER_DEATH_ODDS == 0) {
+				if (dice % static_cast<std::uint64_t>(wd.leader_death_odds) == 0) {
 					unit_manager.destroy_leader(*leader);
 				}
 			}
@@ -742,6 +740,7 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 }
 
 void WarManager::update_sieges(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
 	std::unordered_set<ProvinceInstance const*> active;
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
@@ -796,10 +795,10 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 				continue;
 			}
 			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-				siege_speed += fixed_point_t(1) / 8 + regiment.get_regiment_type().siege / 10;
+				siege_speed += wd.siege_speed_per_regiment.fixed() + regiment.get_regiment_type().siege / wd.siege_skill_divisor;
 			}
 		}
-		siege_speed = std::min(siege_speed, fixed_point_t(4));
+		siege_speed = std::min(siege_speed, fixed_point_t(wd.siege_speed_max));
 		siege.progress += siege_speed;
 		siege.days = siege.progress.floor<int32_t>();
 
@@ -819,9 +818,10 @@ void WarManager::update_sieges(InstanceManager& instance_manager) {
 }
 
 void WarManager::update_scores(InstanceManager& instance_manager) {
+	const std::int32_t score_max = get_war_defines().war_score_max;
 	for (War& war : wars) {
 		// Share of the enemies' land (by weight) that the side holds, 0..100
-		const auto occupation_score = [](
+		const auto occupation_score = [this, score_max](
 			memory::vector<CountryInstance*> const& owners, memory::vector<CountryInstance*> const& occupiers
 		) -> fixed_point_t {
 			std::int32_t total = 0;
@@ -835,21 +835,22 @@ void WarManager::update_scores(InstanceManager& instance_manager) {
 					}
 				}
 			}
-			return total > 0 ? fixed_point_t(held) / total * 100 : fixed_point_t::_0;
+			return total > 0 ? fixed_point_t(held) / total * score_max : fixed_point_t::_0;
 		};
 
 		war.attacker_score = std::min<fixed_point_t>(
-			occupation_score(war.defenders, war.attackers) + war.attacker_battle_score, fixed_point_t(100)
+			occupation_score(war.defenders, war.attackers) + war.attacker_battle_score, fixed_point_t(score_max)
 		);
 		war.defender_score = std::min<fixed_point_t>(
-			occupation_score(war.attackers, war.defenders) + war.defender_battle_score, fixed_point_t(100)
+			occupation_score(war.attackers, war.defenders) + war.defender_battle_score, fixed_point_t(score_max)
 		);
 	}
 }
 
 void WarManager::update_army_recovery(InstanceManager& instance_manager) {
-	const fixed_point_t organisation_recovery = fixed_point_t(2) / 100;
-	const fixed_point_t strength_recovery = fixed_point_t(5) / 1000;
+	OpenVicWarDefines const& wd = get_war_defines();
+	const fixed_point_t organisation_recovery = wd.organisation_recovery.fixed();
+	const fixed_point_t strength_recovery = wd.strength_recovery.fixed();
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
 		for (ArmyInstance& army : province.get_armies()) {
@@ -866,12 +867,12 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			// (only at war, and never below a quarter, so that a country with an empty stockpile still can recover)
 			fixed_point_t supply = fixed_point_t::_1;
 			if (army.get_country().is_at_war()) {
-				supply = std::max(army.get_country().get_army_supply_ratio(), fixed_point_t::_0_25);
+				supply = std::max(army.get_country().get_army_supply_ratio(), wd.recovery_min_supply.fixed());
 			}
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
 				regiment.recover(
 					regiment.get_max_organisation() * organisation_recovery * supply,
-					friendly && supply >= fixed_point_t::_0_50 ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
+					friendly && supply >= wd.strength_recovery_min_supply.fixed() ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
 				);
 			}
 		}
@@ -893,11 +894,8 @@ namespace {
 
 	// Share of the maximum strength / organisation of a ship that is lost each day by a ship hit with the force
 	// of its own hull
-	constexpr int32_t NAVAL_STRENGTH_DAMAGE_PERCENT = 2;
-	constexpr int32_t NAVAL_ORGANISATION_DAMAGE_PERCENT = 8;
-
-	void calculate_naval_side(NavalSide& side) {
-		const fixed_point_t min_org_factor = fixed_point_t(3) / 10;
+	void calculate_naval_side(NavalSide& side, OpenVicWarDefines const& wd) {
+		const fixed_point_t min_org_factor = wd.min_organisation_factor.fixed();
 		side.power = fixed_point_t::_0;
 		side.organisation = fixed_point_t::_0;
 		side.max_organisation = fixed_point_t::_0;
@@ -922,7 +920,7 @@ namespace {
 		}
 	}
 
-	void apply_naval_damage(NavalSide& target, const fixed_point_t enemy_power) {
+	void apply_naval_damage(NavalSide& target, const fixed_point_t enemy_power, OpenVicWarDefines const& wd) {
 		if (target.ship_count == 0) {
 			return;
 		}
@@ -935,12 +933,12 @@ namespace {
 				}
 				// A thin hull takes the full force, a thick one a part of it (at most 6 times the damage); evasion avoids some hits
 				const fixed_point_t hull = std::max(ship.get_ship_type().hull, fixed_point_t::_1);
-				fixed_point_t ratio = average_power / hull / (fixed_point_t::_1 + ship.get_ship_type().evasion / 10);
-				ratio = std::min(ratio, fixed_point_t(6));
-				const int32_t rout_factor = ship.get_organisation() > fixed_point_t::_0 ? 1 : 3;
+				fixed_point_t ratio = average_power / hull / (fixed_point_t::_1 + ship.get_ship_type().evasion / wd.naval_evasion_divisor);
+				ratio = std::min(ratio, fixed_point_t(wd.naval_max_damage_ratio));
+				const int32_t rout_factor = ship.get_organisation() > fixed_point_t::_0 ? 1 : wd.rout_strength_multiplier;
 				ship.take_damage(
-					ship.get_max_organisation() * ratio * NAVAL_ORGANISATION_DAMAGE_PERCENT / 100,
-					ship.get_max_strength() * ratio * NAVAL_STRENGTH_DAMAGE_PERCENT * rout_factor / 100
+					ship.get_max_organisation() * ratio * wd.naval_organisation_damage.numerator / Rate::DENOMINATOR,
+					ship.get_max_strength() * ratio * wd.naval_strength_damage.numerator * rout_factor / Rate::DENOMINATOR
 				);
 			}
 		}
@@ -967,6 +965,7 @@ namespace {
 }
 
 void WarManager::update_naval_combat(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 
@@ -1015,19 +1014,19 @@ void WarManager::update_naval_combat(InstanceManager& instance_manager) {
 			}
 		}
 
-		calculate_naval_side(side_a);
-		calculate_naval_side(side_b);
+		calculate_naval_side(side_a, wd);
+		calculate_naval_side(side_b, wd);
 		if (side_a.ship_count == 0 || side_b.ship_count == 0) {
 			continue;
 		}
 		const fixed_point_t power_a = side_a.power;
 		const fixed_point_t power_b = side_b.power;
-		apply_naval_damage(side_b, power_a);
-		apply_naval_damage(side_a, power_b);
-		calculate_naval_side(side_a);
-		calculate_naval_side(side_b);
+		apply_naval_damage(side_b, power_a, wd);
+		apply_naval_damage(side_a, power_b, wd);
+		calculate_naval_side(side_a, wd);
+		calculate_naval_side(side_b, wd);
 
-		const fixed_point_t rout_threshold = fixed_point_t(1) / 10;
+		const fixed_point_t rout_threshold = wd.rout_threshold.fixed();
 		const bool routed_a = side_a.ship_count == 0 || side_a.get_organisation_ratio() < rout_threshold;
 		const bool routed_b = side_b.ship_count == 0 || side_b.get_organisation_ratio() < rout_threshold;
 
@@ -1050,11 +1049,11 @@ void WarManager::update_naval_combat(InstanceManager& instance_manager) {
 			CountryInstance const& winner_country = winner.navies.front()->get_country();
 			CountryInstance const& loser_country = loser.navies.front()->get_country();
 			if (War* const war = find_war_between(winner_country, loser_country); war != nullptr) {
-				const fixed_point_t gain = fixed_point_t::_1 + fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser.navies.size() * 2, 12))) / 4;
+				const fixed_point_t gain = fixed_point_t::_1 + fixed_point_t(static_cast<int32_t>(std::min<size_t>(loser.navies.size() * static_cast<size_t>(wd.naval_battle_score_ship_factor), static_cast<size_t>(wd.naval_battle_score_ship_cap)))) / wd.battle_score_regiment_divisor;
 				fixed_point_t& score = war->is_attacker(winner_country) ? war->attacker_battle_score : war->defender_battle_score;
 				score += gain;
-				if (score > MAX_BATTLE_SCORE) {
-					score = fixed_point_t(MAX_BATTLE_SCORE);
+				if (score > wd.max_battle_score) {
+					score = fixed_point_t(wd.max_battle_score);
 				}
 			}
 		}
@@ -1113,10 +1112,11 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	// Share of the maximum strength lost each day outside of the own lands, and extra for armies without supplies
-	const fixed_point_t base_attrition = fixed_point_t(2) / 1000;
-	const fixed_point_t supply_attrition = fixed_point_t(3) / 1000;
+	OpenVicWarDefines const& wd = get_war_defines();
+	const fixed_point_t base_attrition = wd.attrition_base.fixed();
+	const fixed_point_t supply_attrition = wd.attrition_no_supply.fixed();
 	// Attrition never kills a regiment: it stops at this share of the strength
-	const fixed_point_t floor_share = fixed_point_t(1) / 5;
+	const fixed_point_t floor_share = wd.attrition_floor_strength.fixed();
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
 		if (province.get_armies().empty() || province.province_definition.is_water()) {
@@ -1133,7 +1133,7 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 			const bool friendly = owner == &country || (owner != nullptr && country.has_alliance_with(*owner));
 			// Only countries at war need supplies, a blockade of the ports cuts them
 			fixed_point_t supply = country.is_at_war() ? country.get_army_supply_ratio() : fixed_point_t::_1;
-			supply -= get_blockade_share(country) / 2;
+			supply -= get_blockade_share(country) / wd.blockade_supply_divisor;
 			if (supply < fixed_point_t::_0) {
 				supply = fixed_point_t::_0;
 			}
@@ -1143,7 +1143,7 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 				rate += base_attrition;
 			}
 			if (supply < fixed_point_t::_1) {
-				rate += supply_attrition * (fixed_point_t::_1 - supply) * (friendly ? fixed_point_t::_0_50 : fixed_point_t::_1);
+				rate += supply_attrition * (fixed_point_t::_1 - supply) * (friendly ? wd.attrition_friendly_multiplier.fixed() : fixed_point_t::_1);
 			}
 			if (rate <= fixed_point_t::_0) {
 				continue;

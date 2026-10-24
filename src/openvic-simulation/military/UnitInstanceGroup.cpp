@@ -52,12 +52,6 @@ void UnitInstanceGroup::update_gamestate() {
 	}
 }
 
-namespace {
-	// Movement points gained per day = slowest unit's maximum_speed * this scale. A typical province-to-province
-	// distance is a few tens of map units, so infantry (speed ~4) needs a handful of days per province.
-	constexpr int32_t MOVEMENT_SPEED_SCALE = 3;
-}
-
 bool UnitInstanceGroup::can_country_enter(CountryInstance const& country, ProvinceInstance const& province) {
 	CountryInstance const* const owner = province.get_owner();
 	CountryInstance const* const controller = province.get_controller();
@@ -90,11 +84,6 @@ bool UnitInstanceGroup::can_navy_enter(CountryInstance const& country, ProvinceI
 		|| country.has_military_access_to(*owner);
 }
 
-namespace {
-	// Distance used between a port and its sea, they are not connected by a measured adjacency
-	constexpr int32_t PORT_STEP_DISTANCE = 10;
-}
-
 fixed_point_t UnitInstanceGroup::get_step_distance(ProvinceInstance const& from, ProvinceInstance const& to) const {
 	ProvinceDefinition::adjacency_t const* const adjacency = from.province_definition.get_adjacency_to(to.province_definition);
 	if (branch == LAND) {
@@ -112,7 +101,7 @@ fixed_point_t UnitInstanceGroup::get_step_distance(ProvinceInstance const& from,
 	if (!port.has_port() || port.get_port_adjacent_province() != &sea) {
 		return fixed_point_t(-1);
 	}
-	return adjacency != nullptr ? adjacency->get_distance() : fixed_point_t(PORT_STEP_DISTANCE);
+	return adjacency != nullptr ? adjacency->get_distance() : fixed_point_t(war_defines->port_step_distance);
 }
 
 void UnitInstanceGroup::set_path(memory::vector<std::reference_wrapper<ProvinceInstance>>&& new_path) {
@@ -153,7 +142,7 @@ void UnitInstanceGroup::tick() {
 
 	const fixed_point_t speed = get_movement_speed();
 
-	movement_progress += speed * MOVEMENT_SPEED_SCALE;
+	movement_progress += speed * war_defines->movement_speed_scale;
 
 	if (movement_progress >= step_distance) {
 		movement_progress -= step_distance;
@@ -368,7 +357,7 @@ int32_t UnitInstanceGroup::get_movement_days_left() const {
 		from = &to;
 	}
 
-	const fixed_point_t per_day = get_movement_speed() * MOVEMENT_SPEED_SCALE;
+	const fixed_point_t per_day = get_movement_speed() * war_defines->movement_speed_scale;
 	if (remaining <= fixed_point_t::_0) {
 		return 1;
 	}
@@ -452,7 +441,7 @@ size_t UnitInstanceGroupBranched<NAVAL>::get_transport_capacity() const {
 	size_t capacity = 0;
 	for (ShipInstance const& ship : get_ship_instances()) {
 		if (ship.get_ship_type().is_transport) {
-			capacity += REGIMENTS_PER_TRANSPORT;
+			capacity += static_cast<size_t>(war_defines->regiments_per_transport);
 		}
 	}
 	return capacity;
@@ -522,7 +511,7 @@ bool UnitInstanceGroupBranched<NAVAL>::land_army(ArmyInstance& army, ProvinceIns
 	army.set_location(target);
 	// The men are tired after the landing
 	for (RegimentInstance& regiment : army.get_regiment_instances()) {
-		regiment.take_damage(regiment.get_organisation() * (LANDING_ORGANISATION_DIVISOR - 1) / LANDING_ORGANISATION_DIVISOR, fixed_point_t::_0);
+		regiment.take_damage(regiment.get_organisation() * (war_defines->landing_organisation_divisor - 1) / war_defines->landing_organisation_divisor, fixed_point_t::_0);
 	}
 	army.reset_dig_in();
 	return true;
