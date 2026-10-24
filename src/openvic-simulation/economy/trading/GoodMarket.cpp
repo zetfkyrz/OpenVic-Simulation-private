@@ -268,9 +268,15 @@ void GoodMarket::execute_orders(
 					}
 				}
 			} else {
-				//TODO use Victoria 2's square root mechanic, see https://github.com/OpenVicProject/OpenVic/issues/288
+				// The price follows the quantities that are wanted and offered, as in Victoria 2: more is wanted than offered, it
+				// rises, more is offered than wanted, it falls (by the step of a day). The money the buyers have does not
+				// matter for the direction: before, a good that is wanted far more than it is offered, but whose buyers
+				// could not pay for all of it (their money was short), kept the same price for ever.
+				//TODO use Victoria 2's square root mechanic for the size of the step, see https://github.com/OpenVicProject/OpenVic/issues/288
 				if (supply_sum > demand_sum) {
 					new_price = min_next_price;
+				} else if (demand_sum > supply_sum) {
+					new_price = max_next_price;
 				} else {
 					new_price = price;
 				}

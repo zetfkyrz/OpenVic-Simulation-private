@@ -19,7 +19,8 @@ namespace OpenVic {
 		inline constexpr int FORMAT_VERSION = 2;
 		// Raise it when a change of the rules of the simulation makes the old replays end in another state
 		// 2: artisans get the whole revenue of their sales (the cost of the inputs was lost), see docs/BUGS_FIXED.md
-		inline constexpr int SIMULATION_VERSION = 2;
+		// 3: prices rise when more is wanted than offered even if the buyers are short of money (stuck prices)
+		inline constexpr int SIMULATION_VERSION = 3;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
