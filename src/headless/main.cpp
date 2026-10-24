@@ -42,6 +42,7 @@
 #include <openvic-simulation/testing/Testing.hpp>
 #include <openvic-simulation/utility/Logger.hpp>
 
+#include "BalanceReport.hpp"
 #include "SelfTest.hpp"
 
 using namespace OpenVic;
@@ -80,6 +81,10 @@ static bool money_ledger_report = false, close_all_factories = false;
 static bool run_selftest = false, run_selftest_pure = false;
 // -C: print the CHECKSUM after every day of the economy report (to find the first day two builds differ)
 static bool checksum_every_day = false;
+// -o group.KEY=value (repeated): overrides a value of openvic_defines.lua for this run (for calibration experiments)
+static std::vector<std::string> defines_overrides;
+// -B: the BALANCE report (every 30 days), -G: also the line of every good
+static bool balance_report = false, balance_goods = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -1071,6 +1076,30 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		SPDLOG_INFO("Testing Executed");
 	}
 
+	if (!defines_overrides.empty()) {
+		OpenVicDefines& openvic_defines = const_cast<DefineManager&>(game_manager.get_definition_manager().get_define_manager()).get_mutable_openvic_defines();
+		for (std::string const& override_text : defines_overrides) {
+			const size_t dot = override_text.find('.');
+			const size_t equals = override_text.find('=');
+			if (dot == std::string::npos || equals == std::string::npos || dot > equals) {
+				spdlog::error_s("Wrong -o \"{}\": use group.KEY=value", override_text);
+				return false;
+			}
+			bool found = false;
+			for (OpenVicDefineGroup* group : openvic_defines.get_groups()) {
+				if (group->get_name() == std::string_view { override_text }.substr(0, dot)) {
+					group->set_value("command line", std::string_view { override_text }.substr(dot + 1, equals - dot - 1), std::string_view { override_text }.substr(equals + 1));
+					found = true;
+				}
+			}
+			if (!found) {
+				spdlog::error_s("Unknown group in -o \"{}\"", override_text);
+				return false;
+			}
+		}
+		openvic_defines.update_hash();
+	}
+
 	if (run_selftest) {
 		auto const& test_bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
 		if (bookmark_index >= test_bookmarks.size()) {
@@ -1268,6 +1297,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		if (money_ledger_report) {
 			instance_manager.get_money_ledger().enable(instance_manager);
 		}
+		BalanceReport balance;
 		if (subsidise_all) {
 			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
@@ -1281,12 +1311,18 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			if (checksum_every_day) {
 				print_state_checksum(instance_manager);
 			}
+			if (balance_report) {
+				balance.update(instance_manager);
+			}
 			if (research_test && day % 5 == 0) {
 				run_research_step(instance_manager, day % 90 == 0);
 			}
 			if (day % 30 == 0) {
 				if (money_ledger_report) {
 					fmt::println("{}", instance_manager.get_money_ledger().report(instance_manager));
+				}
+				if (balance_report) {
+					balance.print(instance_manager, balance_goods);
 				}
 				print_economy_report(instance_manager);
 				print_population_report(instance_manager);
@@ -1381,6 +1417,12 @@ int main(int argc, char const* argv[]) {
 			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {
 			politics_report = true;
+		} else if (strcmp(arg, "-o") == 0 && argn + 1 < argc) {
+			defines_overrides.emplace_back(argv[++argn]);
+		} else if (strcmp(arg, "-B") == 0) {
+			balance_report = true;
+		} else if (strcmp(arg, "-G") == 0) {
+			balance_report = balance_goods = true;
 		} else if (strcmp(arg, "-C") == 0) {
 			checksum_every_day = true;
 		} else if (strcmp(arg, "--selftest") == 0) {
