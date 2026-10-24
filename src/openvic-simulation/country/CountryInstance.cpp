@@ -2150,7 +2150,7 @@ void CountryInstance::country_tick_before_map(
 
 void CountryInstance::calculate_government_good_needs() {
 	// Days of supplies the government tries to keep in the national stockpile
-	constexpr int32_t DAYS_OF_SUPPLY = 10;
+	const int32_t DAYS_OF_SUPPLY = openvic_economy_defines->supply_reserve_days;
 
 	// Army and navy: every unit uses a share (its supply_consumption) of its supply_cost goods per day, scaled by the
 	// army/navy spending slider. The goods come out of the national stockpile and the government keeps a reserve of them.
@@ -2202,8 +2202,8 @@ void CountryInstance::calculate_government_good_needs() {
 					good_data_t& good_data = goods_data.at_index(good->index);
 					// Consumed by the factory when it builds, so it only has to be kept in the stockpile
 					const fixed_point_t daily_need = factory.get_daily_construction_goods(*good) * construction_slider;
-					good_data.government_needs += daily_need * 5;
-					good_data.max_government_consumption += daily_need * 5;
+					good_data.government_needs += daily_need * openvic_economy_defines->construction_reserve_days;
+					good_data.max_government_consumption += daily_need * openvic_economy_defines->construction_reserve_days;
 				}
 			}
 		}

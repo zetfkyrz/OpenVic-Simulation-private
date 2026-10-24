@@ -5,6 +5,7 @@
 
 #include <fmt/base.h>
 
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/core/memory/SmartPtr.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
@@ -105,6 +106,13 @@ namespace OpenVic {
 			COUNTRY_STATUS_UNCIVILISED,
 			COUNTRY_STATUS_PRIMITIVE
 		};
+
+		// The reserve of goods the government keeps in the national stockpile is set in the group ov_economy of the
+		// defines; the pointer is set by the InstanceManager (the defines outlive all instances)
+		static inline OpenVicEconomyDefines const* openvic_economy_defines = nullptr;
+		static void set_openvic_economy_defines(OpenVicEconomyDefines const& defines) {
+			openvic_economy_defines = &defines;
+		}
 
 		// Thresholds for different uncivilised country statuses
 		static constexpr fixed_point_t PRIMITIVE_CIVILISATION_PROGRESS = fixed_point_t(15) / 100;
