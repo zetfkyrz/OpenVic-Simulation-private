@@ -355,9 +355,10 @@ namespace OpenVic {
 		std::uint64_t hash = 0;
 		bool file_loaded = false;
 
+	public:
+		// Computes the hash again after values were changed (load_file does it itself)
 		void update_hash();
 
-	public:
 		OpenVicAIDefines ai;
 		OpenVicPopulationDefines population;
 		OpenVicPoliticsDefines politics;

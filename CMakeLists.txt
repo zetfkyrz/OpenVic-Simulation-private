@@ -130,6 +130,15 @@ if(OPENVIC_SIM_BUILD_HEADLESS)
             OUTPUT_NAME "openvic-simulation.headless"
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/$<CONFIG>"
     )
+
+    # Self tests of the OpenVic additions (src/headless/SelfTest.cpp). The first needs no game files; the second runs
+    # on a real game when OPENVIC_VIC2_PATH (folder of Victoria 2) is set when CMake is configured.
+    # One command for everything: python tools/run_tests.py (in the root of the OpenVic repository)
+    enable_testing()
+    add_test(NAME openvic-selftest-pure COMMAND openvic-simulation-headless --selftest-pure)
+    if(DEFINED ENV{OPENVIC_VIC2_PATH})
+        add_test(NAME openvic-selftest COMMAND openvic-simulation-headless -b "$ENV{OPENVIC_VIC2_PATH}" --selftest)
+    endif()
 endif()
 
 if(OPENVIC_SIM_BUILD_TESTS OR OPENVIC_SIM_BUILD_BENCHMARKS)

@@ -153,6 +153,15 @@ namespace OpenVic {
 		void end_phase(InstanceManager& instance_manager, std::string const& phase);
 		void end_day(InstanceManager& instance_manager);
 
+		// For the tests: the total of a label since the ledger was switched on (raw fixed point, credits positive)
+		std::int64_t get_flow_total_raw(label_t label) const;
+		// The sum of the changes of the holders by the hooks, and the change of the money that was measured (raw)
+		std::int64_t get_holder_sum_raw() const;
+		std::int64_t get_measured_change_raw(InstanceManager& instance_manager) const;
+		std::int64_t get_days() const {
+			return days;
+		}
+
 		// Text of the report: money by holder, change per phase and per label since the last report, yearly growth
 		std::string report(InstanceManager& instance_manager);
 	};

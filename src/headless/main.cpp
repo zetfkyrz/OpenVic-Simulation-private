@@ -42,6 +42,8 @@
 #include <openvic-simulation/testing/Testing.hpp>
 #include <openvic-simulation/utility/Logger.hpp>
 
+#include "SelfTest.hpp"
+
 using namespace OpenVic;
 
 inline static void print_memory_usage( //
@@ -74,6 +76,10 @@ static std::string replay_save_path, replay_load_path;
 static std::string defines_dump_path;
 // -M: follow the money of the economy (MoneyLedger), -N: close all the factories before the economy report
 static bool money_ledger_report = false, close_all_factories = false;
+// --selftest: the self tests (SelfTest.hpp), --selftest-pure: only those that need no game files
+static bool run_selftest = false, run_selftest_pure = false;
+// -C: print the CHECKSUM after every day of the economy report (to find the first day two builds differ)
+static bool checksum_every_day = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -1065,6 +1071,15 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		SPDLOG_INFO("Testing Executed");
 	}
 
+	if (run_selftest) {
+		auto const& test_bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
+		if (bookmark_index >= test_bookmarks.size()) {
+			spdlog::error_s("Invalid bookmark index {}", bookmark_index);
+			return false;
+		}
+		return ret & run_data_selftests(game_manager, test_bookmarks[bookmark_index]);
+	}
+
 	SPDLOG_INFO("===== Setting up instance... =====");
 	auto const& bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
 	if (bookmark_index >= bookmarks.size()) {
@@ -1263,6 +1278,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		print_population_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
+			if (checksum_every_day) {
+				print_state_checksum(instance_manager);
+			}
 			if (research_test && day % 5 == 0) {
 				run_research_step(instance_manager, day % 90 == 0);
 			}
@@ -1306,6 +1324,13 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 */
 
 int main(int argc, char const* argv[]) {
+	// The tests that need no game files run before anything is loaded
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--selftest-pure") == 0) {
+			return run_pure_selftests() ? 0 : 1;
+		}
+	}
+
 	std::string_view program_name = get_filename(argc > 0 ? argv[0] : "", "<program>");
 	fs::path root;
 	memory::vector<memory::string> mods;
@@ -1356,6 +1381,12 @@ int main(int argc, char const* argv[]) {
 			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {
 			politics_report = true;
+		} else if (strcmp(arg, "-C") == 0) {
+			checksum_every_day = true;
+		} else if (strcmp(arg, "--selftest") == 0) {
+			run_selftest = true;
+		} else if (strcmp(arg, "--selftest-pure") == 0) {
+			run_selftest_pure = true;
 		} else if (strcmp(arg, "-M") == 0) {
 			money_ledger_report = true;
 		} else if (strcmp(arg, "-N") == 0) {
@@ -1404,7 +1435,15 @@ int main(int argc, char const* argv[]) {
 
 	SPDLOG_INFO("!!! HEADLESS SIMULATION START !!!");
 
-	const bool ret = run_headless(root, mods, run_tests);
+	bool pure_tests_ok = true;
+	if (run_selftest || run_selftest_pure) {
+		pure_tests_ok = run_pure_selftests();
+		if (run_selftest_pure) {
+			return pure_tests_ok ? 0 : -1;
+		}
+	}
+
+	const bool ret = run_headless(root, mods, run_tests) && pure_tests_ok;
 
 	SPDLOG_INFO("!!! HEADLESS SIMULATION END !!!");
 

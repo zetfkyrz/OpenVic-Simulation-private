@@ -101,6 +101,34 @@ void MoneyLedger::end_day(InstanceManager& instance_manager) {
 	(void)instance_manager;
 }
 
+namespace {
+	// Labels that only describe one side of a payment that is also counted at the holder (market, gross incomes, ...)
+	bool is_holder_label(const std::size_t i) {
+		const std::string_view name = label_names[i];
+		return !(name.starts_with("market_") || name.starts_with("gross_income_") || name == "pop_tax_paid" || name == "rgo_revenue"
+			|| name == "gold_worker_pay" || name.starts_with("sell_callbacks_") || name.starts_with("buy_callbacks_"));
+	}
+}
+
+std::int64_t MoneyLedger::get_flow_total_raw(const label_t label) const {
+	const std::size_t i = static_cast<std::size_t>(label);
+	return flow_totals[i] + flows[i].load(std::memory_order_relaxed);
+}
+
+std::int64_t MoneyLedger::get_holder_sum_raw() const {
+	std::int64_t sum = 0;
+	for (std::size_t i = 0; i < LABEL_COUNT; ++i) {
+		if (is_holder_label(i)) {
+			sum += flow_totals[i] + flows[i].load(std::memory_order_relaxed);
+		}
+	}
+	return sum;
+}
+
+std::int64_t MoneyLedger::get_measured_change_raw(InstanceManager& instance_manager) const {
+	return measure(instance_manager).total().get_raw_value() - start_total;
+}
+
 std::string MoneyLedger::report(InstanceManager& instance_manager) {
 	const Totals now = measure(instance_manager);
 	const double total = to_double(now.total().get_raw_value());
@@ -115,19 +143,7 @@ std::string MoneyLedger::report(InstanceManager& instance_manager) {
 	for (auto const& [name, delta] : phase_totals) {
 		text += fmt::format(" {}={:+.1f}", name, days > 0 ? to_double(delta) / static_cast<double>(days) : 0.0);
 	}
-	// Labels that only describe one side of a payment that is also counted at the holder (market, gross incomes, ...)
-	const auto is_holder_label = [](const std::size_t i) -> bool {
-		const std::string_view name = label_names[i];
-		return !(name.starts_with("market_") || name.starts_with("gross_income_") || name == "pop_tax_paid" || name == "rgo_revenue"
-			|| name == "gold_worker_pay" || name.starts_with("sell_callbacks_") || name.starts_with("buy_callbacks_"));
-	};
-	std::int64_t holder_sum = 0;
-	for (std::size_t i = 0; i < LABEL_COUNT; ++i) {
-		const std::int64_t raw = flow_totals[i] + flows[i].load(std::memory_order_relaxed);
-		if (is_holder_label(i)) {
-			holder_sum += raw;
-		}
-	}
+	const std::int64_t holder_sum = get_holder_sum_raw();
 	const std::int64_t measured = now.total().get_raw_value() - start_total;
 	text += fmt::format(
 		"\nMONEY balance per day: change of the total {:+.1f}, sum of the changes of the holders {:+.1f}, not explained by the hooks {:+.1f}",
