@@ -4,6 +4,7 @@
 
 #include <fmt/base.h>
 
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/economy/credit/Credit.hpp"
 #include "openvic-simulation/core/memory/Colony.hpp"
 #include "openvic-simulation/core/memory/FixedVector.hpp"
@@ -92,6 +93,7 @@ namespace OpenVic {
 		}
 		void add_to_capitalist_fund(const fixed_point_t amount) {
 			capitalist_fund += amount;
+			MoneyLedger::record(MoneyLedger::label_t::capitalist_fund_in, amount);
 		}
 		// The money the capitalists can spend on a purpose: savings plus the unspent money of the loans that allow it
 		fixed_point_t get_capitalist_money(Loan::purpose_t purpose, std::int32_t construction_days) const;
@@ -100,6 +102,7 @@ namespace OpenVic {
 		fixed_point_t take_from_capitalist_fund(const fixed_point_t amount) {
 			const fixed_point_t taken = amount < capitalist_fund ? amount : capitalist_fund;
 			capitalist_fund -= taken;
+			MoneyLedger::record(MoneyLedger::label_t::capitalist_fund_out, -taken);
 			return taken > fixed_point_t::_0 ? taken : fixed_point_t::_0;
 		}
 

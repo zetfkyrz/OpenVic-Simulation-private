@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
@@ -171,6 +172,7 @@ void FactoryInstance::after_sell(
 ) {
 	FactoryInstance& factory = *static_cast<FactoryInstance*>(actor);
 
+	MoneyLedger::record(MoneyLedger::label_t::sell_callbacks_factories, sell_result.money_gained);
 	factory.revenue_today += sell_result.money_gained;
 	factory.sold_quantity_today += sell_result.quantity_sold;
 }
@@ -179,6 +181,11 @@ void FactoryInstance::grant_starting_budget(MarketInstance const& market_instanc
 	// The factory starts with a small budget so that a first unprofitable days do not close it at once
 	budget += calculate_construction_cost(building_type, market_instance) * get_defines().starting_budget_share.fixed() *
 		static_cast<int32_t>(type_safe::get(levels));
+	MoneyLedger::record(
+		MoneyLedger::label_t::factory_starting_budget,
+		calculate_construction_cost(building_type, market_instance) * get_defines().starting_budget_share.fixed() *
+			static_cast<int32_t>(type_safe::get(levels))
+	);
 }
 
 void FactoryInstance::settle(State& state, MarketInstance const& market_instance) {
@@ -198,7 +205,11 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 
 	budget += revenue;
 	budget -= spent;
+	MoneyLedger::record(MoneyLedger::label_t::factory_revenue, revenue);
+	MoneyLedger::record(MoneyLedger::label_t::factory_spent, -spent);
 	if (budget < 0) {
+		// Money that the factory spent but did not have is created here
+		MoneyLedger::record(MoneyLedger::label_t::factory_budget_floor, -budget);
 		budget = 0;
 	}
 
@@ -231,6 +242,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		wages = 0;
 	}
 	budget -= wages;
+	MoneyLedger::record(MoneyLedger::label_t::factory_wages, -wages);
 
 	// Distribution of the profit
 	const fixed_point_t profit = revenue - consumed_value_pending - wages;
@@ -392,6 +404,7 @@ void FactoryInstance::pay_dividend(
 	}
 
 	budget -= capitalists_part + state_part;
+	MoneyLedger::record(MoneyLedger::label_t::factory_dividends, -(capitalists_part + state_part));
 	capitalists_income += capitalists_part;
 	state_income += state_part;
 }
@@ -415,6 +428,7 @@ void FactoryInstance::try_auto_expansion(const Date today, MarketInstance const&
 	}
 
 	expansion_fund -= cost;
+	MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -cost);
 	profitable_days = 0;
 	start_construction(today);
 }
@@ -587,6 +601,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 				const fixed_point_t paid = std::min(shortfall * state_fraction, treasury);
 				owner->spend_cash(paid);
 				budget += paid;
+				MoneyLedger::record(MoneyLedger::label_t::factory_subsidy, paid);
 				subsidy_today += paid;
 			}
 			if (capitalist_fraction > 0) {
@@ -594,6 +609,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 					shortfall * capitalist_fraction, Loan::purpose_t::LOSS_COVER, 0
 				);
 				budget += paid;
+				MoneyLedger::record(MoneyLedger::label_t::factory_private_cover, paid);
 				private_cover_today += paid;
 			}
 		}

@@ -2,6 +2,7 @@
 
 #include <type_safe/strong_typedef.hpp>
 
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/object/FixedPoint/Math.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
@@ -178,6 +179,8 @@ void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusabl
 void ResourceGatheringOperation::after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector) {
 	ResourceGatheringOperation& rgo = *static_cast<ResourceGatheringOperation*>(actor);
 	rgo.revenue_yesterday = sell_result.money_gained;
+	MoneyLedger::record(MoneyLedger::label_t::rgo_revenue, sell_result.money_gained);
+	MoneyLedger::record(MoneyLedger::label_t::sell_callbacks_rgo, sell_result.money_gained);
 	rgo.pay_employees(reusable_vector);
 }
 

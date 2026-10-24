@@ -1,3 +1,4 @@
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "MarketInstance.hpp"
 
 #include "openvic-simulation/core/object/FixedPoint.hpp"
@@ -63,6 +64,11 @@ void MarketInstance::place_market_sell_order(MarketSellOrder&& market_sell_order
 
 	GoodMarket& good_instance = *good_instance_manager.get_good_instance_by_index(good_index);
 	if (good_instance.good_definition.is_money) {
+		// Gold is not traded: its workers are paid with money that is created here
+		MoneyLedger::record(
+			MoneyLedger::label_t::gold_worker_pay,
+			quantity * country_defines.get_gold_to_worker_pay_rate() * good_instance.good_definition.base_price
+		);
 		market_sell_order.call_after_trade(
 			{
 				market_sell_order.good_index,

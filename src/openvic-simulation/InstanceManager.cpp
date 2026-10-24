@@ -199,15 +199,22 @@ void InstanceManager::tick() {
 	SPDLOG_INFO("Tick: {}", today);
 
 	// Tick...
+	money_ledger.begin_day(*this);
 	country_instance_manager.country_manager_tick_before_map();
+	money_ledger.end_phase(*this, "before_map");
 	map_instance.map_tick();
+	money_ledger.end_phase(*this, "map_tick");
 	map_instance.factory_tick(market_instance, today);
+	money_ledger.end_phase(*this, "factories");
 	market_instance.execute_orders();
+	money_ledger.end_phase(*this, "market");
 	country_instance_manager.country_manager_tick_after_map();
+	money_ledger.end_phase(*this, "after_map");
 	unit_instance_manager.tick();
 	war_manager.tick(*this);
 	credit_manager.tick(*this);
 	colonisation_manager.tick(*this);
+	money_ledger.end_phase(*this, "units_wars_credit");
 
 	if (today.is_month_start()) {
 		market_instance.record_price_history();
@@ -217,6 +224,8 @@ void InstanceManager::tick() {
 		ResearchDynamics::monthly_update(*this);
 		CountryAI::monthly_update(*this);
 	}
+	money_ledger.end_phase(*this, "monthly");
+	money_ledger.end_day(*this);
 }
 
 void InstanceManager::execute_game_actions() {

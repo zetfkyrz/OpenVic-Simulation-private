@@ -1,3 +1,4 @@
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "GoodMarket.hpp"
 
 #include <algorithm>
@@ -318,6 +319,7 @@ void GoodMarket::execute_orders(
 						fixed_point_t::epsilon //round up
 					);
 				}
+				MoneyLedger::record(MoneyLedger::label_t::market_sellers_get, money_gained);
 				market_sell_order.call_after_trade(
 					{
 						good_definition.index,
@@ -378,6 +380,7 @@ void GoodMarket::execute_orders(
 						fixed_point_t::epsilon //round up
 					);
 				}
+				MoneyLedger::record(MoneyLedger::label_t::market_sellers_get, money_gained);
 				market_sell_order.call_after_trade(
 					{
 						good_definition.index,
@@ -425,6 +428,7 @@ void GoodMarket::execute_buy_orders(
 				quantity_bought * new_price,
 				fixed_point_t::epsilon //we know from purchasing power that you can afford it.
 			);
+			MoneyLedger::record(MoneyLedger::label_t::market_buyers_pay, -money_spent_total);
 
 			fixed_point_t money_spent_on_imports;
 			const std::optional<country_index_t> country_index_optional = buy_up_to_order.country_index_optional;

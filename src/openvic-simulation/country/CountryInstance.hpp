@@ -6,6 +6,7 @@
 #include <fmt/base.h>
 
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/core/memory/SmartPtr.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
@@ -583,11 +584,13 @@ namespace OpenVic {
 		// Puts money into the national stockpile, e.g. the dividends of state owned factories
 		void add_cash(const fixed_point_t amount) {
 			cash_stockpile += amount;
+			MoneyLedger::record(MoneyLedger::label_t::country_other_credit, amount);
 			free_funds += amount;
 		}
 		// Takes money out of the national stockpile, e.g. to pay for construction
 		void spend_cash(const fixed_point_t amount) {
 			cash_stockpile -= amount;
+			MoneyLedger::record(MoneyLedger::label_t::country_other_debit, -amount);
 			free_funds -= amount;
 		}
 		// The money that is not committed to the budget and the national stockpile purchases of the day: what can be

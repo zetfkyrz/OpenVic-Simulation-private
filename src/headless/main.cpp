@@ -72,6 +72,8 @@ static bool research_test = false;
 static std::string replay_save_path, replay_load_path;
 // -D <file>: write an example common/openvic_defines.lua with all the keys and their current values
 static std::string defines_dump_path;
+// -M: follow the money of the economy (MoneyLedger), -N: close all the factories before the economy report
+static bool money_ledger_report = false, close_all_factories = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -1242,6 +1244,15 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			instance_manager.force_tick_and_update();
 			print_tariff_report(instance_manager);
 		}
+		if (close_all_factories) {
+			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				instance_manager.queue_game_action<set_all_factories_open_argument_t>(country.index, false);
+			}
+			instance_manager.force_tick_and_update();
+		}
+		if (money_ledger_report) {
+			instance_manager.get_money_ledger().enable(instance_manager);
+		}
 		if (subsidise_all) {
 			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
@@ -1256,6 +1267,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 				run_research_step(instance_manager, day % 90 == 0);
 			}
 			if (day % 30 == 0) {
+				if (money_ledger_report) {
+					fmt::println("{}", instance_manager.get_money_ledger().report(instance_manager));
+				}
 				print_economy_report(instance_manager);
 				print_population_report(instance_manager);
 				if (politics_report) {
@@ -1342,6 +1356,10 @@ int main(int argc, char const* argv[]) {
 			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {
 			politics_report = true;
+		} else if (strcmp(arg, "-M") == 0) {
+			money_ledger_report = true;
+		} else if (strcmp(arg, "-N") == 0) {
+			close_all_factories = true;
 		} else if (strcmp(arg, "-R") == 0) {
 			recommended_rules = true;
 		} else if (strcmp(arg, "-T") == 0) {

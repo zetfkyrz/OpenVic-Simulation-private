@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <vector>
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/misc/Replay.hpp"
 
 #include <utility>
@@ -65,6 +66,8 @@ namespace OpenVic {
 		CountryInstanceManager PROPERTY_REF(country_instance_manager);
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
+		// Debugging tool: follows the money of the economy (off unless switched on, see MoneyLedger.hpp)
+		MoneyLedger PROPERTY_REF(money_ledger);
 		NotificationLog PROPERTY_REF(notification_log);
 		ColonisationManager PROPERTY_REF(colonisation_manager);
 		CreditManager PROPERTY_REF(credit_manager);
