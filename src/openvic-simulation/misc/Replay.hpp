@@ -21,7 +21,8 @@ namespace OpenVic {
 		// 2: artisans get the whole revenue of their sales (the cost of the inputs was lost), see docs/BUGS_FIXED.md
 		// 3: prices rise when more is wanted than offered even if the buyers are short of money (stuck prices)
 		// 4: the revenue an artisan compares with its costs is yesterday's, not the sum over the whole game (artisans never changed type)
-		inline constexpr int SIMULATION_VERSION = 4;
+		// 5: a price rises only if the buyers can pay the whole supply, otherwise it falls (stuck prices, run-away scarce goods)
+		inline constexpr int SIMULATION_VERSION = 5;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -268,18 +268,12 @@ void GoodMarket::execute_orders(
 					}
 				}
 			} else {
-				// The price follows the quantities that are wanted and offered, as in Victoria 2: more is wanted than offered, it
-				// rises, more is offered than wanted, it falls (by the step of a day). The money the buyers have does not
-				// matter for the direction: before, a good that is wanted far more than it is offered, but whose buyers
-				// could not pay for all of it (their money was short), kept the same price for ever.
+				// Only the demand that can be paid moves the price up (the branch above: the buyers can afford the whole supply at the
+				// highest price of the day). When they cannot, the price falls by the step of a day, whatever they want. Before, a good
+				// that was wanted more than offered but could not be paid for kept the same price for ever (stuck prices), and
+				// counting the unpaid demand instead made the prices of everything that is scarce run to the upper bound.
 				//TODO use Victoria 2's square root mechanic for the size of the step, see https://github.com/OpenVicProject/OpenVic/issues/288
-				if (supply_sum > demand_sum) {
-					new_price = min_next_price;
-				} else if (demand_sum > supply_sum) {
-					new_price = max_next_price;
-				} else {
-					new_price = price;
-				}
+				new_price = min_next_price;
 			}
 
 			//figure out how much every buyer bought
