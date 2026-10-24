@@ -817,6 +817,40 @@ bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t 
 	return true;
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_factory_priority_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, priority] = argument;
+	if (OV_unlikely(priority > 2)) {
+		return false;
+	}
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	FactoryInstance* factory = target.state->find_factory(*target.building_type);
+	if (factory == nullptr || factory->get_priority() == priority) {
+		return false;
+	}
+
+	factory->set_priority(priority);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_factory_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	FactoryInstance* factory = target.state->find_factory(*target.building_type);
+	return factory != nullptr && target.state->remove_factory(*factory);
+}
+
 // Army management
 namespace {
 	// The land regiment and the army that it is in

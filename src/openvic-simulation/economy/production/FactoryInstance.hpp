@@ -77,6 +77,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY_RW(state_share);
 		// Whether the factory was built by the state (otherwise by capitalists / the game setup)
 		bool PROPERTY_RW_CUSTOM_NAME(built_by_state, was_built_by_state, set_built_by_state, false);
+		// Hiring order inside a state: factories with a higher priority hire first (0 low, 1 normal, 2 high)
+		std::uint32_t PROPERTY_RW(priority, 1);
 		// A subsidised factory keeps running at a loss: its own budget is used first, and the state treasury pays only
 		// the part of the purchases the budget cannot cover
 		bool PROPERTY_CUSTOM_PREFIX(subsidised, is, false);

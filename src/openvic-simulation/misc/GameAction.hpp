@@ -97,6 +97,8 @@ X(set_all_factories_open, country_index_t, bool) \
 X(set_all_factories_subsidised, country_index_t, bool) \
 X(expand_all_factories, country_index_t) \
 X(set_subsidy_mode, country_index_t, std::uint32_t) \
+X(set_factory_priority, country_index_t, province_index_t, building_type_index_t, std::uint32_t) \
+X(delete_factory, country_index_t, province_index_t, building_type_index_t) \
 X(stage_credit_country, country_index_t, country_index_t, bool) \
 X(stage_credit_region, country_index_t, province_index_t, bool) \
 X(offer_internal_credit, country_index_t, fixed_point_t, fixed_point_t, std::uint32_t, bool) \

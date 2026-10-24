@@ -1,5 +1,7 @@
 #include "MapInstance.hpp"
 
+#include <algorithm>
+
 #include <functional>
 #include <optional>
 #include <tuple>
@@ -187,8 +189,16 @@ void MapInstance::map_tick() {
 void MapInstance::factory_tick(MarketInstance& market_instance, const Date today) {
 	for (StateSet& state_set : state_manager.get_mutable_state_sets()) {
 		for (State& state : state_set.get_mutable_states()) {
+			// Factories with a higher priority hire first (the order is stable: the same priority keeps the order of the state)
+			memory::vector<FactoryInstance*> factories;
 			for (FactoryInstance& factory : state.get_mutable_factories()) {
-				factory.tick(state, market_instance, today);
+				factories.push_back(&factory);
+			}
+			std::stable_sort(factories.begin(), factories.end(), [](FactoryInstance const* lhs, FactoryInstance const* rhs) -> bool {
+				return lhs->get_priority() > rhs->get_priority();
+			});
+			for (FactoryInstance* factory : factories) {
+				factory->tick(state, market_instance, today);
 			}
 		}
 	}

@@ -264,3 +264,25 @@ FactoryInstance* State::add_factory(BuildingType const& building_type, const bui
 
 	return &*factories.emplace(building_type, *building_type.production_type, level);
 }
+
+bool State::remove_factory(FactoryInstance& factory) {
+	for (auto it = factories.begin(); it != factories.end(); ++it) {
+		if (&*it != &factory) {
+			continue;
+		}
+		const fixed_point_t money = factory.get_budget() + factory.get_expansion_fund();
+		if (money > fixed_point_t::_0) {
+			const fixed_point_t state_part = money * factory.get_state_share();
+			CountryInstance* const owner = get_owner();
+			if (owner != nullptr && state_part > fixed_point_t::_0) {
+				owner->add_cash(state_part);
+				add_to_capitalist_fund(money - state_part);
+			} else {
+				add_to_capitalist_fund(money);
+			}
+		}
+		factories.erase(it);
+		return true;
+	}
+	return false;
+}

@@ -12,8 +12,11 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
+#include <openvic-simulation/economy/GoodInstance.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
+#include <openvic-simulation/economy/BuildingType.hpp>
 #include <openvic-simulation/economy/credit/Credit.hpp>
+#include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
@@ -201,12 +204,19 @@ namespace {
 			if (country.get_total_rank() > 0 && country.get_total_rank() <= 12) {
 				instance_manager.queue_game_action<set_tariff_rate_argument_t>(country.index, fixed_point_t(1) / 4);
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
-				if (country.get_total_rank() == 1) {
-					instance_manager.queue_game_action<offer_external_credit_argument_t>(
-						country.index, fixed_point_t(2000), fixed_point_t(6) / 100, std::uint32_t(1), true
-					);
-				}
 			}
+		}
+		// The country with the most money (the lowest index among equals) offers a credit to everybody
+		CountryInstance const* richest = nullptr;
+		for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && (richest == nullptr || country.get_cash_stockpile().load() > richest->get_cash_stockpile().load())) {
+				richest = &country;
+			}
+		}
+		if (richest != nullptr) {
+			instance_manager.queue_game_action<offer_external_credit_argument_t>(
+				richest->index, fixed_point_t(2000), fixed_point_t(6) / 100, std::uint32_t(1), true
+			);
 		}
 		instance_manager.force_tick_and_update();
 	}
@@ -214,6 +224,47 @@ namespace {
 	void play(InstanceManager& instance_manager, const int days) {
 		for (int i = 0; i < days; ++i) {
 			instance_manager.force_tick_and_update();
+		}
+	}
+
+	// Plays the days and writes down the hash of every day (to find the first day two runs differ on)
+	struct DayDetails {
+		std::vector<std::int64_t> country_cash;
+		std::vector<std::int64_t> country_free;
+		std::int64_t pop_cash = 0, factory_budget = 0, capitalist_fund = 0, price_sum = 0;
+	};
+
+	DayDetails collect_details(InstanceManager& instance_manager) {
+		DayDetails details;
+		for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			details.country_cash.push_back(country.get_cash_stockpile().load().get_raw_value());
+		}
+		for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+			for (Pop& pop : province.get_mutable_pops()) {
+				details.pop_cash += pop.get_cash().get_copy_of_value().get_raw_value();
+			}
+		}
+		for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+			for (State const& state : state_set.get_states()) {
+				details.capitalist_fund += state.get_capitalist_fund().get_raw_value();
+				for (FactoryInstance const& factory : state.get_factories()) {
+					details.factory_budget += factory.get_budget().get_raw_value();
+				}
+			}
+		}
+		for (GoodInstance const& good : instance_manager.get_good_instance_manager().get_good_instances()) {
+			details.price_sum += good.get_price().get_raw_value();
+		}
+		return details;
+	}
+
+	std::vector<DayDetails> g_details_1, g_details_2;
+
+	void play_recording(InstanceManager& instance_manager, const int days, std::vector<std::uint64_t>& hashes, std::vector<DayDetails>& details) {
+		for (int i = 0; i < days; ++i) {
+			instance_manager.force_tick_and_update();
+			hashes.push_back(StateHash::compute(instance_manager));
+			details.push_back(collect_details(instance_manager));
 		}
 	}
 
@@ -470,6 +521,44 @@ namespace {
 		fmt::println("TEST INFO credit: after 150 days {} credits of AI lenders exist, {} external credits taken by AI countries", ai_offers, ai_taken);
 	}
 
+	void test_factory_actions(Results& r, InstanceManager& im) {
+		State* found_state = nullptr;
+		BuildingType const* found_type = nullptr;
+		for (StateSet& state_set : im.get_map_instance().get_state_manager().get_mutable_state_sets()) {
+			for (State& state : state_set.get_mutable_states()) {
+				if (found_state == nullptr && state.get_owner() != nullptr && state.get_capital() != nullptr
+					&& !state.get_factories().empty()) {
+					found_state = &state;
+					found_type = &state.get_factories().begin()->building_type;
+				}
+			}
+		}
+		r.check(found_state != nullptr, "factories: a state with a factory exists at the start");
+		if (found_state == nullptr) {
+			return;
+		}
+		CountryInstance& owner = *found_state->get_owner();
+		const province_index_t province = found_state->get_capital()->index;
+		const building_type_index_t type = found_type->index;
+
+		FactoryInstance* factory = found_state->find_factory(*found_type);
+		r.check(factory->get_priority() == 1, "factories: the default priority is normal");
+		im.queue_game_action<set_factory_priority_argument_t>(owner.index, province, type, std::uint32_t(2));
+		im.force_tick_and_update();
+		factory = found_state->find_factory(*found_type);
+		r.check(factory != nullptr && factory->get_priority() == 2, "factories: the priority of a factory can be raised");
+		im.queue_game_action<set_factory_priority_argument_t>(owner.index, province, type, std::uint32_t(7));
+		im.force_tick_and_update();
+		r.check(found_state->find_factory(*found_type)->get_priority() == 2, "factories: a wrong priority is refused");
+
+		const std::size_t before = found_state->get_factories().size();
+		im.queue_game_action<delete_factory_argument_t>(owner.index, province, type);
+		im.force_tick_and_update();
+		r.check(found_state->get_factories().size() + 1 == before && found_state->find_factory(*found_type) == nullptr,
+			"factories: a factory can be deleted by its owner");
+		play(im, 5);
+	}
+
 	void test_game(Results& r, Game& game) {
 		constexpr int FIRST_DAYS = 40;
 		constexpr int MORE_DAYS = 20;
@@ -483,7 +572,8 @@ namespace {
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);
-		play(*im, FIRST_DAYS);
+		std::vector<std::uint64_t> days_1, days_2;
+		play_recording(*im, FIRST_DAYS, days_1, g_details_1);
 		const std::uint64_t hash_1 = StateHash::compute(*im);
 		const std::string save_1 = Replay::serialise(im->get_action_history());
 		play(*im, MORE_DAYS);
@@ -498,8 +588,25 @@ namespace {
 			return;
 		}
 		give_orders(*im);
-		play(*im, FIRST_DAYS);
+		play_recording(*im, FIRST_DAYS, days_2, g_details_2);
 		const std::uint64_t hash_2 = StateHash::compute(*im);
+		for (std::size_t day = 0; day < days_1.size() && day < days_2.size(); ++day) {
+			if (days_1[day] != days_2[day]) {
+				fmt::println("TEST INFO determinism: the two runs first differ on day {} after the orders", day + 1);
+				DayDetails const& a = g_details_1[day];
+				DayDetails const& b = g_details_2[day];
+				fmt::println("TEST INFO determinism: pop cash {} vs {}, factory budgets {} vs {}, capitalist funds {} vs {}, prices {} vs {}",
+					a.pop_cash, b.pop_cash, a.factory_budget, b.factory_budget, a.capitalist_fund, b.capitalist_fund, a.price_sum, b.price_sum);
+				int shown = 0;
+				for (std::size_t c = 0; c < a.country_cash.size() && shown < 6; ++c) {
+					if (a.country_cash[c] != b.country_cash[c]) {
+						fmt::println("TEST INFO determinism: country {} cash {} vs {}", c, a.country_cash[c], b.country_cash[c]);
+						shown++;
+					}
+				}
+				break;
+			}
+		}
 		const std::string save_2 = Replay::serialise(im->get_action_history());
 		r.check(hash_2 == hash_1, "determinism: two runs with the same actions end in the same state", hex(hash_1) + " != " + hex(hash_2));
 		r.check(save_2 == save_1, "determinism: two runs write the same action history");
@@ -574,6 +681,15 @@ namespace {
 			return;
 		}
 		test_credit_game(r, *im);
+		game.end();
+
+		// ---- run 6: the factory actions (priority, deleting)
+		im = game.start();
+		r.check(im != nullptr, "factories: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_factory_actions(r, *im);
 		game.end();
 
 		// ---- the defines hash does not change while playing

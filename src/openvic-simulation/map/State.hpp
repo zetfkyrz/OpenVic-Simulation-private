@@ -116,6 +116,9 @@ namespace OpenVic {
 		// Adds a factory of the given type with the given completed level,
 		// nullptr if there is no free slot or the state already has a factory of that type
 		FactoryInstance* add_factory(BuildingType const& building_type, building_level_t level);
+		// Removes a factory (the player deletes it). Its money (budget and expansion fund) goes to its owners: the state's share to the
+		// treasury of the owner country, the rest to the savings of the capitalists. Returns false if it is not a factory of this state.
+		bool remove_factory(FactoryInstance& factory);
 	};
 
 	struct Region;

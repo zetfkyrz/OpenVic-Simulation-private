@@ -1191,7 +1191,7 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load on actions!");
 		ret = false;
 	}
-	if (!definition_manager.get_diplomatic_action_manager().setup_diplomatic_actions()) {
+	if (!definition_manager.get_diplomatic_action_manager().setup_diplomatic_actions(definition_manager.get_define_manager().get_diplomacy_defines())) {
 		spdlog::critical_s("Failed to load diplomatic actions!");
 		ret = false;
 	}
