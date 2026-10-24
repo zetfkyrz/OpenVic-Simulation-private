@@ -79,6 +79,18 @@ void OpenVicDefineGroup::set_value(std::string_view file_name, std::string_view 
 			*static_cast<fixed_point_t*>(entry.target) = value;
 			return;
 		}
+		case kind_t::RATE: {
+			const double scaled = number * Rate::DENOMINATOR;
+			const double rounded = std::round(scaled);
+			if (std::abs(scaled - rounded) > 1e-6) {
+				spdlog::warn_s(
+					"{}: value of {}.{} has more than 4 decimals, rounded to {}", file_name, get_name(), key,
+					rounded / Rate::DENOMINATOR
+				);
+			}
+			static_cast<Rate*>(entry.target)->numerator = static_cast<std::int32_t>(rounded);
+			return;
+		}
 		case kind_t::DOUBLE:
 			*static_cast<double*>(entry.target) = number;
 			return;
@@ -99,6 +111,9 @@ void OpenVicDefineGroup::hash_into(std::uint64_t& hash) const {
 			break;
 		case kind_t::FIXED:
 			hash_value(hash, static_cast<std::uint64_t>(static_cast<fixed_point_t const*>(entry.target)->get_raw_value()));
+			break;
+		case kind_t::RATE:
+			hash_value(hash, static_cast<std::uint32_t>(static_cast<Rate const*>(entry.target)->numerator));
 			break;
 		case kind_t::DOUBLE:
 			hash_value(hash, std::bit_cast<std::uint64_t>(*static_cast<double const*>(entry.target)));

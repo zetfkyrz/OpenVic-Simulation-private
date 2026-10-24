@@ -17,10 +17,40 @@ namespace OpenVic {
 	 * name and key, and the default is used. Mods override the file the usual way (the first file found by the
 	 * dataloader is used). Rates are fractions (0.25 and not 25 percent).
 	 *
-	 * Each group is declared by an X-macro list: INT(KEY, member, default, min, max), FIXED(...) for fixed_point_t and
-	 * DOUBLE(...) for double. Add a parameter by adding one line to the list of its group. */
+	 * Each group is declared by an X-macro list: INT(KEY, member, default, min, max), FIXED(...) for fixed_point_t,
+	 * RATE(...) for a Rate (fraction, bit exact, default Rate(25, 100)) and DOUBLE(...) for double. Add a parameter by adding one line to the list of its group. */
+	/* A fraction stored as a whole number of 1/10000, so that "x * numerator / denominator" of the original constants
+	 * (for example x * 25 / 1000) gives exactly the same fixed point number as before they became configurable. The file
+	 * holds the fraction (0.025), at most 4 decimals. */
+	struct Rate {
+		static constexpr std::int32_t DENOMINATOR = 10000;
+		std::int32_t numerator = 0;
+
+		constexpr Rate() = default;
+		// numerator / denominator, the denominator must divide 10000
+		constexpr Rate(std::int32_t new_numerator, std::int32_t new_denominator)
+			: numerator { new_numerator * (DENOMINATOR / new_denominator) } {
+			static_assert(DENOMINATOR % 1000 == 0);
+		}
+		// x * rate, same as x * numerator / denominator
+		fixed_point_t of(fixed_point_t const x) const {
+			return x * numerator / DENOMINATOR;
+		}
+		// The rate as a number, same as fixed_point_t(numerator) / denominator
+		fixed_point_t fixed() const {
+			return fixed_point_t(numerator) / DENOMINATOR;
+		}
+		constexpr double as_double() const {
+			return static_cast<double>(numerator) / DENOMINATOR;
+		}
+		// Whole numbers (people, days) times the rate, rounded down
+		constexpr std::int64_t of_int(std::int64_t const x) const {
+			return x * numerator / DENOMINATOR;
+		}
+	};
+
 	struct OpenVicDefineGroup {
-		enum struct kind_t : std::uint8_t { INT, FIXED, DOUBLE };
+		enum struct kind_t : std::uint8_t { INT, FIXED, RATE, DOUBLE };
 
 		struct entry_t {
 			std::string_view key;
@@ -53,19 +83,22 @@ namespace OpenVic {
 
 #define OV_DEFINE_DECLARE_INT(KEY, member, def, lo, hi) std::int32_t member = def;
 #define OV_DEFINE_DECLARE_FIXED(KEY, member, def, lo, hi) fixed_point_t member = def;
+#define OV_DEFINE_DECLARE_RATE(KEY, member, def, lo, hi) Rate member = def;
 #define OV_DEFINE_DECLARE_DOUBLE(KEY, member, def, lo, hi) double member = def;
 #define OV_DEFINE_REGISTER_INT(KEY, member, def, lo, hi) \
 	entries.push_back({ #KEY, kind_t::INT, &member, static_cast<double>(lo), static_cast<double>(hi) });
 #define OV_DEFINE_REGISTER_FIXED(KEY, member, def, lo, hi) \
 	entries.push_back({ #KEY, kind_t::FIXED, &member, static_cast<double>(lo), static_cast<double>(hi) });
+#define OV_DEFINE_REGISTER_RATE(KEY, member, def, lo, hi) \
+	entries.push_back({ #KEY, kind_t::RATE, &member, static_cast<double>(lo), static_cast<double>(hi) });
 #define OV_DEFINE_REGISTER_DOUBLE(KEY, member, def, lo, hi) \
 	entries.push_back({ #KEY, kind_t::DOUBLE, &member, static_cast<double>(lo), static_cast<double>(hi) });
 
 #define OV_DEFINE_GROUP(StructName, group_name, LIST) \
 	struct StructName final : OpenVicDefineGroup { \
-		LIST(OV_DEFINE_DECLARE_INT, OV_DEFINE_DECLARE_FIXED, OV_DEFINE_DECLARE_DOUBLE) \
+		LIST(OV_DEFINE_DECLARE_INT, OV_DEFINE_DECLARE_FIXED, OV_DEFINE_DECLARE_RATE, OV_DEFINE_DECLARE_DOUBLE) \
 		StructName() { \
-			LIST(OV_DEFINE_REGISTER_INT, OV_DEFINE_REGISTER_FIXED, OV_DEFINE_REGISTER_DOUBLE) \
+			LIST(OV_DEFINE_REGISTER_INT, OV_DEFINE_REGISTER_FIXED, OV_DEFINE_REGISTER_RATE, OV_DEFINE_REGISTER_DOUBLE) \
 		} \
 		std::string_view get_name() const override { \
 			return group_name; \
@@ -74,21 +107,21 @@ namespace OpenVic {
 
 	// ----- The groups. One line per parameter: KEY, member, default, minimum, maximum -----
 
-#define OV_AI_DEFINES(INT, FIXED, DOUBLE)
-#define OV_POPULATION_DEFINES(INT, FIXED, DOUBLE)
-#define OV_POLITICS_DEFINES(INT, FIXED, DOUBLE)
-#define OV_COLONISATION_DEFINES(INT, FIXED, DOUBLE)
-#define OV_WAR_DEFINES(INT, FIXED, DOUBLE)
-#define OV_PEACE_DEFINES(INT, FIXED, DOUBLE)
-#define OV_RESEARCH_DEFINES(INT, FIXED, DOUBLE)
-#define OV_ECONOMY_DEFINES(INT, FIXED, DOUBLE)
+#define OV_AI_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_POLITICS_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE)
 	// Placeholder for the credit system rework: nothing reads these yet, no logic is attached to them. 0 = not set.
-#define OV_CREDIT_DEFINES(INT, FIXED, DOUBLE) \
+#define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(LOAN_TERM_MIN_DAYS, loan_term_min_days, 0, 0, 36500) \
 	INT(LOAN_TERM_MAX_DAYS, loan_term_max_days, 0, 0, 36500) \
 	INT(PAYOUT_DELAY_DAYS, payout_delay_days, 0, 0, 36500) \
-	FIXED(INTEREST_MIN, interest_min, fixed_point_t::_0, 0, 1000) \
-	FIXED(INTEREST_MAX, interest_max, fixed_point_t::_0, 0, 1000)
+	RATE(INTEREST_MIN, interest_min, Rate(0, 1), 0, 100) \
+	RATE(INTEREST_MAX, interest_max, Rate(0, 1), 0, 100)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)
