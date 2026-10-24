@@ -3,6 +3,8 @@
 #include <functional>
 #include <vector>
 #include "openvic-simulation/misc/MoneyLedger.hpp"
+#include "openvic-simulation/politics/PoliticsDynamics.hpp"
+#include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/misc/Replay.hpp"
 
 #include <utility>
@@ -68,6 +70,9 @@ namespace OpenVic {
 		WarManager PROPERTY_REF(war_manager);
 		// Debugging tool: follows the money of the economy (off unless switched on, see MoneyLedger.hpp)
 		MoneyLedger PROPERTY_REF(money_ledger);
+		// What the monthly dynamics remember (belongs to the instance: games one after another start from the same state)
+		ResearchDynamics::State PROPERTY_REF(research_state);
+		RebelDynamics::State PROPERTY_REF(rebel_state);
 		NotificationLog PROPERTY_REF(notification_log);
 		ColonisationManager PROPERTY_REF(colonisation_manager);
 		CreditManager PROPERTY_REF(credit_manager);

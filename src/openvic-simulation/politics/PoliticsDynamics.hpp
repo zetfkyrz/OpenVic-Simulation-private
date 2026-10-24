@@ -1,8 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "openvic-simulation/core/memory/String.hpp"
+#include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 
@@ -47,6 +50,14 @@ namespace OpenVic {
 	 *   war with the owner while the army exists), the rebels may take the province,
 	 * - when the rebels are beaten the militancy of the province falls, and the province returns to its owner. */
 	namespace RebelDynamics {
+		// What the dynamics remember between the months: where a rising is going on, when it started and when it ended.
+		// It belongs to the game instance (not to the process), see ResearchDynamics::State.
+		struct State {
+			std::unordered_set<ProvinceInstance const*> active_uprisings;
+			std::unordered_map<ProvinceInstance const*, Date> uprising_started;
+			std::unordered_map<ProvinceInstance const*, Date> uprising_ended;
+		};
+
 		void monthly_update(InstanceManager& instance_manager);
 
 		// The thresholds and rates of the unrest are in the group ov_politics of common/openvic_defines.lua

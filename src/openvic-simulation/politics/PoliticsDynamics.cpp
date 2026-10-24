@@ -401,21 +401,6 @@ PoliticsDynamics::ReformStatus PoliticsDynamics::get_reform_status(
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 
 namespace {
-	// Provinces where a rising is going on (to lower the militancy when it ends)
-	std::unordered_set<ProvinceInstance const*>& active_uprisings() {
-		static std::unordered_set<ProvinceInstance const*> set;
-		return set;
-	}
-	// When a rising started and when it ended
-	std::unordered_map<ProvinceInstance const*, Date>& uprising_started() {
-		static std::unordered_map<ProvinceInstance const*, Date> map;
-		return map;
-	}
-	std::unordered_map<ProvinceInstance const*, Date>& uprising_ended() {
-		static std::unordered_map<ProvinceInstance const*, Date> map;
-		return map;
-	}
-
 	CountryInstance* find_rebel_country(InstanceManager& instance_manager) {
 		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 			if (country.is_rebel_country()) {
@@ -449,6 +434,7 @@ memory::vector<RebelDynamics::Uprising> RebelDynamics::get_uprisings(InstanceMan
 }
 
 void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
+	State& state = instance_manager.get_rebel_state();
 	OpenVicPoliticsDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().politics;
 	CountryInstance* const rebels = find_rebel_country(instance_manager);
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
@@ -497,18 +483,18 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 			ArmyInstance* const rebel_army = rebel_army_in(*province);
 			if (rebel_army != nullptr) {
 				// The government of an AI country puts the rising down after some time
-				if (country.is_ai() && uprising_started().contains(province)
-					&& (today - uprising_started()[province]).to_int() >= defines.ai_suppression_days) {
+				if (country.is_ai() && state.uprising_started.contains(province)
+					&& (today - state.uprising_started[province]).to_int() >= defines.ai_suppression_days) {
 					unit_manager.destroy_group(*rebel_army);
-					uprising_ended()[province] = today;
+					state.uprising_ended[province] = today;
 				} else {
 					has_uprising = true;
 					continue;
 				}
 			}
 			// Provinces that have risen lately are calm for a while
-			if (const auto ended = uprising_ended().find(province);
-				ended != uprising_ended().end() && (today - ended->second).to_int() < defines.uprising_cooldown_days) {
+			if (const auto ended = state.uprising_ended.find(province);
+				ended != state.uprising_ended.end() && (today - ended->second).to_int() < defines.uprising_cooldown_days) {
 				continue;
 			}
 
@@ -528,8 +514,8 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 					));
 					if (unit_manager.create_army_with_regiments(*rebels, *province, *regiment_type, count, "Rebels") != nullptr) {
 						rebels->set_at_war_with(country, true);
-						active_uprisings().insert(province);
-						uprising_started()[province] = today;
+						state.active_uprisings.insert(province);
+						state.uprising_started[province] = today;
 						has_uprising = true;
 						SPDLOG_INFO("Uprising in {} ({}): {} rebel regiments", province->get_identifier(), country.get_identifier(), count);
 						instance_manager.get_notification_log().add(today, &country, "uprising", province->get_identifier());
@@ -545,7 +531,7 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 	}
 
 	// ---- beaten uprisings: the province returns to the owner, the people calm down
-	for (auto it = active_uprisings().begin(); it != active_uprisings().end();) {
+	for (auto it = state.active_uprisings.begin(); it != state.active_uprisings.end();) {
 		ProvinceInstance* province = const_cast<ProvinceInstance*>(*it);
 		if (rebel_army_in(*province) == nullptr) {
 			if (province->get_owner() != nullptr && province->get_controller() != province->get_owner()
@@ -556,8 +542,8 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 				const double militancy = std::max(0.0, to_double(pop.get_militancy()) - defines.uprising_end_militancy_drop);
 				pop.set_militancy(fixed_point_t::parse_unsafe(static_cast<float>(militancy)));
 			}
-			uprising_ended()[province] = today;
-			it = active_uprisings().erase(it);
+			state.uprising_ended[province] = today;
+			it = state.active_uprisings.erase(it);
 		} else {
 			++it;
 		}

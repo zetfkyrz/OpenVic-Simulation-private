@@ -18,8 +18,8 @@ void ResearchDynamics::monthly_update(InstanceManager& instance_manager) {
 	const Date today = instance_manager.get_today();
 
 	// Progress toward each invention of each country, and the number of technologies seen last time
-	static std::unordered_map<std::uint64_t, fixed_point_t> progress;
-	static std::unordered_map<CountryInstance const*, std::int32_t> known_technologies;
+	auto& progress = instance_manager.get_research_state().progress;
+	auto& known_technologies = instance_manager.get_research_state().known_technologies;
 
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists() || country.is_rebel_country()) {
