@@ -1,4 +1,5 @@
 #include "GameAction.hpp"
+#include <algorithm>
 
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 
@@ -8,6 +9,7 @@
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/economy/credit/Credit.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
 #include "openvic-simulation/map/State.hpp"
@@ -673,59 +675,68 @@ bool GameActionManager::VariantVisitor::operator() (sell_factory_share_argument_
 	return trade_factory_share(instance_manager, country_index, province_index, building_type_index, percent, false);
 }
 
-// Credit and the central bank
+// Credit and the central bank (docs/CREDITS.md)
 namespace {
 	bool is_valid_loan_term(const std::uint32_t term) {
 		return term <= static_cast<std::uint32_t>(Loan::term_t::LONG);
 	}
 }
 
-bool GameActionManager::VariantVisitor::operator() (take_external_loan_argument_t const& argument) const {
-	const auto [borrower_index, lender_index, amount, term] = argument;
-	if (OV_unlikely(!is_valid_loan_term(term))) {
-		return false;
-	}
-	CountryInstanceManager& country_manager = instance_manager.get_country_instance_manager();
-	return instance_manager.get_credit_manager().take_external_loan(
-		instance_manager, country_manager.get_country_instance_by_index(borrower_index),
-		country_manager.get_country_instance_by_index(lender_index), amount, static_cast<Loan::term_t>(term)
-	);
-}
-
-bool GameActionManager::VariantVisitor::operator() (give_external_loans_argument_t const& argument) const {
-	const auto [lender_index, group, amount, rate, term] = argument;
-	if (OV_unlikely(!is_valid_loan_term(term) || group > static_cast<std::uint32_t>(CreditManager::target_group_t::SELECTED))) {
-		return false;
-	}
-	CountryInstance& lender = instance_manager.get_country_instance_manager().get_country_instance_by_index(lender_index);
-	return instance_manager.get_credit_manager().give_external_loans_to_group(
-		instance_manager, lender, static_cast<CreditManager::target_group_t>(group), amount, rate, static_cast<Loan::term_t>(term)
-	) > 0;
-}
-
-bool GameActionManager::VariantVisitor::operator() (stage_loan_target_argument_t const& argument) const {
+bool GameActionManager::VariantVisitor::operator() (stage_credit_country_argument_t const& argument) const {
 	const auto [lender_index, target_index, selected] = argument;
 	CountryInstanceManager& country_manager = instance_manager.get_country_instance_manager();
-	instance_manager.get_credit_manager().stage_loan_target(
+	instance_manager.get_credit_manager().stage_target_country(
 		country_manager.get_country_instance_by_index(lender_index), country_manager.get_country_instance_by_index(target_index),
 		selected
 	);
 	return true;
 }
 
-bool GameActionManager::VariantVisitor::operator() (give_internal_loan_argument_t const& argument) const {
-	const auto [country_index, province_index, amount, rate, term, policy] = argument;
-	if (OV_unlikely(!is_valid_loan_term(term) || policy > static_cast<std::uint32_t>(Loan::maturity_policy_t::HARD))) {
-		return false;
-	}
-	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+bool GameActionManager::VariantVisitor::operator() (stage_credit_region_argument_t const& argument) const {
+	const auto [lender_index, province_index, selected] = argument;
 	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
 	if (OV_unlikely(province == nullptr || province->get_state() == nullptr)) {
 		return false;
 	}
-	return instance_manager.get_credit_manager().give_internal_loan(
-		instance_manager, country, *province->get_state(), amount, rate, static_cast<Loan::term_t>(term),
-		static_cast<Loan::maturity_policy_t>(policy)
+	instance_manager.get_credit_manager().stage_target_state(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(lender_index), *province->get_state(), selected
+	);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (offer_internal_credit_argument_t const& argument) const {
+	const auto [lender_index, amount, rate, term, all_regions] = argument;
+	if (OV_unlikely(!is_valid_loan_term(term))) {
+		return false;
+	}
+	CountryInstance& lender = instance_manager.get_country_instance_manager().get_country_instance_by_index(lender_index);
+	return instance_manager.get_credit_manager().offer_internal_credit(
+		instance_manager, lender, amount, rate, static_cast<Loan::term_t>(term), all_regions
+	) != nullptr;
+}
+
+bool GameActionManager::VariantVisitor::operator() (offer_external_credit_argument_t const& argument) const {
+	const auto [lender_index, amount, rate, term, all_countries] = argument;
+	if (OV_unlikely(!is_valid_loan_term(term))) {
+		return false;
+	}
+	CountryInstance& lender = instance_manager.get_country_instance_manager().get_country_instance_by_index(lender_index);
+	return instance_manager.get_credit_manager().offer_external_credit(
+		instance_manager, lender, amount, rate, static_cast<Loan::term_t>(term), all_countries
+	) != nullptr;
+}
+
+bool GameActionManager::VariantVisitor::operator() (withdraw_credit_offer_argument_t const& argument) const {
+	const auto [lender_index, loan_id] = argument;
+	return instance_manager.get_credit_manager().withdraw_offer(
+		instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(lender_index), loan_id
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (take_credit_argument_t const& argument) const {
+	const auto [borrower_index, loan_id] = argument;
+	return instance_manager.get_credit_manager().take_credit(
+		instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(borrower_index), loan_id
 	);
 }
 
@@ -740,20 +751,12 @@ bool GameActionManager::VariantVisitor::operator() (repay_loan_argument_t const&
 bool GameActionManager::VariantVisitor::operator() (set_central_bank_rates_argument_t const& argument) const {
 	const auto [country_index, internal_rate, external_rate] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	// Rates are never lower than 1%
-	country.set_central_bank_rates(
-		CreditManager::clamp_rate(internal_rate), CreditManager::clamp_rate(external_rate)
-	);
+	// The rates the AI of the country offers its credits at: never below the minimum interest, never above the limit
+	OpenVicCreditDefines const& credit_defines = instance_manager.get_credit_manager().get_defines();
+	const fixed_point_t lowest = credit_defines.interest_min.fixed();
+	const fixed_point_t highest = credit_defines.interest_limit.fixed();
+	country.set_central_bank_rates(std::clamp(internal_rate, lowest, highest), std::clamp(external_rate, lowest, highest));
 	return true;
-}
-
-bool GameActionManager::VariantVisitor::operator() (answer_alliance_request_argument_t const& argument) const {
-	const auto [to_index, from_index, accept] = argument;
-	CountryInstanceManager& country_manager = instance_manager.get_country_instance_manager();
-	return instance_manager.get_credit_manager().answer_alliance_request(
-		instance_manager, country_manager.get_country_instance_by_index(to_index),
-		country_manager.get_country_instance_by_index(from_index), accept
-	);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_subsidy_mode_argument_t const& argument) const {

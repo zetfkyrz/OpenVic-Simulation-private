@@ -188,6 +188,12 @@ namespace OpenVic {
 				return false;
 			}
 			bool found = false;
+			// Actions of the credit system that was replaced (simulation version 7): the new system has other actions, so the
+			// old ones are skipped. The loaded game differs from the saved one anyway (the version warning), see docs/CREDITS.md.
+			if (name == "take_external_loan" || name == "give_external_loans" || name == "stage_loan_target"
+				|| name == "give_internal_loan" || name == "answer_alliance_request") {
+				continue;
+			}
 #define READ_ACTION(action_name, ...) \
 			if (!found && name == #action_name) { \
 				found = true; \

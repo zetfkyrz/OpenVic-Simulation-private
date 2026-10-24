@@ -1,5 +1,6 @@
 #include "SelfTest.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <utility>
@@ -12,6 +13,9 @@
 #include <openvic-simulation/InstanceManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
+#include <openvic-simulation/economy/credit/Credit.hpp>
+#include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/misc/MoneyLedger.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
@@ -116,7 +120,7 @@ namespace {
 		entries.push_back({ 3, game_action_t(std::in_place_type<create_leader_argument_t>, country_index_t(2), unit_branch_t::LAND) });
 		entries.push_back({ 3, game_action_t(std::in_place_type<set_mobilise_argument_t>, country_index_t(4), false) });
 		entries.push_back({ 4, game_action_t(std::in_place_type<stop_army_argument_t>, unique_id_t(1234567890123ULL)) });
-		entries.push_back({ 4, game_action_t(std::in_place_type<take_external_loan_argument_t>, country_index_t(5), country_index_t(6), fixed_point_t(-12) / 7, std::uint32_t(30)) });
+		entries.push_back({ 4, game_action_t(std::in_place_type<take_credit_argument_t>, country_index_t(5), std::uint32_t(30)) });
 
 		const std::string text = Replay::serialise(entries);
 		std::vector<ReplayEntry> back;
@@ -197,6 +201,11 @@ namespace {
 			if (country.get_total_rank() > 0 && country.get_total_rank() <= 12) {
 				instance_manager.queue_game_action<set_tariff_rate_argument_t>(country.index, fixed_point_t(1) / 4);
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
+				if (country.get_total_rank() == 1) {
+					instance_manager.queue_game_action<offer_external_credit_argument_t>(
+						country.index, fixed_point_t(2000), fixed_point_t(6) / 100, std::uint32_t(1), true
+					);
+				}
 			}
 		}
 		instance_manager.force_tick_and_update();
@@ -210,6 +219,255 @@ namespace {
 
 	std::string hex(const std::uint64_t value) {
 		return Replay::hash_to_string(value);
+	}
+
+	// Credits: the formulas of docs/CREDITS.md on a credit that is not in a game
+	Loan make_test_loan(Loan::term_t term, std::int32_t term_days, std::int32_t delay_days, fixed_point_t principal, fixed_point_t rate) {
+		Loan loan;
+		loan.kind = Loan::kind_t::EXTERNAL;
+		loan.principal = loan.principal_left = principal;
+		loan.annual_rate = rate;
+		loan.term = term;
+		loan.term_days = term_days;
+		loan.delay_days = delay_days;
+		return loan;
+	}
+
+	double dbl(fixed_point_t x) {
+		return static_cast<double>(x);
+	}
+
+	std::int32_t installments_for_medium() {
+		return Loan::calculate_installments(3650, 1825);
+	}
+
+	bool near(fixed_point_t a, fixed_point_t b, fixed_point_t tolerance) {
+		return (a > b ? a - b : b - a) <= tolerance;
+	}
+
+	void test_credit_pure(Results& r) {
+		const Date start { 1836, 1, 1 };
+		const fixed_point_t principal = fixed_point_t(1000);
+		const fixed_point_t rate = fixed_point_t(5) / 100;
+
+		// Total interest: principal * rate * (delay + repayment / 2) years
+		const fixed_point_t total_interest = Loan::calculate_total_interest(principal, rate, 913, 912);
+		const fixed_point_t expected_interest = fixed_point_t(1000) * 5 / 100 * (913 + 456) / 365;
+		r.check(near(total_interest, expected_interest, fixed_point_t(1) / 10), "credit: the total interest is principal * rate * (delay + repayment / 2)",
+			fmt::format("{} != {}", dbl(total_interest), dbl(expected_interest)));
+
+		// The whole life of a short credit (5 years, payments start after 2.5 years) paid on time
+		Loan loan = make_test_loan(Loan::term_t::SHORT, 1825, 913, principal, rate);
+		loan.start_schedule(start);
+		const std::int32_t installments = loan.installments_left;
+		r.check(installments == 31, "credit: a short credit has 31 monthly payments after the delay", std::to_string(installments));
+		r.check(loan.get_installment_due(start + Timespan::from_days(912)) == fixed_point_t::_0, "credit: nothing is due before the delay ends");
+		fixed_point_t first_due = loan.get_installment_due(start + Timespan::from_days(913));
+		bool equal_installments = first_due > fixed_point_t::_0;
+		fixed_point_t paid_total = 0;
+		Date day = start + Timespan::from_days(913);
+		for (int i = 0; i < installments && loan.installments_left > 0; i++) {
+			const fixed_point_t due = loan.get_installment_due(day);
+			if (!near(due, first_due, fixed_point_t(1) / 100)) {
+				equal_installments = false;
+			}
+			loan.apply_installment_payment(due, due);
+			paid_total += due;
+			day = day + Timespan::from_days(30);
+		}
+		r.check(equal_installments, "credit: the payments are equal over the whole period of payments (interest spread evenly)");
+		r.check(loan.get_remaining() == fixed_point_t::_0 && loan.installments_left == 0, "credit: the credit is paid off by the last installment",
+			fmt::format("left {}", dbl(loan.get_remaining())));
+		r.check(near(paid_total, principal + total_interest, fixed_point_t(1) / 10), "credit: in total the principal and the interest are paid",
+			fmt::format("{} != {}", dbl(paid_total), dbl(principal + total_interest)));
+		r.check(near(loan.interest_paid, total_interest, fixed_point_t(1) / 10), "credit: the interest paid equals the interest of the schedule");
+
+		// A missed payment is not lost: the next one is bigger
+		Loan late = make_test_loan(Loan::term_t::MEDIUM, 3650, 1825, principal, rate);
+		late.start_schedule(start);
+		const Date first_day = start + Timespan::from_days(1825);
+		const fixed_point_t due_1 = late.get_installment_due(first_day);
+		late.apply_installment_payment(due_1, fixed_point_t::_0);
+		r.check(late.installments_left == installments_for_medium() - 1 && late.get_remaining() == principal + Loan::calculate_total_interest(principal, rate, 1825, 1825), "credit: a missed month passes, nothing of the debt is paid");
+		const fixed_point_t due_2 = late.get_installment_due(first_day + Timespan::from_days(30));
+		r.check(due_2 > due_1, "credit: what was not paid is added to the next payments");
+
+		// Early repayment of everything during the delay: only the interest earned so far is owed
+		Loan early = make_test_loan(Loan::term_t::SHORT, 1825, 913, principal, rate);
+		early.start_schedule(start);
+		const Date year_later = start + Timespan::from_days(365);
+		const fixed_point_t cost = early.get_full_repayment_cost(year_later);
+		r.check(near(cost, principal + principal * rate, fixed_point_t(1) / 100), "credit: early repayment in the delay costs the principal and the interest of that time",
+			fmt::format("{}", dbl(cost)));
+		const fixed_point_t paid_early = early.apply_early_repayment(year_later, cost);
+		r.check(paid_early == cost && early.get_remaining() == fixed_point_t::_0, "credit: a full early repayment ends the credit with no future interest");
+		r.check(near(early.interest_paid, principal * rate, fixed_point_t(1) / 100), "credit: the interest paid of an early repayment is the interest earned");
+
+		// A part of the principal paid early lowers all the later payments
+		Loan partial = make_test_loan(Loan::term_t::SHORT, 1825, 913, principal, rate);
+		partial.start_schedule(start);
+		const Date in_payments = start + Timespan::from_days(913 + 300);
+		const fixed_point_t due_before = partial.get_installment_due(in_payments);
+		partial.apply_early_repayment(in_payments, fixed_point_t(400));
+		const fixed_point_t due_after = partial.get_installment_due(in_payments);
+		r.check(partial.principal_left == fixed_point_t(600) && due_after < due_before, "credit: a partial early repayment lowers the payments",
+			fmt::format("{} -> {}", dbl(due_before), dbl(due_after)));
+
+		// Short credits only fund constructions of a year or less
+		Loan short_loan = make_test_loan(Loan::term_t::SHORT, 1825, 913, principal, rate);
+		Loan long_loan = make_test_loan(Loan::term_t::LONG, 7300, 3650, principal, rate);
+		r.check(
+			short_loan.can_fund(Loan::purpose_t::CONSTRUCTION, 365, 365) && !short_loan.can_fund(Loan::purpose_t::CONSTRUCTION, 366, 365)
+				&& !short_loan.can_fund(Loan::purpose_t::LOSS_COVER, 100, 365) && long_loan.can_fund(Loan::purpose_t::LOSS_COVER, 5000, 365),
+			"credit: a short credit funds only constructions of at most 365 days, the others anything"
+		);
+
+		// The limits of the AI are in the defines: it lends at 1% or more, it borrows at 25% or less
+		OpenVicCreditDefines const defaults;
+		r.check(
+			defaults.interest_min.numerator == 100 && defaults.interest_max.numerator == 2500 && defaults.term_long_days == 7300,
+			"credit: the defaults of the defines are 1% (lending), 25% (borrowing) and 20 years for long credits"
+		);
+	}
+
+	void play_to_month_start(InstanceManager& instance_manager) {
+		for (int i = 0; i < 35; ++i) {
+			instance_manager.force_tick_and_update();
+			if (instance_manager.get_today().is_month_start()) {
+				return;
+			}
+		}
+	}
+
+	void test_credit_game(Results& r, InstanceManager& im) {
+		CreditManager& credit = im.get_credit_manager();
+		memory::vector<CountryInstance*> rich;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && !country.is_rebel_country() && country.get_total_rank() > 0) {
+				country.set_ai(true);
+				rich.push_back(&country);
+			}
+		}
+		std::sort(rich.begin(), rich.end(), [](CountryInstance* a, CountryInstance* b) -> bool {
+			return a->get_total_rank() < b->get_total_rank();
+		});
+		if (rich.size() < 4) {
+			r.check(false, "credit: the game has at least four countries");
+			return;
+		}
+		for (std::size_t i = 0; i < 4; i++) {
+			rich[i]->set_ai(false);
+		}
+		CountryInstance& lender = *rich[0];
+		CountryInstance& borrower = *rich[1];
+		CountryInstance& stranger = *rich[2];
+		CountryInstance& heir = *rich[3];
+		lender.add_cash(fixed_point_t(5000));
+		const fixed_point_t amount = fixed_point_t(1000);
+		const fixed_point_t rate = fixed_point_t(5) / 100;
+
+		// An offer to one country: the money is held, the others cannot take it
+		const fixed_point_t before = lender.get_cash_stockpile().load();
+		credit.stage_target_country(lender, borrower, true);
+		Loan* offer = credit.offer_external_credit(im, lender, amount, rate, Loan::term_t::MEDIUM, false);
+		r.check(offer != nullptr && lender.get_cash_stockpile().load() == before - amount, "credit: an offer holds the money of the lender");
+		if (offer == nullptr) {
+			return;
+		}
+		const std::uint32_t id = offer->id;
+		r.check(!credit.take_credit(im, stranger, id), "credit: a country that is not named cannot take an offer made to a tag");
+		const fixed_point_t borrower_before = borrower.get_cash_stockpile().load();
+		r.check(credit.take_credit(im, borrower, id) && borrower.get_cash_stockpile().load() == borrower_before + amount,
+			"credit: the named country takes the offer and gets the money");
+		r.check(offer->status == Loan::status_t::ACTIVE && offer->payments_start == im.get_today() + Timespan::from_days(1825)
+				&& offer->due_date == im.get_today() + Timespan::from_days(3650),
+			"credit: a medium credit has 10 years and the payments start after 5");
+
+		// An offer that is withdrawn gives the money back
+		const fixed_point_t before_2 = lender.get_cash_stockpile().load();
+		Loan* second = credit.offer_external_credit(im, lender, amount, rate, Loan::term_t::SHORT, true);
+		r.check(second != nullptr && lender.get_cash_stockpile().load() == before_2 - amount, "credit: a second offer (to all) holds the money");
+		const std::uint32_t second_id = second != nullptr ? second->id : 0;
+		r.check(credit.withdraw_offer(im, lender, second_id) && lender.get_cash_stockpile().load() == before_2,
+			"credit: a withdrawn offer returns the money");
+		r.check(!credit.take_credit(im, stranger, second_id), "credit: a withdrawn offer cannot be taken");
+
+		// The rate never changes after it is set
+		r.check(offer->annual_rate == rate, "credit: the rate is set once when the credit is offered");
+
+		// The borrower goes bankrupt (it loses all its provinces): the debt is written off
+		memory::vector<ProvinceInstance*> provinces { borrower.get_owned_provinces().begin(), borrower.get_owned_provinces().end() };
+		for (ProvinceInstance* province : provinces) {
+			province->set_owner(&lender);
+		}
+		play_to_month_start(im);
+		r.check(credit.get_loan_by_id(id) == nullptr, "credit: the credit of a bankrupt borrower is written off");
+
+		// A region with capitalists changes its owner: the credit goes to the new owner
+		State* region = nullptr;
+		CountryInstance* old_owner = nullptr;
+		for (CountryInstance* country : { &stranger, &heir }) {
+			for (State* state : country->get_states()) {
+				if (state->get_capitalist_fund() >= fixed_point_t::_0 && state->get_provinces().size() > 0 && region == nullptr) {
+					region = state;
+					old_owner = country;
+				}
+			}
+		}
+		if (region == nullptr || old_owner == nullptr) {
+			r.check(false, "credit: found a region for the owner change test");
+			return;
+		}
+		CountryInstance& new_owner = old_owner == &stranger ? heir : stranger;
+		old_owner->add_cash(fixed_point_t(5000));
+		// The lender offers to all regions, so no staging is needed
+		Loan* internal = credit.offer_internal_credit(im, *old_owner, amount, rate, Loan::term_t::LONG, true);
+		r.check(internal != nullptr, "credit: a country offers an internal credit to the capitalists of its regions");
+		if (internal == nullptr) {
+			return;
+		}
+		const std::uint32_t internal_id = internal->id;
+		r.check(credit.take_internal_credit(im, internal_id, *region) && internal->unspent == amount,
+			"credit: the capitalists of a region take the internal credit, the money is theirs to spend");
+		for (ProvinceInstance& province : region->get_provinces()) {
+			province.set_owner(&new_owner);
+		}
+		play_to_month_start(im);
+		Loan const* moved = credit.get_loan_by_id(internal_id);
+		r.check(moved != nullptr && moved->lender == &new_owner, "credit: when a region changes its owner the new owner is the lender");
+
+		// The AI: it never lends below the minimum interest and never borrows above the maximum
+		play(im, 150);
+		OpenVicCreditDefines const& limits = credit.get_defines();
+		bool lends_ok = true, borrows_ok = true;
+		std::size_t ai_offers = 0, ai_taken = 0;
+		for (auto const& loan : credit.get_loans()) {
+			if (loan->lender->is_ai()) {
+				ai_offers++;
+				lends_ok = lends_ok && loan->annual_rate >= limits.interest_min.fixed();
+			}
+			if (loan->status == Loan::status_t::ACTIVE && loan->kind == Loan::kind_t::EXTERNAL && loan->borrower->is_ai()) {
+				ai_taken++;
+				borrows_ok = borrows_ok && loan->annual_rate <= limits.interest_max.fixed();
+			}
+		}
+		r.check(lends_ok, "credit: the AI never offers a credit below the minimum interest");
+		r.check(borrows_ok, "credit: the AI never takes a credit above the maximum interest");
+		{
+			std::size_t ai_count = 0, richest_ai_index = 0;
+			fixed_point_t richest = 0;
+			for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+				if (country.exists() && country.is_ai()) {
+					ai_count++;
+					if (country.get_cash_stockpile().load() > richest) {
+						richest = country.get_cash_stockpile().load();
+						richest_ai_index = type_safe::get(country.index);
+					}
+				}
+			}
+			fmt::println("TEST INFO credit: {} AI countries, the richest ({}) has {}", ai_count, richest_ai_index, static_cast<double>(richest));
+		}
+		fmt::println("TEST INFO credit: after 150 days {} credits of AI lenders exist, {} external credits taken by AI countries", ai_offers, ai_taken);
 	}
 
 	void test_game(Results& r, Game& game) {
@@ -308,6 +566,16 @@ namespace {
 		ledger.disable();
 		game.end();
 
+
+		// ---- run 5: the credits in a game: offers, taking, withdrawing, bankruptcy, a region that changes its owner
+		im = game.start();
+		r.check(im != nullptr, "credit: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_credit_game(r, *im);
+		game.end();
+
 		// ---- the defines hash does not change while playing
 		r.check(defines_hash != 0, "defines: the instance sees the hash of the defines");
 	}
@@ -319,6 +587,7 @@ bool OpenVic::run_pure_selftests() {
 	test_defines(r);
 	test_replay(r);
 	test_save_header(r);
+	test_credit_pure(r);
 	r.summary();
 	return r.failed == 0;
 }

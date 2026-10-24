@@ -152,6 +152,7 @@ InstanceManager::InstanceManager(
 	war_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines());
 	UnitInstanceGroup::set_war_defines(definition_manager.get_define_manager().get_openvic_defines().war);
 	ArtisanalProducer::set_openvic_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 }

@@ -332,15 +332,38 @@ namespace OpenVic {
 	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1) \
 	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
 	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650) \
-	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 0, 0, 3650) \
+	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 7, 0, 3650) \
 	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1)
-	// Placeholder for the credit system rework: nothing reads these yet, no logic is attached to them. 0 = not set.
+	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
-	INT(LOAN_TERM_MIN_DAYS, loan_term_min_days, 0, 0, 36500) \
-	INT(LOAN_TERM_MAX_DAYS, loan_term_max_days, 0, 0, 36500) \
-	INT(PAYOUT_DELAY_DAYS, payout_delay_days, 0, 0, 36500) \
-	RATE(INTEREST_MIN, interest_min, Rate(0, 1), 0, 100) \
-	RATE(INTEREST_MAX, interest_max, Rate(0, 1), 0, 100)
+	INT(TERM_SHORT_DAYS, term_short_days, 1825, 30, 36500) \
+	INT(DELAY_SHORT_DAYS, delay_short_days, 913, 0, 36500) \
+	INT(TERM_MEDIUM_DAYS, term_medium_days, 3650, 30, 36500) \
+	INT(DELAY_MEDIUM_DAYS, delay_medium_days, 1825, 0, 36500) \
+	INT(TERM_LONG_DAYS, term_long_days, 7300, 30, 36500) \
+	INT(DELAY_LONG_DAYS, delay_long_days, 3650, 0, 36500) \
+	INT(SHORT_MAX_CONSTRUCTION_DAYS, short_max_construction_days, 365, 1, 36500) \
+	RATE(INTEREST_MIN, interest_min, Rate(1, 100), 0, 100) \
+	RATE(INTEREST_MAX, interest_max, Rate(25, 100), 0, 100) \
+	RATE(INTEREST_LIMIT, interest_limit, Rate(1, 1), 0, 100) \
+	INT(MIN_LOAN, min_loan, 100, 1, 100000000) \
+	INT(DEBT_LIMIT_BASE, debt_limit_base, 5000, 0, 100000000) \
+	INT(DEBT_LIMIT_POP_DIVISOR, debt_limit_pop_divisor, 100, 1, 100000000) \
+	INT(AI_OFFER_EXPIRY_DAYS, ai_offer_expiry_days, 90, 1, 36500) \
+	INT(AI_LEND_RESERVE, ai_lend_reserve, 1000, 0, 100000000) \
+	RATE(AI_LEND_SHARE, ai_lend_share, Rate(3, 10), 0, 1) \
+	INT(AI_MAX_LOAN, ai_max_loan, 25000, 0, 100000000) \
+	INT(AI_NEEDS_MONEY_BELOW, ai_needs_money_below, 3000, 0, 100000000) \
+	INT(AI_INTERNAL_LEND_CASH, ai_internal_lend_cash, 4000, 0, 100000000) \
+	RATE(AI_INTERNAL_LEND_SHARE, ai_internal_lend_share, Rate(1, 10), 0, 1) \
+	INT(AI_INTERNAL_MAX_LOAN, ai_internal_max_loan, 5000, 0, 100000000) \
+	INT(AI_MIN_RELATIONS, ai_min_relations, 0, -200, 200) \
+	INT(AI_MAX_OPEN_OFFERS, ai_max_open_offers, 1, 0, 100) \
+	RATE(AI_LENDER_MAX_DEBT_RATIO, ai_lender_max_debt_ratio, Rate(8, 10), 0, 10) \
+	RATE(AI_RELATIONS_RATE_PER_POINT, ai_relations_rate_per_point, Rate(1, 10000), 0, 1) \
+	INT(AI_EARLY_REPAY_MARGIN, ai_early_repay_margin, 3000, 0, 100000000) \
+	INT(INVESTMENT_MAX_PAYBACK_YEARS, investment_max_payback_years, 12, 1, 1000) \
+	INT(INVESTMENT_MIN_MONEY, investment_min_money, 500, 0, 100000000)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

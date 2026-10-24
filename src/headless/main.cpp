@@ -125,15 +125,15 @@ static void print_economy_report(InstanceManager& instance_manager) {
 	size_t external_loans = 0, internal_loans = 0;
 	fixed_point_t external_debt = 0, internal_debt = 0, internal_unspent = 0, capitalist_funds = 0;
 	for (auto const& loan : instance_manager.get_credit_manager().get_loans()) {
-		if (!loan->active) {
+		if (loan->status != Loan::status_t::ACTIVE) {
 			continue;
 		}
 		if (loan->kind == Loan::kind_t::EXTERNAL) {
 			external_loans++;
-			external_debt += loan->remaining;
+			external_debt += loan->get_remaining();
 		} else {
 			internal_loans++;
-			internal_debt += loan->remaining;
+			internal_debt += loan->get_remaining();
 			internal_unspent += loan->unspent;
 		}
 	}
