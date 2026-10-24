@@ -7,6 +7,7 @@
 #include "openvic-simulation/defines/EconomyDefines.hpp"
 #include "openvic-simulation/defines/GraphicsDefines.hpp"
 #include "openvic-simulation/defines/MilitaryDefines.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/defines/PopsDefines.hpp"
 #include "openvic-simulation/utility/Getters.hpp"
 
@@ -25,6 +26,8 @@ namespace OpenVic {
 		GraphicsDefines PROPERTY(graphics_defines);
 		MilitaryDefines PROPERTY(military_defines);
 		PopsDefines PROPERTY(pops_defines);
+		// OpenVic additions: common/openvic_defines.lua, optional
+		OpenVicDefines PROPERTY(openvic_defines);
 
 	public:
 		DefineManager();
@@ -34,5 +37,8 @@ namespace OpenVic {
 		}
 
 		bool load_defines_file(ast::NodeCPtr root);
+		OpenVicDefines& get_mutable_openvic_defines() {
+			return openvic_defines;
+		}
 	};
 }

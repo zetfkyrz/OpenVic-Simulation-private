@@ -9,6 +9,7 @@
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/console/ConsoleInstance.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
+#include "openvic-simulation/economy/production/ArtisanalProducer.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -147,7 +148,14 @@ InstanceManager::InstanceManager(
 		}
 	},
 	console_instance { *this },
-	gamestate_updated { gamestate_updated_callback ? std::move(gamestate_updated_callback) : []() {} } {}
+	gamestate_updated { gamestate_updated_callback ? std::move(gamestate_updated_callback) : []() {} } {
+	war_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines());
+	UnitInstanceGroup::set_war_defines(definition_manager.get_define_manager().get_openvic_defines().war);
+	ArtisanalProducer::set_openvic_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
+	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+}
 
 void InstanceManager::set_gamestate_needs_update() {
 	if (!currently_updating_gamestate) {
@@ -194,15 +202,22 @@ void InstanceManager::tick() {
 	SPDLOG_INFO("Tick: {}", today);
 
 	// Tick...
+	money_ledger.begin_day(*this);
 	country_instance_manager.country_manager_tick_before_map();
+	money_ledger.end_phase(*this, "before_map");
 	map_instance.map_tick();
+	money_ledger.end_phase(*this, "map_tick");
 	map_instance.factory_tick(market_instance, today);
+	money_ledger.end_phase(*this, "factories");
 	market_instance.execute_orders();
+	money_ledger.end_phase(*this, "market");
 	country_instance_manager.country_manager_tick_after_map();
+	money_ledger.end_phase(*this, "after_map");
 	unit_instance_manager.tick();
 	war_manager.tick(*this);
 	credit_manager.tick(*this);
 	colonisation_manager.tick(*this);
+	money_ledger.end_phase(*this, "units_wars_credit");
 
 	if (today.is_month_start()) {
 		market_instance.record_price_history();
@@ -211,6 +226,33 @@ void InstanceManager::tick() {
 		RebelDynamics::monthly_update(*this);
 		ResearchDynamics::monthly_update(*this);
 		CountryAI::monthly_update(*this);
+	}
+	money_ledger.end_phase(*this, "monthly");
+	money_ledger.end_day(*this);
+}
+
+void InstanceManager::initialise_pop_savings() {
+	const std::int32_t days = definition_manager.get_define_manager().get_openvic_defines().economy.pop_start_savings_days;
+	if (days <= 0) {
+		return; // the random test cash of setup_pop_test_values stays
+	}
+	const fixed_point_t base_consciousness = definition_manager.get_define_manager().get_pops_defines().get_pdef_base_con();
+
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			// The same quantities as the pop asks for each day (Pop::pop_tick) at the prices of the start of the game
+			const fixed_point_t scalar = (fixed_point_t::_1 + 2 * pop.get_consciousness() / base_consciousness) * type_safe::get(pop.get_size());
+			fixed_point_t daily_cost = 0;
+			for (auto const* needs : { &pop.get_type().get_life_needs(), &pop.get_type().get_everyday_needs() }) {
+				for (auto const& [good_index, quantity] : *needs) {
+					GoodInstance const* const good = good_instance_manager.get_good_instance_by_index(good_index);
+					if (good != nullptr && good->good_definition.is_available_from_start) {
+						daily_cost += quantity * scalar / Pop::size_denominator * good->get_price();
+					}
+				}
+			}
+			pop.set_start_cash(daily_cost * days);
+		}
 	}
 }
 
@@ -306,6 +348,9 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 	// generating pops which then have stats like literacy and consciousness set by country history.
 
 	ret &= country_instance_manager.apply_history_to_countries(*this);
+
+	// The consciousness of the pops is known now, which the needs depend on
+	initialise_pop_savings();
 
 	ret &= map_instance.get_state_manager().generate_states(
 		definition_manager.get_map_definition(),

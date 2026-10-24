@@ -22,6 +22,10 @@
 using namespace OpenVic;
 
 namespace {
+	OpenVicAIDefines const& get_ai_defines(InstanceManager const& instance_manager) {
+		return instance_manager.definition_manager.get_define_manager().get_openvic_defines().ai;
+	}
+
 	// Deterministic "dice" in [0, 100) from the country, the date and a salt
 	int dice(CountryInstance const& country, const Date date, const std::uint64_t salt) {
 		std::uint64_t x = (static_cast<std::uint64_t>(type_safe::get(country.index)) + 1) * 0x9E3779B97F4A7C15ULL;
@@ -41,10 +45,11 @@ namespace {
 		for (auto const& [good, quantity] : production_type.input_goods) {
 			value -= goods.get_good_instance_by_definition(*good).get_price() * quantity;
 		}
-		return value / 2;
+		return value / get_ai_defines(instance_manager).expected_wage_divisor;
 	}
 
 	void build_factory(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		const fixed_point_t cash = country.get_cash_stockpile().load();
 		BuildingTypeManager const& building_types = instance_manager.definition_manager.get_economy_manager().get_building_type_manager();
 
@@ -64,7 +69,7 @@ namespace {
 			for (BuildingType const& building_type : building_types.get_building_types()) {
 				ProductionType const* const production_type = building_type.production_type;
 				if (production_type == nullptr || production_type->template_type != ProductionType::template_type_t::FACTORY
-					|| building_type.cost <= fixed_point_t::_0 || cash < building_type.cost * 3) {
+					|| building_type.cost <= fixed_point_t::_0 || cash < building_type.cost * ai.factory_cash_cost_multiple) {
 					continue;
 				}
 				if (!country.is_building_type_unlocked(building_type) || !production_type->is_valid_for_factory_in(*state)) {
@@ -83,7 +88,7 @@ namespace {
 		}
 
 		// Worth it if the factory pays back in time
-		if (best.state != nullptr && best.return_per_year * CountryAI::FACTORY_PAYBACK_YEARS >= fixed_point_t::_1) {
+		if (best.state != nullptr && best.return_per_year * ai.factory_payback_years >= fixed_point_t::_1) {
 			ProvinceInstance const* key = best.state->get_capital() != nullptr
 				? best.state->get_capital() : &best.state->get_provinces().front().get();
 			SPDLOG_INFO("AI: {} builds {} (return {:.2f} a year)", country.get_identifier(), best.building_type->get_identifier(),
@@ -93,9 +98,10 @@ namespace {
 	}
 
 	void colonise(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		ColonisationManager& colonisation = instance_manager.get_colonisation_manager();
 		if (colonisation.get_total_points(instance_manager, country) - colonisation.get_used_points(instance_manager, country)
-			< instance_manager.definition_manager.get_define_manager().get_country_defines().get_colonization_interest_cost_initial() / 2) {
+			< instance_manager.definition_manager.get_define_manager().get_country_defines().get_colonization_interest_cost_initial() / ai.colonise_min_points_divisor) {
 			return;
 		}
 		// The nearest candidate to the capital
@@ -123,12 +129,14 @@ namespace {
 	}
 
 	void recruit(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		size_t regiments = 0;
 		for (ArmyInstance const& army : country.get_armies()) {
 			regiments += army.get_unit_count();
 		}
 		const size_t wanted = std::max<size_t>(
-			3, country.get_owned_provinces().size() * CountryAI::WAR_REGIMENTS_PER_PROVINCE_PERMILLE / 1000
+			static_cast<size_t>(ai.min_war_regiments),
+			static_cast<size_t>(ai.war_regiments_per_province.of_int(static_cast<std::int64_t>(country.get_owned_provinces().size())))
 		);
 		if (regiments >= wanted) {
 			return;
@@ -147,7 +155,7 @@ namespace {
 		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 		int started = 0;
 		for (ProvinceInstance* province : country.get_owned_provinces()) {
-			if (started >= CountryAI::MAX_RECRUITS_PER_MONTH) {
+			if (started >= ai.max_recruits_per_month) {
 				break;
 			}
 			if (province->get_controller() != &country) {
@@ -165,6 +173,7 @@ namespace {
 
 	// A land neighbour country with its border province next to ours, nullptr if none can be attacked
 	void look_for_war(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		const Date today = instance_manager.get_today();
 		WarManager& war_manager = instance_manager.get_war_manager();
 
@@ -187,9 +196,10 @@ namespace {
 				if (owner->is_rebel_country() || !war_manager.can_declare_war(country, *owner, today)) {
 					continue;
 				}
-				const int limit = owner->is_ai() ? CountryAI::MAX_TARGET_POWER_PERCENT : CountryAI::MAX_TARGET_POWER_PERCENT_PLAYER;
+				const std::int32_t limit =
+					(owner->is_ai() ? ai.max_target_power_ratio : ai.max_target_power_ratio_player).numerator;
 				const fixed_point_t power = owner->military_power.get_untracked();
-				if (power * 100 > own_power * limit) {
+				if (power * Rate::DENOMINATOR > own_power * limit) {
 					continue;
 				}
 				// An ally of the target that is stronger than us stops the plan
@@ -224,6 +234,7 @@ namespace {
 }
 
 void CountryAI::monthly_update(InstanceManager& instance_manager) {
+	OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 	const Date today = instance_manager.get_today();
 
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
@@ -236,11 +247,13 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 
 		if (country.is_at_war()) {
 			recruit(instance_manager, country);
-		} else if (WAR_CHANCE_PERCENT_PER_YEAR > 0 && country.get_total_rank() > 0
-			&& static_cast<int>(country.get_total_rank()) <= MAX_RANK_FOR_WARS
+		} else if (ai.war_chance_per_year.numerator > 0 && country.get_total_rank() > 0
+			&& static_cast<int>(country.get_total_rank()) <= ai.max_rank_for_wars
 			// no wars in the first half year of the game
-			&& today.get_year() * 12 + today.get_month() > 1836 * 12 + 7
-			&& dice(country, today, 7) * 12 < WAR_CHANCE_PERCENT_PER_YEAR) {
+			&& today.get_year() * 12 + today.get_month() > ai.war_free_until_year * 12 + ai.war_free_until_month
+			// the chance of a month: the yearly chance spread over 12 months, the dice has 100 sides
+			&& dice(country, today, static_cast<std::uint64_t>(ai.war_decision_salt)) * 12 * (Rate::DENOMINATOR / 100)
+				< ai.war_chance_per_year.numerator) {
 			look_for_war(instance_manager, country);
 		}
 	}

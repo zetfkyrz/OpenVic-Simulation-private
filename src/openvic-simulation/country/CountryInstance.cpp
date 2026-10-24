@@ -1,5 +1,6 @@
 #include "CountryInstance.hpp"
 
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 
@@ -2008,6 +2009,7 @@ void CountryInstance::after_buy(void* actor, BuyResult const& buy_result) {
 	good_data_t& good_data = country.goods_data.at_index(buy_result.good_index);
 	const fixed_point_t money_spent = buy_result.money_spent_total;
 	country.cash_stockpile -= money_spent;
+	MoneyLedger::record(MoneyLedger::label_t::country_stockpile_buys, -money_spent);
 	country.actual_national_stockpile_spending += money_spent;
 	good_data.stockpile_amount += quantity_bought;
 	good_data.stockpile_change_yesterday += quantity_bought;
@@ -2025,7 +2027,9 @@ void CountryInstance::after_sell(void* actor, SellResult const& sell_result, mem
 	CountryInstance& country = *static_cast<CountryInstance*>(actor);
 	good_data_t& good_data = country.goods_data.at_index(sell_result.good_index);
 	const fixed_point_t money_gained = sell_result.money_gained;
+	MoneyLedger::record(MoneyLedger::label_t::sell_callbacks_countries, money_gained);
 	country.cash_stockpile += money_gained;
+	MoneyLedger::record(MoneyLedger::label_t::country_stockpile_sells, money_gained);
 	country.actual_national_stockpile_income += money_gained;
 	good_data.stockpile_amount -= quantity_sold;
 	good_data.stockpile_change_yesterday -= quantity_sold;
@@ -2150,7 +2154,7 @@ void CountryInstance::country_tick_before_map(
 
 void CountryInstance::calculate_government_good_needs() {
 	// Days of supplies the government tries to keep in the national stockpile
-	constexpr int32_t DAYS_OF_SUPPLY = 10;
+	const int32_t DAYS_OF_SUPPLY = openvic_economy_defines->supply_reserve_days;
 
 	// Army and navy: every unit uses a share (its supply_consumption) of its supply_cost goods per day, scaled by the
 	// army/navy spending slider. The goods come out of the national stockpile and the government keeps a reserve of them.
@@ -2202,8 +2206,8 @@ void CountryInstance::calculate_government_good_needs() {
 					good_data_t& good_data = goods_data.at_index(good->index);
 					// Consumed by the factory when it builds, so it only has to be kept in the stockpile
 					const fixed_point_t daily_need = factory.get_daily_construction_goods(*good) * construction_slider;
-					good_data.government_needs += daily_need * 5;
-					good_data.max_government_consumption += daily_need * 5;
+					good_data.government_needs += daily_need * openvic_economy_defines->construction_reserve_days;
+					good_data.max_government_consumption += daily_need * openvic_economy_defines->construction_reserve_days;
 				}
 			}
 		}
@@ -2449,6 +2453,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 		);
 	}
 	cash_stockpile -= actual_administration_spending;
+	MoneyLedger::record(MoneyLedger::label_t::budget_administration, -actual_administration_spending_copy);
 
 	const fixed_point_t actual_education_spending_copy = actual_education_spending.load();
 	if (OV_unlikely(actual_education_spending_copy > actual_education_budget)) {
@@ -2458,6 +2463,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 		);
 	}
 	cash_stockpile -= actual_education_spending;
+	MoneyLedger::record(MoneyLedger::label_t::budget_education, -actual_education_spending_copy);
 
 	const fixed_point_t actual_military_spending_copy = actual_military_spending.load();
 	if (OV_unlikely(actual_military_spending_copy > actual_military_budget)) {
@@ -2467,6 +2473,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 		);
 	}
 	cash_stockpile -= actual_military_spending;
+	MoneyLedger::record(MoneyLedger::label_t::budget_military, -actual_military_spending_copy);
 
 	const fixed_point_t actual_social_spending_copy = actual_pensions_spending.load() + actual_unemployment_subsidies_spending.load();
 	if (OV_unlikely(actual_social_spending_copy > actual_social_budget)) {
@@ -2479,6 +2486,8 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	}
 	cash_stockpile -= actual_pensions_spending;
 	cash_stockpile -= actual_unemployment_subsidies_spending;
+	MoneyLedger::record(MoneyLedger::label_t::budget_pensions, -actual_pensions_spending.load());
+	MoneyLedger::record(MoneyLedger::label_t::budget_unemployment_subsidies, -actual_unemployment_subsidies_spending.load());
 
 	const fixed_point_t actual_import_subsidies_spending_copy = actual_import_subsidies_spending.load();
 	if (OV_unlikely(actual_import_subsidies_spending_copy > actual_import_subsidies_budget)) {
@@ -2488,6 +2497,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 		);
 	}
 	cash_stockpile -= actual_import_subsidies_spending;
+	MoneyLedger::record(MoneyLedger::label_t::budget_import_subsidies, -actual_import_subsidies_spending_copy);
 
 	const fixed_point_t cash_stockpile_copy = cash_stockpile.load();
 	if (OV_unlikely(cash_stockpile_copy < 0)) {
@@ -2498,10 +2508,12 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	}
 
 	cash_stockpile += actual_tariff_income;
+	MoneyLedger::record(MoneyLedger::label_t::tariff_income, actual_tariff_income.load());
 
 	const fixed_point_t gold_income_value = country_defines.get_gold_to_cash_rate() * total_gold_production;;
 	gold_income.set(gold_income_value);
 	cash_stockpile += gold_income_value;
+	MoneyLedger::record(MoneyLedger::label_t::gold_income, gold_income_value);
 	free_funds = cash_stockpile.load();
 	const fixed_point_t yesterdays_balance = cash_stockpile - cash_stockpile_start_of_tick;
 	balance_history.push_back(yesterdays_balance);
@@ -2535,6 +2547,7 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 	const std::lock_guard<spin_mutex> lock_guard { taxable_income_mutex };
 	taxable_income_by_pop_type.at(pop_type) += gross_income;
 	cash_stockpile += paid_as_tax;
+	MoneyLedger::record(MoneyLedger::label_t::tax_income, paid_as_tax);
 }
 
 void CountryInstance::report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {

@@ -2,6 +2,9 @@
 
 #include <functional>
 #include <vector>
+#include "openvic-simulation/misc/MoneyLedger.hpp"
+#include "openvic-simulation/politics/PoliticsDynamics.hpp"
+#include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/misc/Replay.hpp"
 
 #include <utility>
@@ -65,6 +68,11 @@ namespace OpenVic {
 		CountryInstanceManager PROPERTY_REF(country_instance_manager);
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
+		// Debugging tool: follows the money of the economy (off unless switched on, see MoneyLedger.hpp)
+		MoneyLedger PROPERTY_REF(money_ledger);
+		// What the monthly dynamics remember (belongs to the instance: games one after another start from the same state)
+		ResearchDynamics::State PROPERTY_REF(research_state);
+		RebelDynamics::State PROPERTY_REF(rebel_state);
 		NotificationLog PROPERTY_REF(notification_log);
 		ColonisationManager PROPERTY_REF(colonisation_manager);
 		CreditManager PROPERTY_REF(credit_manager);
@@ -91,6 +99,9 @@ namespace OpenVic {
 		void tick();
 
 		void execute_game_actions();
+
+		// Gives every pop the savings of a number of days of its life and everyday needs (replaces the random test cash)
+		void initialise_pop_savings();
 
 		// Every executed game action that changes the simulation, for saving the game as a replay
 		std::vector<ReplayEntry> action_history;

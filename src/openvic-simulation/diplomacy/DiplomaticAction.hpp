@@ -14,6 +14,7 @@
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 
 namespace OpenVic {
+	struct DiplomacyDefines;
 	struct InstanceManager;
 
 	struct DiplomaticActionType {
@@ -148,6 +149,6 @@ namespace OpenVic {
 			InstanceManager& instance_manager
 		) const;
 
-		bool setup_diplomatic_actions();
+		bool setup_diplomatic_actions(DiplomacyDefines const& defines);
 	};
 }

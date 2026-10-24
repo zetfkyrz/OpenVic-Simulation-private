@@ -10,165 +10,198 @@
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/object/Timespan.hpp"
 
+// The credit system. The formulas and the rules are described in docs/CREDITS.md, the numbers are in the group ov_credit of
+// common/openvic_defines.lua (defines/OpenVicDefines.hpp, OV_CREDIT_DEFINES).
 namespace OpenVic {
 	struct CountryInstance;
 	struct InstanceManager;
+	struct OpenVicCreditDefines;
 	struct State;
 
-	// A loan. Internal loans are given by the state (the central bank of a country) to the capitalists of one of its
-	// states, to build factories and to keep them running at a loss. External loans are given by one country to another.
+	// A credit. A lender first offers it (status OFFERED, the money is held by the credit), somebody takes it (ACTIVE: the money
+	// is paid out and the schedule starts), it ends when it is paid back, written off or when the lender takes the offer back
+	// (CLOSED).
+	// Internal credits are offered by a country to the capitalists of its regions, which take them when they need money for a
+	// factory. External credits are offered by a country to all countries or to chosen ones.
 	struct Loan {
 		enum struct kind_t : std::uint8_t { INTERNAL, EXTERNAL };
-		// Length of the loan: 5, 10 or 20 years
+		// SHORT: the money can only be spent on constructions of at most SHORT_MAX_CONSTRUCTION_DAYS, MEDIUM and LONG: on anything
+		// Lengths and the delay of the payments of every term are in the defines.
 		enum struct term_t : std::uint32_t { SHORT = 0, MEDIUM = 1, LONG = 2 };
-		// What happens with a debt that is not paid when the loan is due
-		enum struct maturity_policy_t : std::uint32_t {
-			FORGIVE = 0, // the debt is written off
-			SOFT = 1,    // the money of the capitalists is taken, the factories are not touched
-			HARD = 2     // the money first, then the shares of the capitalists in the factories at their value
-		};
-		// What the money of a loan is spent on
+		enum struct status_t : std::uint8_t { OFFERED, ACTIVE, CLOSED };
+		// How a credit ended
+		enum struct end_t : std::uint8_t { NONE, PAID, WRITTEN_OFF, DEFAULTED, WITHDRAWN, EXPIRED };
+		// What the money of a credit is spent on
 		enum struct purpose_t : std::uint8_t { CONSTRUCTION, LOSS_COVER };
 
 		std::uint32_t id = 0;
 		kind_t kind = kind_t::EXTERNAL;
+		status_t status = status_t::OFFERED;
+		end_t end = end_t::NONE;
 		CountryInstance* lender = nullptr;
-		// The borrowing country, for internal loans the country of the state
+		// The country that took an external credit (nullptr while it is offered), for internal credits the country of the state
 		CountryInstance* borrower = nullptr;
-		// The state whose capitalists borrowed the money (internal loans)
+		// The state whose capitalists took an internal credit (nullptr while it is offered)
 		State* state = nullptr;
+		// Who may take the credit: empty = all countries (external) / all regions of the lender (internal)
+		memory::vector<CountryInstance*> target_countries;
+		memory::vector<State*> target_states;
 
 		fixed_point_t principal;
-		// What is still owed (the principal left plus the interest that could not be paid)
-		fixed_point_t remaining;
-		// The part of an internal loan the capitalists have not spent yet
+		// The principal that is still owed, and the interest that is still to be paid (the part of it that is already earned
+		// during the delay and the part that will be earned later)
+		fixed_point_t principal_left;
+		fixed_point_t interest_left;
+		// The interest earned during the delay before a change of the principal (a partial early repayment)
+		fixed_point_t interest_locked;
+		// The part of an internal credit the capitalists have not spent yet
 		fixed_point_t unspent;
-		// Yearly interest as a fraction (0.05 = 5%); the player may set 0%, AI countries never go below 1%
+		// Yearly interest (0.05 = 5%), set once when the credit is offered
 		fixed_point_t annual_rate;
 		fixed_point_t interest_paid;
+		fixed_point_t principal_paid;
 
 		term_t term = term_t::SHORT;
-		maturity_policy_t policy = maturity_policy_t::SOFT;
-		Date start_date;
-		// Nothing has to be paid back before this date (internal loans)
-		Date grace_end;
+		std::int32_t term_days = 0;
+		std::int32_t delay_days = 0;
+		// Number of monthly payments that are still to be made
+		std::int32_t installments_left = 0;
+
+		Date issue_date;
+		Date taken_date;
+		// The first payment is not due before this date
+		Date payments_start;
+		// What is not paid back by this date is a default
 		Date due_date;
-		bool active = true;
-		// An external loan taken by a country that pays itself back every month as far as the cash allows
-		bool auto_repay = false;
+		// The date from which the principal earns the interest that is not yet in interest_left (changes with early repayments)
+		Date accrual_from;
+		bool has_expiry = false;
+		Date expiry_date;
 
-		static Timespan get_term_length(term_t term);
-		static Timespan get_grace_length(term_t term);
+		fixed_point_t get_remaining() const {
+			return principal_left + interest_left;
+		}
+		bool is_taken() const {
+			return status == status_t::ACTIVE;
+		}
+		bool may_be_taken_by(CountryInstance const& country) const;
 
-		// Short loans can only be spent on constructions that take a year or less, the others on anything
-		bool can_fund(purpose_t purpose, std::int32_t construction_days) const;
-	};
+		// Short credits can only be spent on constructions that take a year or less, the others on anything
+		bool can_fund(purpose_t purpose, std::int32_t construction_days, std::int32_t short_max_days) const;
 
-	struct ExternalOffer {
-		CountryInstance* lender = nullptr;
-		fixed_point_t max_amount;
-		fixed_point_t rate;
-	};
+		// The interest of a credit over its whole life (docs/CREDITS.md): the principal earns the rate during the delay, and
+		// afterwards it is paid back in equal parts, so on average half of it is owed during the payments.
+		static fixed_point_t calculate_total_interest(
+			fixed_point_t principal, fixed_point_t annual_rate, std::int32_t delay_days, std::int32_t repayment_days
+		);
+		static std::int32_t calculate_installments(std::int32_t term_days, std::int32_t delay_days);
 
-	// An AI country that wants an alliance with a human country that offered it money
-	struct AllianceRequest {
-		CountryInstance* from = nullptr;
-		CountryInstance* to = nullptr;
-		Date date;
+		// The schedule starts: the money is paid out on this date
+		void start_schedule(Date today);
+		// What is due in this month's installment (zero before the payments start)
+		fixed_point_t get_installment_due(Date today) const;
+		// Records a payment of the installment (the interest and the principal in the proportion of the schedule). The month
+		// counts whether the payment was in full or not: what is missing is spread over the payments that are left.
+		void apply_installment_payment(fixed_point_t due, fixed_point_t paid);
+		// What it takes to pay everything back today (the principal and the interest earned during the delay)
+		fixed_point_t get_full_repayment_cost(Date today) const;
+		// Pays (a part of) the principal back early, the schedule of the rest is calculated again. Returns what was paid.
+		fixed_point_t apply_early_repayment(Date today, fixed_point_t amount);
 	};
 
 	struct CreditManager {
-		// Who gets a loan offered to a group of countries
-		enum struct target_group_t : std::uint32_t {
-			ALL = 0,      // every country
-			ALLIES = 1,   // countries in an alliance with the lender
-			FRIENDS = 2,  // countries whose relations with the lender are above 100
-			SELECTED = 3  // the countries chosen in the table (stage_loan_target)
-		};
-		static constexpr std::int32_t FRIEND_RELATIONS = 100;
+		static constexpr std::int32_t DAYS_PER_INSTALLMENT = 30;
 
-		// Lowest rate at all (the player can lend and borrow for free)
-		static fixed_point_t get_min_rate() {
-			return fixed_point_t::_0;
-		}
-		// AI countries never lend for less than this
-		static fixed_point_t get_ai_min_rate() {
-			return fixed_point_t(1) / 100;
-		}
-		static fixed_point_t get_max_rate() {
-			return fixed_point_t(1) / 2;
-		}
-		static fixed_point_t clamp_rate(fixed_point_t rate);
 		// The most a country can owe (to others) before nobody lends to it
-		static fixed_point_t get_debt_limit(CountryInstance const& country);
+		static fixed_point_t get_debt_limit(OpenVicCreditDefines const& defines, CountryInstance const& country);
 
 	private:
 		memory::vector<std::unique_ptr<Loan>> loans;
 		std::uint32_t next_loan_id = 1;
-		// Month (year * 12 + month) of the last internal loan given by each country: at most one per month
-		std::unordered_map<CountryInstance const*, std::int32_t> last_internal_loan_month;
-
-		void monthly_interest_and_repayment(InstanceManager& instance_manager, Loan& loan);
-		void handle_maturity(InstanceManager& instance_manager, Loan& loan);
-		void seize(InstanceManager& instance_manager, Loan& loan, bool hard);
-		void run_ai(InstanceManager& instance_manager);
-		void run_capitalist_investment(InstanceManager& instance_manager);
+		OpenVicCreditDefines const* defines = nullptr;
+		// The countries and regions the player has chosen in the tables, until the credit is offered
+		std::unordered_map<CountryInstance const*, memory::vector<CountryInstance*>> staged_countries;
+		std::unordered_map<CountryInstance const*, memory::vector<State*>> staged_states;
 
 		Loan& add_loan(Loan&& loan);
-		memory::vector<AllianceRequest> alliance_requests;
-		std::unordered_map<CountryInstance const*, memory::vector<CountryInstance*>> staged_targets;
-
-		// How an AI country answers an offer of a loan: accepts, or (if it needs the money) tries to get closer to the lender
-		bool ai_accepts_loan(
-			InstanceManager& instance_manager, CountryInstance& borrower, CountryInstance& lender, fixed_point_t amount,
-			fixed_point_t rate, bool allow_reactions
+		void close(Loan& loan, Loan::end_t how);
+		// The payment goes from the borrower to the lender: from the treasury of a country, from the savings of capitalists
+		fixed_point_t pay(Loan& loan, fixed_point_t amount);
+		void process_monthly(InstanceManager& instance_manager, Loan& loan);
+		void handle_due(InstanceManager& instance_manager, Loan& loan);
+		void seize(InstanceManager& instance_manager, Loan& loan);
+		void check_parties(InstanceManager& instance_manager, Loan& loan);
+		void activate(InstanceManager& instance_manager, Loan& loan, CountryInstance* borrower, State* state);
+		void expire_offers(InstanceManager& instance_manager);
+		void run_ai(InstanceManager& instance_manager);
+		void run_ai_lending(InstanceManager& instance_manager);
+		void run_ai_borrowing(InstanceManager& instance_manager);
+		void run_capitalist_investment(InstanceManager& instance_manager);
+		// Capitalists of a state that cannot pay for a project take the cheapest internal credit that makes it possible
+		bool take_internal_offer_for(
+			InstanceManager& instance_manager, State& state, fixed_point_t cost, std::int32_t construction_days
 		);
+		std::int32_t count_open_offers(CountryInstance const& lender, Loan::kind_t kind) const;
+		bool lender_accepts(
+			InstanceManager const& instance_manager, Loan const& loan, CountryInstance const& borrower
+		) const;
 
 	public:
+		// Called when the instance is created, the numbers come from the defines of the game
+		void set_defines(OpenVicCreditDefines const& new_defines) {
+			defines = &new_defines;
+		}
+		OpenVicCreditDefines const& get_defines() const {
+			return *defines;
+		}
+
 		std::span<const std::unique_ptr<Loan>> get_loans() const {
 			return loans;
 		}
 		Loan const* get_loan_by_id(std::uint32_t id) const;
 
+		// The length of a term and the delay of its payments, from the defines
+		std::int32_t get_term_days(Loan::term_t term) const;
+		std::int32_t get_delay_days(Loan::term_t term) const;
+
+		// What a country owes to other countries (external credits it took)
 		fixed_point_t get_total_debt(CountryInstance const& borrower) const;
-		fixed_point_t get_monthly_interest(CountryInstance const& borrower) const;
+		// What the country has to pay in a month for its external credits
+		fixed_point_t get_monthly_payments(CountryInstance const& borrower, Date today) const;
 
-		// Offers of the AI countries that have money to lend
-		memory::vector<ExternalOffer> get_offers(InstanceManager const& instance_manager, CountryInstance const& borrower) const;
+		// The player chooses countries / regions in a table, then offers the credit to them
+		void stage_target_country(CountryInstance const& lender, CountryInstance& target, bool selected);
+		void stage_target_state(CountryInstance const& lender, State& target, bool selected);
+		void clear_staged(CountryInstance const& lender);
+		memory::vector<CountryInstance*> const& get_staged_countries(CountryInstance const& lender) const;
+		memory::vector<State*> const& get_staged_states(CountryInstance const& lender) const;
 
-		// A country takes money from the lender (the terms are the lender's offer: its external rate)
-		bool take_external_loan(
-			InstanceManager& instance_manager, CountryInstance& borrower, CountryInstance& lender, fixed_point_t amount,
-			Loan::term_t term
+		// A country offers money to the capitalists of its regions (all of them or the staged ones). The money is held by
+		// the credit until somebody takes it or the offer is withdrawn.
+		Loan* offer_internal_credit(
+			InstanceManager& instance_manager, CountryInstance& lender, fixed_point_t amount, fixed_point_t rate, Loan::term_t term,
+			bool all_regions, bool as_ai = false
 		);
-		// The player offers money to another country, an AI country accepts if the loan is good for it
-		bool give_external_loan(
-			InstanceManager& instance_manager, CountryInstance& lender, CountryInstance& borrower, fixed_point_t amount,
-			fixed_point_t rate, Loan::term_t term
+		// A country offers money to all countries or to the staged ones. If it names countries, nobody else can take it.
+		Loan* offer_external_credit(
+			InstanceManager& instance_manager, CountryInstance& lender, fixed_point_t amount, fixed_point_t rate, Loan::term_t term,
+			bool all_countries, bool as_ai = false
 		);
-		// The player offers the same loan to a group of countries, returns how many accepted
-		std::size_t give_external_loans_to_group(
-			InstanceManager& instance_manager, CountryInstance& lender, target_group_t group, fixed_point_t amount_each,
-			fixed_point_t rate, Loan::term_t term
-		);
-		// Adds / removes a country in the list of the countries chosen for target_group_t::SELECTED
-		void stage_loan_target(CountryInstance const& lender, CountryInstance& target, bool selected);
-		memory::vector<CountryInstance*> const& get_staged_targets(CountryInstance const& lender) const;
-		std::span<const AllianceRequest> get_alliance_requests() const {
-			return alliance_requests;
-		}
-		bool answer_alliance_request(InstanceManager& instance_manager, CountryInstance& to, CountryInstance& from, bool accept);
-		// The state lends to the capitalists of one of its states, at most once a month for a country
-		bool give_internal_loan(
-			InstanceManager& instance_manager, CountryInstance& lender, State& state, fixed_point_t amount, fixed_point_t rate,
-			Loan::term_t term, Loan::maturity_policy_t policy
-		);
-		// Pays back (a part of) a loan from the money of the borrower, returns the amount paid
+		// The lender takes the offer back, the held money returns to its treasury
+		bool withdraw_offer(InstanceManager& instance_manager, CountryInstance& lender, std::uint32_t id);
+		// A country takes an offered external credit
+		bool take_credit(InstanceManager& instance_manager, CountryInstance& borrower, std::uint32_t id);
+		// The capitalists of a region take an offered internal credit (they do it themselves when they need money for a factory,
+		// this is for the cases where the choice is made by a script or a test)
+		bool take_internal_credit(InstanceManager& instance_manager, std::uint32_t id, State& state);
+		// Offers that country can take now (external, addressed to it or to everybody)
+		memory::vector<Loan const*> get_available_offers(InstanceManager const& instance_manager, CountryInstance const& borrower) const;
+
+		// Pays back (a part of) the principal of a credit early, from the money of the borrower. Returns what was paid.
 		fixed_point_t repay_loan(InstanceManager& instance_manager, Loan& loan, fixed_point_t amount);
 		bool repay_loan_by_id(InstanceManager& instance_manager, CountryInstance& payer, std::uint32_t id, fixed_point_t amount);
-		bool set_loan_auto_repay(CountryInstance& payer, std::uint32_t id, bool auto_repay);
 
-		// Money the capitalists of the state can spend: their savings and the unspent parts of the loans that allow it
+		// Money the capitalists of the state can spend: their savings and the unspent parts of the credits that allow it
 		fixed_point_t get_capitalist_money(State const& state, Loan::purpose_t purpose, std::int32_t construction_days) const;
 		fixed_point_t take_capitalist_money(
 			State& state, fixed_point_t amount, Loan::purpose_t purpose, std::int32_t construction_days

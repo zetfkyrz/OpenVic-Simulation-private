@@ -212,6 +212,16 @@ namespace OpenVic {
 		Pop& operator=(Pop const&) = delete;
 		Pop& operator=(Pop&&) = delete;
 
+		// The artisan business of the pop, nullptr if it is not an artisan (for the reports)
+		ArtisanalProducer const* get_artisanal_producer() const {
+			return artisanal_producer_optional.has_value() ? &artisanal_producer_optional.value() : nullptr;
+		}
+
+		// The savings of the pop at the start of the game (see InstanceManager::initialise_pop_savings)
+		void set_start_cash(const fixed_point_t amount) {
+			cash = amount;
+		}
+
 		void setup_pop_test_values(TypedSpan<reform_index_t, const Reform> reforms);
 		bool convert_to_equivalent();
 		void update_location_based_attributes();

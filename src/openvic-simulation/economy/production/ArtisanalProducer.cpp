@@ -479,11 +479,28 @@ std::optional<fixed_point_t> ArtisanalProducer::estimate_production_type_score(
 	estimated_costs *= max_cost_multiplier;
 
 	const fixed_point_t estimated_revenue = production_type.base_output_quantity * output_good.get_price();
-	return calculate_production_type_score(
+	const fixed_point_t score = calculate_production_type_score(
 		estimated_revenue,
 		estimated_costs,
 		production_type.base_workforce_size
 	);
+	if (openvic_defines == nullptr || openvic_defines->artisan_availability_weight.numerator == 0) {
+		return score;
+	}
+
+	// The inputs must be there to be bought (the TODO of Victoria 2's choice): the share of the demand for the scarcest input that
+	// was met yesterday lowers the score. The price alone does not show it quickly, a price changes only by a step a day.
+	fixed_point_t availability = fixed_point_t::_1;
+	for (auto const& [input_good, input_quantity] : production_type.input_goods) {
+		GoodInstance const& input = good_instance_manager.get_good_instance_by_definition(*input_good);
+		const fixed_point_t demand = input.get_total_demand_yesterday();
+		const fixed_point_t supply = input.get_total_supply_yesterday();
+		if (demand > supply && demand > fixed_point_t::_0) {
+			availability = std::min(availability, supply / demand);
+		}
+	}
+	// score * (1 - weight * (1 - availability))
+	return score * (fixed_point_t::_1 - openvic_defines->artisan_availability_weight.fixed() * (fixed_point_t::_1 - availability));
 }
 
 fixed_point_t ArtisanalProducer::calculate_production_type_score(

@@ -25,15 +25,15 @@ using namespace OpenVic;
 
 namespace {
 	// Place of an ideology on the line from conservative (0) to radical (1)
-	double ideology_position(std::string_view identifier) {
-		if (identifier == "reactionary") return 0.0;
-		if (identifier == "conservative") return 0.25;
-		if (identifier == "fascist") return 0.35;
-		if (identifier == "liberal") return 0.6;
-		if (identifier == "anarcho_liberal") return 0.75;
-		if (identifier == "socialist") return 0.85;
-		if (identifier == "communist") return 1.0;
-		return 0.5;
+	double ideology_position(OpenVicPoliticsDefines const& d, std::string_view identifier) {
+		if (identifier == "reactionary") return d.position_reactionary;
+		if (identifier == "conservative") return d.position_conservative;
+		if (identifier == "fascist") return d.position_fascist;
+		if (identifier == "liberal") return d.position_liberal;
+		if (identifier == "anarcho_liberal") return d.position_anarcho_liberal;
+		if (identifier == "socialist") return d.position_socialist;
+		if (identifier == "communist") return d.position_communist;
+		return d.position_other;
 	}
 
 	struct IdeologyWeight {
@@ -42,26 +42,26 @@ namespace {
 	};
 
 	// Starting leanings of the pop types, scaled by the state of the pop below
-	std::vector<IdeologyWeight> base_leaning(std::string_view pop_type, std::string_view strata) {
-		if (pop_type == "aristocrats") return { { "reactionary", 0.45 }, { "conservative", 0.45 }, { "liberal", 0.1 } };
-		if (pop_type == "capitalists") return { { "reactionary", 0.1 }, { "conservative", 0.35 }, { "liberal", 0.55 } };
-		if (pop_type == "bureaucrats") return { { "reactionary", 0.2 }, { "conservative", 0.4 }, { "liberal", 0.4 } };
-		if (pop_type == "clergymen") return { { "reactionary", 0.45 }, { "conservative", 0.45 }, { "liberal", 0.1 } };
-		if (pop_type == "officers") return { { "reactionary", 0.35 }, { "conservative", 0.5 }, { "fascist", 0.1 }, { "liberal", 0.05 } };
-		if (pop_type == "soldiers") return { { "reactionary", 0.3 }, { "conservative", 0.5 }, { "liberal", 0.2 } };
-		if (pop_type == "farmers") return { { "reactionary", 0.35 }, { "conservative", 0.5 }, { "liberal", 0.15 } };
-		if (pop_type == "labourers") return { { "conservative", 0.25 }, { "liberal", 0.45 }, { "socialist", 0.3 } };
-		if (pop_type == "craftsmen" || pop_type == "artisans") return { { "conservative", 0.2 }, { "liberal", 0.5 }, { "socialist", 0.3 } };
-		if (pop_type == "clerks") return { { "conservative", 0.3 }, { "liberal", 0.6 }, { "socialist", 0.1 } };
-		if (pop_type == "slaves") return { { "conservative", 0.3 }, { "liberal", 0.3 }, { "socialist", 0.4 } };
-		if (strata == "rich") return { { "reactionary", 0.3 }, { "conservative", 0.4 }, { "liberal", 0.3 } };
-		if (strata == "middle") return { { "conservative", 0.35 }, { "liberal", 0.55 }, { "socialist", 0.1 } };
-		return { { "reactionary", 0.2 }, { "conservative", 0.45 }, { "liberal", 0.2 }, { "socialist", 0.15 } };
+	std::vector<IdeologyWeight> base_leaning(OpenVicPoliticsDefines const& d, std::string_view pop_type, std::string_view strata) {
+		if (pop_type == "aristocrats") return { { "reactionary", d.leaning_aristocrats_reactionary }, { "conservative", d.leaning_aristocrats_conservative }, { "liberal", d.leaning_aristocrats_liberal } };
+		if (pop_type == "capitalists") return { { "reactionary", d.leaning_capitalists_reactionary }, { "conservative", d.leaning_capitalists_conservative }, { "liberal", d.leaning_capitalists_liberal } };
+		if (pop_type == "bureaucrats") return { { "reactionary", d.leaning_bureaucrats_reactionary }, { "conservative", d.leaning_bureaucrats_conservative }, { "liberal", d.leaning_bureaucrats_liberal } };
+		if (pop_type == "clergymen") return { { "reactionary", d.leaning_clergymen_reactionary }, { "conservative", d.leaning_clergymen_conservative }, { "liberal", d.leaning_clergymen_liberal } };
+		if (pop_type == "officers") return { { "reactionary", d.leaning_officers_reactionary }, { "conservative", d.leaning_officers_conservative }, { "fascist", d.leaning_officers_fascist }, { "liberal", d.leaning_officers_liberal } };
+		if (pop_type == "soldiers") return { { "reactionary", d.leaning_soldiers_reactionary }, { "conservative", d.leaning_soldiers_conservative }, { "liberal", d.leaning_soldiers_liberal } };
+		if (pop_type == "farmers") return { { "reactionary", d.leaning_farmers_reactionary }, { "conservative", d.leaning_farmers_conservative }, { "liberal", d.leaning_farmers_liberal } };
+		if (pop_type == "labourers") return { { "conservative", d.leaning_labourers_conservative }, { "liberal", d.leaning_labourers_liberal }, { "socialist", d.leaning_labourers_socialist } };
+		if (pop_type == "craftsmen" || pop_type == "artisans") return { { "conservative", d.leaning_craftsmen_conservative }, { "liberal", d.leaning_craftsmen_liberal }, { "socialist", d.leaning_craftsmen_socialist } };
+		if (pop_type == "clerks") return { { "conservative", d.leaning_clerks_conservative }, { "liberal", d.leaning_clerks_liberal }, { "socialist", d.leaning_clerks_socialist } };
+		if (pop_type == "slaves") return { { "conservative", d.leaning_slaves_conservative }, { "liberal", d.leaning_slaves_liberal }, { "socialist", d.leaning_slaves_socialist } };
+		if (strata == "rich") return { { "reactionary", d.leaning_strata_rich_reactionary }, { "conservative", d.leaning_strata_rich_conservative }, { "liberal", d.leaning_strata_rich_liberal } };
+		if (strata == "middle") return { { "conservative", d.leaning_strata_middle_conservative }, { "liberal", d.leaning_strata_middle_liberal }, { "socialist", d.leaning_strata_middle_socialist } };
+		return { { "reactionary", d.leaning_strata_other_reactionary }, { "conservative", d.leaning_strata_other_conservative }, { "liberal", d.leaning_strata_other_liberal }, { "socialist", d.leaning_strata_other_socialist } };
 	}
 
 	// Close places support each other
-	double closeness(const double first, const double second) {
-		const double d = (first - second) / 0.3;
+	double closeness(OpenVicPoliticsDefines const& defines, const double first, const double second) {
+		const double d = (first - second) / defines.closeness_width;
 		return 1.0 / (1.0 + d * d);
 	}
 
@@ -72,6 +72,7 @@ namespace {
 
 void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 	DefinitionManager const& definitions = instance_manager.definition_manager;
+	OpenVicPoliticsDefines const& defines = definitions.get_define_manager().get_openvic_defines().politics;
 	PoliticsManager const& politics = definitions.get_politics_manager();
 	IssueManager const& issues = politics.get_issue_manager();
 	ModifierEffectCache const& cache = definitions.get_modifier_manager().get_modifier_effect_cache();
@@ -84,7 +85,7 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 
 	std::vector<double> positions;
 	for (Ideology const& ideology : ideologies) {
-		positions.push_back(ideology_position(ideology.get_identifier()));
+		positions.push_back(ideology_position(defines, ideology.get_identifier()));
 	}
 
 	// Groups that take part in the distribution of the support of a pop
@@ -153,7 +154,7 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				// ---- ideologies of the pop
 				std::vector<double> shares(ideology_count, 0.0);
 				double share_total = 0.0;
-				for (IdeologyWeight const& leaning : base_leaning(type.get_identifier(), type.strata.get_identifier())) {
+				for (IdeologyWeight const& leaning : base_leaning(defines, type.get_identifier(), type.strata.get_identifier())) {
 					for (Ideology const& ideology : ideologies) {
 						if (ideology.get_identifier() == leaning.ideology) {
 							shares[static_cast<size_t>(type_safe::get(ideology.index))] += leaning.weight;
@@ -163,14 +164,14 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				for (Ideology const& ideology : ideologies) {
 					const size_t i = static_cast<size_t>(type_safe::get(ideology.index));
 					const std::string_view name = ideology.get_identifier();
-					double w = shares[i] + 0.01;
-					if (name == "reactionary") w *= 1.0 - 0.6 * consciousness;
-					else if (name == "conservative") w *= 1.0 - 0.3 * consciousness;
-					else if (name == "liberal") w *= 1.0 + 0.8 * consciousness + 0.5 * literacy;
-					else if (name == "socialist") w *= 0.3 + 1.5 * consciousness + 1.0 * militancy;
-					else if (name == "communist") w *= 0.05 + 1.0 * consciousness * militancy;
-					else if (name == "anarcho_liberal") w *= 0.1 + 1.2 * militancy;
-					else if (name == "fascist") w *= 0.1 + 0.8 * militancy * (1.0 - consciousness);
+					double w = shares[i] + defines.ideology_base_weight;
+					if (name == "reactionary") w *= 1.0 - defines.reactionary_consciousness_penalty * consciousness;
+					else if (name == "conservative") w *= 1.0 - defines.conservative_consciousness_penalty * consciousness;
+					else if (name == "liberal") w *= 1.0 + defines.liberal_consciousness_bonus * consciousness + defines.liberal_literacy_bonus * literacy;
+					else if (name == "socialist") w *= defines.socialist_base + defines.socialist_consciousness_bonus * consciousness + defines.socialist_militancy_bonus * militancy;
+					else if (name == "communist") w *= defines.communist_base + defines.communist_consciousness_militancy_bonus * consciousness * militancy;
+					else if (name == "anarcho_liberal") w *= defines.anarcho_liberal_base + defines.anarcho_liberal_militancy_bonus * militancy;
+					else if (name == "fascist") w *= defines.fascist_base + defines.fascist_militancy_bonus * militancy * (1.0 - consciousness);
 					if (!ideology_active[i]) w = 0.0;
 					shares[i] = w;
 					share_total += w;
@@ -194,7 +195,7 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 					for (size_t option = 0; option < option_count; ++option) {
 						const double position = option_count > 1 ? static_cast<double>(option) / static_cast<double>(option_count - 1) : 0.5;
 						for (size_t i = 0; i < ideology_count; ++i) {
-							weights[option] += shares[i] * closeness(positions[i], position);
+							weights[option] += shares[i] * closeness(defines, positions[i], position);
 						}
 						weight_total += weights[option];
 					}
@@ -319,6 +320,7 @@ void PoliticsDynamics::get_group_support(CountryInstance const& country, ReformG
 PoliticsDynamics::ReformStatus PoliticsDynamics::get_reform_status(
 	InstanceManager const& instance_manager, CountryInstance const& country, Reform const& reform
 ) {
+	OpenVicPoliticsDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().politics;
 	ReformStatus status;
 	ReformGroup const& group = reform.group;
 	auto const& options = group.get_reforms();
@@ -378,8 +380,8 @@ PoliticsDynamics::ReformStatus PoliticsDynamics::get_reform_status(
 		double accept_new = 0.0, accept_current = 0.0;
 		for (Ideology const& ideology : ideologies) {
 			const double share = to_double(country.get_upper_house_proportion_by_ideology().at(ideology));
-			accept_new += share * closeness(ideology_position(ideology.get_identifier()), target_position);
-			accept_current += share * closeness(ideology_position(ideology.get_identifier()), current_pos);
+			accept_new += share * closeness(defines, ideology_position(defines, ideology.get_identifier()), target_position);
+			accept_current += share * closeness(defines, ideology_position(defines, ideology.get_identifier()), current_pos);
 		}
 		status.upper_house = fixed_point_t::parse_unsafe(static_cast<float>(accept_new));
 		if (accept_new <= accept_current) {
@@ -399,21 +401,6 @@ PoliticsDynamics::ReformStatus PoliticsDynamics::get_reform_status(
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 
 namespace {
-	// Provinces where a rising is going on (to lower the militancy when it ends)
-	std::unordered_set<ProvinceInstance const*>& active_uprisings() {
-		static std::unordered_set<ProvinceInstance const*> set;
-		return set;
-	}
-	// When a rising started and when it ended
-	std::unordered_map<ProvinceInstance const*, Date>& uprising_started() {
-		static std::unordered_map<ProvinceInstance const*, Date> map;
-		return map;
-	}
-	std::unordered_map<ProvinceInstance const*, Date>& uprising_ended() {
-		static std::unordered_map<ProvinceInstance const*, Date> map;
-		return map;
-	}
-
 	CountryInstance* find_rebel_country(InstanceManager& instance_manager) {
 		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 			if (country.is_rebel_country()) {
@@ -447,6 +434,8 @@ memory::vector<RebelDynamics::Uprising> RebelDynamics::get_uprisings(InstanceMan
 }
 
 void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
+	State& state = instance_manager.get_rebel_state();
+	OpenVicPoliticsDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().politics;
 	CountryInstance* const rebels = find_rebel_country(instance_manager);
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	const Date today = instance_manager.get_today();
@@ -476,41 +465,42 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 					continue;
 				}
 				const double life = to_double(pop.get_life_needs_fulfilled());
-				double pressure = std::max(0.0, 0.5 - life) * 2.0 + to_double(pop.get_unemployment_fraction()) * 0.5;
-				pressure += to_double(exhaustion) * 0.3;
-				double militancy = to_double(pop.get_militancy()) + (pressure - 0.25) * 0.35;
+				double pressure = std::max(0.0, defines.unrest_life_needs_threshold - life) * defines.unrest_life_needs_weight
+					+ to_double(pop.get_unemployment_fraction()) * defines.unrest_unemployment_weight;
+				pressure += to_double(exhaustion) * defines.unrest_war_exhaustion_weight;
+				double militancy = to_double(pop.get_militancy()) + (pressure - defines.militancy_pressure_offset) * defines.militancy_growth;
 				militancy = std::clamp(militancy, 0.0, 10.0);
 				pop.set_militancy(fixed_point_t::parse_unsafe(static_cast<float>(militancy)));
-				double consciousness = to_double(pop.get_consciousness()) + to_double(pop.get_literacy()) * 0.04 - 0.01;
+				double consciousness = to_double(pop.get_consciousness()) + to_double(pop.get_literacy()) * defines.consciousness_literacy_growth - defines.consciousness_decay;
 				pop.set_consciousness(fixed_point_t::parse_unsafe(static_cast<float>(std::clamp(consciousness, 0.0, 10.0))));
 
 				all_people += size;
-				if (militancy > MILITANT_LEVEL) {
-					militant_people += size * (militancy - MILITANT_LEVEL) / (10.0 - MILITANT_LEVEL);
+				if (militancy > defines.militant_level) {
+					militant_people += size * (militancy - defines.militant_level) / (10.0 - defines.militant_level);
 				}
 			}
 
 			ArmyInstance* const rebel_army = rebel_army_in(*province);
 			if (rebel_army != nullptr) {
 				// The government of an AI country puts the rising down after some time
-				if (country.is_ai() && uprising_started().contains(province)
-					&& (today - uprising_started()[province]).to_int() >= AI_SUPPRESSION_DAYS) {
+				if (country.is_ai() && state.uprising_started.contains(province)
+					&& (today - state.uprising_started[province]).to_int() >= defines.ai_suppression_days) {
 					unit_manager.destroy_group(*rebel_army);
-					uprising_ended()[province] = today;
+					state.uprising_ended[province] = today;
 				} else {
 					has_uprising = true;
 					continue;
 				}
 			}
 			// Provinces that have risen lately are calm for a while
-			if (const auto ended = uprising_ended().find(province);
-				ended != uprising_ended().end() && (today - ended->second).to_int() < UPRISING_COOLDOWN_DAYS) {
+			if (const auto ended = state.uprising_ended.find(province);
+				ended != state.uprising_ended.end() && (today - ended->second).to_int() < defines.uprising_cooldown_days) {
 				continue;
 			}
 
 			// ---- a rising
-			if (rebels != nullptr && province->get_controller() == &country && militant_people >= MIN_MILITANT_PEOPLE
-				&& all_people > 0.0 && militant_people * 100.0 >= all_people * MIN_MILITANT_PERCENT) {
+			if (rebels != nullptr && province->get_controller() == &country && militant_people >= defines.min_militant_people
+				&& all_people > 0.0 && militant_people * 100.0 >= all_people * (defines.min_militant_share * 100.0)) {
 				RegimentType const* regiment_type = nullptr;
 				for (RegimentType const& type : instance_manager.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
 					if (country.is_unit_type_unlocked(type)) {
@@ -520,12 +510,12 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 				}
 				if (regiment_type != nullptr) {
 					const size_t count = static_cast<size_t>(std::clamp<double>(
-						militant_people / PEOPLE_PER_REBEL_REGIMENT, 1.0, MAX_REBEL_REGIMENTS
+						militant_people / defines.people_per_rebel_regiment, 1.0, defines.max_rebel_regiments
 					));
 					if (unit_manager.create_army_with_regiments(*rebels, *province, *regiment_type, count, "Rebels") != nullptr) {
 						rebels->set_at_war_with(country, true);
-						active_uprisings().insert(province);
-						uprising_started()[province] = today;
+						state.active_uprisings.insert(province);
+						state.uprising_started[province] = today;
 						has_uprising = true;
 						SPDLOG_INFO("Uprising in {} ({}): {} rebel regiments", province->get_identifier(), country.get_identifier(), count);
 						instance_manager.get_notification_log().add(today, &country, "uprising", province->get_identifier());
@@ -541,7 +531,7 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 	}
 
 	// ---- beaten uprisings: the province returns to the owner, the people calm down
-	for (auto it = active_uprisings().begin(); it != active_uprisings().end();) {
+	for (auto it = state.active_uprisings.begin(); it != state.active_uprisings.end();) {
 		ProvinceInstance* province = const_cast<ProvinceInstance*>(*it);
 		if (rebel_army_in(*province) == nullptr) {
 			if (province->get_owner() != nullptr && province->get_controller() != province->get_owner()
@@ -549,11 +539,11 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 				province->set_controller(province->get_owner());
 			}
 			for (Pop& pop : province->get_mutable_pops()) {
-				const double militancy = std::max(0.0, to_double(pop.get_militancy()) - 2.0);
+				const double militancy = std::max(0.0, to_double(pop.get_militancy()) - defines.uprising_end_militancy_drop);
 				pop.set_militancy(fixed_point_t::parse_unsafe(static_cast<float>(militancy)));
 			}
-			uprising_ended()[province] = today;
-			it = active_uprisings().erase(it);
+			state.uprising_ended[province] = today;
+			it = state.active_uprisings.erase(it);
 		} else {
 			++it;
 		}

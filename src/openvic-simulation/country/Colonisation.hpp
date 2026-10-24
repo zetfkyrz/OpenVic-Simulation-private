@@ -30,11 +30,8 @@ namespace OpenVic {
 		memory::vector<Project> projects;
 
 	public:
-		// Sea steps from a port of the country that a colonial expedition can cover, per level of the naval base
-		// Countries below this place of the ranking cannot colonise
-		static constexpr std::size_t MAX_COLONIAL_RANK = 16;
-		static constexpr std::int32_t SEA_RANGE_BASE = 3;
-		static constexpr std::int32_t SEA_RANGE_PER_BASE_LEVEL = 2;
+		// Countries below this place of the ranking cannot colonise (ov_colonisation.MAX_COLONIAL_RANK of the defines)
+		static std::size_t get_max_colonial_rank(InstanceManager const& instance_manager);
 
 		memory::vector<Project> const& get_projects() const {
 			return projects;

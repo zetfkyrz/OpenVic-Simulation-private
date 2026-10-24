@@ -1,3 +1,4 @@
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "GoodMarket.hpp"
 
 #include <algorithm>
@@ -267,12 +268,12 @@ void GoodMarket::execute_orders(
 					}
 				}
 			} else {
-				//TODO use Victoria 2's square root mechanic, see https://github.com/OpenVicProject/OpenVic/issues/288
-				if (supply_sum > demand_sum) {
-					new_price = min_next_price;
-				} else {
-					new_price = price;
-				}
+				// Only the demand that can be paid moves the price up (the branch above: the buyers can afford the whole supply at the
+				// highest price of the day). When they cannot, the price falls by the step of a day, whatever they want. Before, a good
+				// that was wanted more than offered but could not be paid for kept the same price for ever (stuck prices), and
+				// counting the unpaid demand instead made the prices of everything that is scarce run to the upper bound.
+				//TODO use Victoria 2's square root mechanic for the size of the step, see https://github.com/OpenVicProject/OpenVic/issues/288
+				new_price = min_next_price;
 			}
 
 			//figure out how much every buyer bought
@@ -318,6 +319,7 @@ void GoodMarket::execute_orders(
 						fixed_point_t::epsilon //round up
 					);
 				}
+				MoneyLedger::record(MoneyLedger::label_t::market_sellers_get, money_gained);
 				market_sell_order.call_after_trade(
 					{
 						good_definition.index,
@@ -378,6 +380,7 @@ void GoodMarket::execute_orders(
 						fixed_point_t::epsilon //round up
 					);
 				}
+				MoneyLedger::record(MoneyLedger::label_t::market_sellers_get, money_gained);
 				market_sell_order.call_after_trade(
 					{
 						good_definition.index,
@@ -425,6 +428,7 @@ void GoodMarket::execute_buy_orders(
 				quantity_bought * new_price,
 				fixed_point_t::epsilon //we know from purchasing power that you can afford it.
 			);
+			MoneyLedger::record(MoneyLedger::label_t::market_buyers_pay, -money_spent_total);
 
 			fixed_point_t money_spent_on_imports;
 			const std::optional<country_index_t> country_index_optional = buy_up_to_order.country_index_optional;

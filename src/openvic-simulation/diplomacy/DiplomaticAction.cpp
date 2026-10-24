@@ -6,7 +6,10 @@
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/Timespan.hpp"
+#include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/defines/Define.hpp"
+#include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
@@ -114,8 +117,12 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 	return true;
 }
 
-bool DiplomaticActionManager::setup_diplomatic_actions() {
+bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& defines) {
 	using Argument = DiplomaticActionType::Argument;
+	// The costs in influence come from defines.lua (the commit functions read the other defines when they run)
+	const auto cost = [](fixed_point_t const value) -> CountryRelationManager::influence_value_type {
+		return CountryRelationManager::influence_value_type(static_cast<std::uint16_t>(value.floor<int32_t>()));
+	};
 
 	bool result = true;
 
@@ -186,7 +193,8 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().assign_or_get_country_relation(
 						arg.sender, arg.receiver
-					) += 25; // TODO: implement defines.diplomacy.INCREASERELATION_RELATION_ON_ACCEPT
+					) += static_cast<int32_t>(arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines()
+						.get_increaserelation_relation_on_accept().floor<int32_t>());
 				},
 			.allowed =
 				[](Argument const& arg) {
@@ -201,7 +209,8 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().assign_or_get_country_relation(
 						arg.sender, arg.receiver
-					) -= 25; // TODO: implement defines.diplomacy.DECREASERELATION_RELATION_ON_ACCEPT
+					) += static_cast<int32_t>(arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines()
+						.get_decreaserelation_relation_on_accept().floor<int32_t>()); // the define is negative
 				},
 			.allowed =
 				[](Argument const& arg) {
@@ -282,38 +291,42 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"discredit",
 		{
-			.influence_cost = 25,
+			.influence_cost = cost(defines.get_discredit_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().set_discredited_date( //
-						arg.sender, arg.receiver, arg.instance_manager.get_today() + 180
-					); // TODO: implement defines.diplomacy.DISCREDIT_DAYS
+						arg.sender, arg.receiver,
+						arg.instance_manager.get_today()
+							+ arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_discredit_days()
+					);
 				},
 		}
 	);
 	result &= add_diplomatic_action(
 		"expel_advisors",
 		{
-			.influence_cost = 50, // TODO: implement defines.diplomacy.EXPELADVISORS_INFLUENCE_COST
+			.influence_cost = cost(defines.get_expeladvisors_influence_cost()),
 			.commit = [](Argument& arg) {},
 		}
 	);
 	result &= add_diplomatic_action(
 		"ban_embassy",
 		{
-			.influence_cost = 65,
+			.influence_cost = cost(defines.get_banembassy_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().set_embassy_banned_date( //
-						arg.sender, arg.receiver, arg.instance_manager.get_today() + Timespan::from_years(1)
-					); // TODO: implement defines.diplomacy.BANEMBASSY_DAYS
+						arg.sender, arg.receiver,
+						arg.instance_manager.get_today()
+							+ arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_banembassy_days()
+					);
 				},
 		}
 	);
 	result &= add_diplomatic_action(
 		"increase_opinion",
 		{
-			.influence_cost = 50,
+			.influence_cost = cost(defines.get_increaseopinion_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().assign_or_get_country_opinion( //
@@ -329,7 +342,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"decrease_opinion",
 		{
-			.influence_cost = 50,
+			.influence_cost = cost(defines.get_decreaseopinion_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					--arg.instance_manager.get_country_relation_manager().assign_or_get_country_opinion( //
@@ -345,7 +358,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"add_to_sphere",
 		{
-			.influence_cost = 100,
+			.influence_cost = cost(defines.get_addtosphere_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					arg.instance_manager.get_country_relation_manager().assign_or_get_country_opinion( //
@@ -361,7 +374,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"remove_from_foreign_sphere",
 		{
-			.influence_cost = 100,
+			.influence_cost = cost(defines.get_removefromsphere_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					--arg.instance_manager.get_country_relation_manager().assign_or_get_country_opinion( //
@@ -380,7 +393,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions() {
 	result &= add_diplomatic_action(
 		"remove_from_own_sphere",
 		{
-			.influence_cost = 100,
+			.influence_cost = cost(defines.get_removefromsphere_influence_cost()),
 			.commit =
 				[](Argument& arg) {
 					--arg.instance_manager.get_country_relation_manager().assign_or_get_country_opinion( //

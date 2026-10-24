@@ -7,6 +7,7 @@
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/military/Leader.hpp"
 #include "openvic-simulation/military/UnitInstance.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/types/UnitBranchType.hpp"
 #include "openvic-simulation/utility/Getters.hpp"
@@ -19,6 +20,13 @@ namespace OpenVic {
 	struct MapInstance;
 
 	struct UnitInstanceGroup {
+		// Movement, transports and landings read their parameters from the group ov_war of the defines; the pointer is set
+		// by the InstanceManager (the defines belong to the definitions and outlive all instances)
+		static inline OpenVicWarDefines const* war_defines = nullptr;
+		static void set_war_defines(OpenVicWarDefines const& defines) {
+			war_defines = &defines;
+		}
+
 	private:
 		memory::string PROPERTY(name);
 		memory::vector<std::reference_wrapper<UnitInstance>> SPAN_PROPERTY(units);
@@ -177,11 +185,6 @@ namespace OpenVic {
 
 		void update_gamestate();
 		void tick();
-
-		// Regiments each transport ship can carry
-		static constexpr size_t REGIMENTS_PER_TRANSPORT = 4;
-		// Share of the organisation that an army keeps after landing from the ships
-		static constexpr int32_t LANDING_ORGANISATION_DIVISOR = 2;
 
 		size_t get_transport_capacity() const;
 		size_t get_carried_regiment_count() const;

@@ -13,19 +13,23 @@
 using namespace OpenVic;
 
 void ResearchDynamics::monthly_update(InstanceManager& instance_manager) {
+	OpenVicResearchDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().research;
 	TechnologyManager const& technologies = instance_manager.definition_manager.get_research_manager().get_technology_manager();
 	const Date today = instance_manager.get_today();
 
 	// Progress toward each invention of each country, and the number of technologies seen last time
-	static std::unordered_map<std::uint64_t, fixed_point_t> progress;
-	static std::unordered_map<CountryInstance const*, std::int32_t> known_technologies;
+	auto& progress = instance_manager.get_research_state().progress;
+	auto& known_technologies = instance_manager.get_research_state().known_technologies;
 
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists() || country.is_rebel_country()) {
 			continue;
 		}
 
-		const fixed_point_t rate = (BASE_PROGRESS_PERCENT + country.get_average_literacy() * LITERACY_PROGRESS_PERCENT) / 100;
+		// Monthly chance of an invention: a base share plus a share of the literacy of the country
+		const fixed_point_t rate =
+			(fixed_point_t(defines.invention_base_chance_per_month.numerator)
+				+ country.get_average_literacy() * defines.invention_literacy_chance.numerator) / Rate::DENOMINATOR;
 
 		std::int32_t unlocked = 0;
 		for (Technology const& technology : technologies.get_technologies()) {

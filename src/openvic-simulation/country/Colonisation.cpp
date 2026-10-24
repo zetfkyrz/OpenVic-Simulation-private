@@ -1,5 +1,7 @@
 #include "Colonisation.hpp"
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <queue>
 #include <unordered_set>
@@ -35,7 +37,10 @@ namespace {
 					level = static_cast<std::int32_t>(type_safe::get(building.get_level()));
 				}
 			}
-			const std::int32_t range = ColonisationManager::SEA_RANGE_BASE + ColonisationManager::SEA_RANGE_PER_BASE_LEVEL * level;
+			// Sea steps from a port of the country that a colonial expedition can cover, per level of the naval base
+			OpenVicColonisationDefines const& defines =
+				instance_manager.definition_manager.get_define_manager().get_openvic_defines().colonisation;
+			const std::int32_t range = defines.sea_range_base + defines.sea_range_per_base_level * level;
 			ProvinceDefinition const* const sea = province->province_definition.get_port_adjacent_province();
 			if (seas.insert(sea).second) {
 				queue.emplace(sea, range);
@@ -163,8 +168,11 @@ memory::string ColonisationManager::get_block_reason(
 		return "Нет свободных колониальных очков";
 	}
 	const bool by_land = touches_country_by_land(country, province, instance_manager.get_map_instance());
-	if (country.get_total_rank() == 0 || country.get_total_rank() > MAX_COLONIAL_RANK) {
-		return "Колонизировать могут только страны не ниже 16-го места в рейтинге";
+	if (country.get_total_rank() == 0 || country.get_total_rank() > get_max_colonial_rank(instance_manager)) {
+		{
+			const std::string text = fmt::format("Колонизировать могут только страны не ниже {}-го места в рейтинге", get_max_colonial_rank(instance_manager));
+			return memory::string { text.data(), text.size() };
+		}
 	}
 	if (!by_land && !(province.province_definition.is_coastal() && touches_seas(province, reachable_seas(instance_manager, country)))) {
 		return "Провинция вне досягаемости: нужна граница или порт поблизости";
@@ -183,12 +191,19 @@ fixed_point_t ColonisationManager::get_project_cost(
 	return std::max(cost, fixed_point_t::_1);
 }
 
+std::size_t ColonisationManager::get_max_colonial_rank(InstanceManager const& instance_manager) {
+	return static_cast<std::size_t>(
+		instance_manager.definition_manager.get_define_manager().get_openvic_defines().colonisation.max_colonial_rank
+	);
+}
+
 bool ColonisationManager::start_project(InstanceManager& instance_manager, CountryInstance& country, ProvinceInstance& province) {
 	if (!get_block_reason(instance_manager, country, province).empty()) {
 		return false;
 	}
 	const std::int32_t days = std::max<std::int32_t>(
-		30, static_cast<std::int32_t>(instance_manager.definition_manager.get_define_manager().get_country_defines().get_colonization_duration().to_int())
+		instance_manager.definition_manager.get_define_manager().get_openvic_defines().colonisation.min_colonisation_days,
+		static_cast<std::int32_t>(instance_manager.definition_manager.get_define_manager().get_country_defines().get_colonization_duration().to_int())
 	);
 	projects.push_back({ &country, &province, 0, days, get_project_cost(instance_manager, country, province) });
 	SPDLOG_INFO("Colonisation started: {} in {} ({} days)", country.get_identifier(), province.get_identifier(), days);

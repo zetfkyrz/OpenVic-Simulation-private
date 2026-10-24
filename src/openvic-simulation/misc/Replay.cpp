@@ -1,6 +1,8 @@
 #include "Replay.hpp"
 
+#include <cstdio>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <tuple>
 #include <type_traits>
@@ -76,6 +78,75 @@ namespace OpenVic {
 		}
 	}
 
+	std::string Replay::hash_to_string(std::uint64_t hash) {
+		char buffer[17];
+		std::snprintf(buffer, sizeof(buffer), "%016llx", static_cast<unsigned long long>(hash));
+		return buffer;
+	}
+
+	bool Replay::hash_from_string(std::string const& text, std::uint64_t& hash) {
+		if (text.empty() || text.size() > 16) {
+			return false;
+		}
+		std::uint64_t value = 0;
+		for (char c : text) {
+			value <<= 4;
+			if (c >= '0' && c <= '9') {
+				value |= static_cast<std::uint64_t>(c - '0');
+			} else if (c >= 'a' && c <= 'f') {
+				value |= static_cast<std::uint64_t>(c - 'a' + 10);
+			} else if (c >= 'A' && c <= 'F') {
+				value |= static_cast<std::uint64_t>(c - 'A' + 10);
+			} else {
+				return false;
+			}
+		}
+		hash = value;
+		return true;
+	}
+
+	Replay::Compatibility Replay::check_header(
+		const int format, const int sim_version, const bool has_defines_hash, const std::uint64_t defines_hash,
+		const std::uint64_t current_defines_hash
+	) {
+		Compatibility result;
+		if (format > FORMAT_VERSION) {
+			result.loadable = false;
+			result.blocked_reason = "Сохранение создано более новой версией игры (формат " + std::to_string(format) +
+				", эта версия понимает до " + std::to_string(FORMAT_VERSION) + "). Обновите игру, чтобы открыть его.";
+			return result;
+		}
+		if (format < 1) {
+			result.loadable = false;
+			result.blocked_reason = "Не удалось определить формат сохранения.";
+			return result;
+		}
+		if (format == 1) {
+			// Migration: the old header has neither the simulation version nor the hash, the actions are in the same form
+			result.warnings.push_back(
+				"Сохранение старого формата (1): в нём не записаны версия симуляции и параметры игры, совпадение с "
+				"сохранённой партией проверить нельзя."
+			);
+			return result;
+		}
+		if (sim_version != SIMULATION_VERSION) {
+			result.warnings.push_back(
+				"Сохранение сделано другой версией правил симуляции (" + std::to_string(sim_version) + ", сейчас " +
+				std::to_string(SIMULATION_VERSION) + "): партия, скорее всего, пойдёт иначе, чем была сохранена."
+			);
+		}
+		if (!has_defines_hash) {
+			result.warnings.push_back("В сохранении не записаны параметры игры (openvic_defines).");
+		} else if (defines_hash != current_defines_hash) {
+			result.warnings.push_back(
+				"Параметры игры (common/openvic_defines.lua, моды) отличаются от тех, с которыми сохранена партия "
+				"(хеш " + hash_to_string(defines_hash) + " в сохранении, " + hash_to_string(current_defines_hash) +
+				" сейчас): партия может пойти иначе."
+			);
+		}
+		return result;
+	}
+
 	bool Replay::is_recorded(game_action_t const& action) {
 		return !std::holds_alternative<none_argument_t>(action) && !std::holds_alternative<set_pause_argument_t>(action) &&
 			!std::holds_alternative<set_speed_argument_t>(action);
@@ -117,6 +188,12 @@ namespace OpenVic {
 				return false;
 			}
 			bool found = false;
+			// Actions of the credit system that was replaced (simulation version 7): the new system has other actions, so the
+			// old ones are skipped. The loaded game differs from the saved one anyway (the version warning), see docs/CREDITS.md.
+			if (name == "take_external_loan" || name == "give_external_loans" || name == "stage_loan_target"
+				|| name == "give_internal_loan" || name == "answer_alliance_request") {
+				continue;
+			}
 #define READ_ACTION(action_name, ...) \
 			if (!found && name == #action_name) { \
 				found = true; \

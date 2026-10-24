@@ -42,6 +42,9 @@
 #include <openvic-simulation/testing/Testing.hpp>
 #include <openvic-simulation/utility/Logger.hpp>
 
+#include "BalanceReport.hpp"
+#include "SelfTest.hpp"
+
 using namespace OpenVic;
 
 inline static void print_memory_usage( //
@@ -70,6 +73,18 @@ static bool politics_report = false;
 static bool research_test = false;
 // Replay save test: -W <file> writes the action history after the economy run, -L <file> replays it before the run
 static std::string replay_save_path, replay_load_path;
+// -D <file>: write an example common/openvic_defines.lua with all the keys and their current values
+static std::string defines_dump_path;
+// -M: follow the money of the economy (MoneyLedger), -N: close all the factories before the economy report
+static bool money_ledger_report = false, close_all_factories = false;
+// --selftest: the self tests (SelfTest.hpp), --selftest-pure: only those that need no game files
+static bool run_selftest = false, run_selftest_pure = false;
+// -C: print the CHECKSUM after every day of the economy report (to find the first day two builds differ)
+static bool checksum_every_day = false;
+// -o group.KEY=value (repeated): overrides a value of openvic_defines.lua for this run (for calibration experiments)
+static std::vector<std::string> defines_overrides;
+// -B: the BALANCE report (every 30 days), -G: also the line of every good
+static bool balance_report = false, balance_goods = false;
 // Index of the bookmark (start date) to simulate, 0 = 1836, 1 = 1861 (-k)
 static size_t bookmark_index = 0;
 // Subsidise all factories of all countries at the start of the economy report (-S)
@@ -110,15 +125,15 @@ static void print_economy_report(InstanceManager& instance_manager) {
 	size_t external_loans = 0, internal_loans = 0;
 	fixed_point_t external_debt = 0, internal_debt = 0, internal_unspent = 0, capitalist_funds = 0;
 	for (auto const& loan : instance_manager.get_credit_manager().get_loans()) {
-		if (!loan->active) {
+		if (loan->status != Loan::status_t::ACTIVE) {
 			continue;
 		}
 		if (loan->kind == Loan::kind_t::EXTERNAL) {
 			external_loans++;
-			external_debt += loan->remaining;
+			external_debt += loan->get_remaining();
 		} else {
 			internal_loans++;
-			internal_debt += loan->remaining;
+			internal_debt += loan->get_remaining();
 			internal_unspent += loan->unspent;
 		}
 	}
@@ -1061,6 +1076,39 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		SPDLOG_INFO("Testing Executed");
 	}
 
+	if (!defines_overrides.empty()) {
+		OpenVicDefines& openvic_defines = const_cast<DefineManager&>(game_manager.get_definition_manager().get_define_manager()).get_mutable_openvic_defines();
+		for (std::string const& override_text : defines_overrides) {
+			const size_t dot = override_text.find('.');
+			const size_t equals = override_text.find('=');
+			if (dot == std::string::npos || equals == std::string::npos || dot > equals) {
+				spdlog::error_s("Wrong -o \"{}\": use group.KEY=value", override_text);
+				return false;
+			}
+			bool found = false;
+			for (OpenVicDefineGroup* group : openvic_defines.get_groups()) {
+				if (group->get_name() == std::string_view { override_text }.substr(0, dot)) {
+					group->set_value("command line", std::string_view { override_text }.substr(dot + 1, equals - dot - 1), std::string_view { override_text }.substr(equals + 1));
+					found = true;
+				}
+			}
+			if (!found) {
+				spdlog::error_s("Unknown group in -o \"{}\"", override_text);
+				return false;
+			}
+		}
+		openvic_defines.update_hash();
+	}
+
+	if (run_selftest) {
+		auto const& test_bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
+		if (bookmark_index >= test_bookmarks.size()) {
+			spdlog::error_s("Invalid bookmark index {}", bookmark_index);
+			return false;
+		}
+		return ret & run_data_selftests(game_manager, test_bookmarks[bookmark_index]);
+	}
+
 	SPDLOG_INFO("===== Setting up instance... =====");
 	auto const& bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
 	if (bookmark_index >= bookmarks.size()) {
@@ -1083,6 +1131,15 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	ret &= game_manager.update_clock();
 
 	print_memory_usage("Game Session Post-Start");
+
+	SPDLOG_INFO(
+		"OpenVic defines hash {:016x}", game_manager.get_definition_manager().get_define_manager().get_openvic_defines().get_hash()
+	);
+	if (!defines_dump_path.empty()) {
+		std::ofstream file(defines_dump_path);
+		file << game_manager.get_definition_manager().get_define_manager().get_openvic_defines().to_lua_text();
+		SPDLOG_INFO("Wrote the OpenVic defines to {}", defines_dump_path);
+	}
 
 	if (!replay_load_path.empty()) {
 		std::ifstream file(replay_load_path);
@@ -1231,6 +1288,16 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			instance_manager.force_tick_and_update();
 			print_tariff_report(instance_manager);
 		}
+		if (close_all_factories) {
+			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				instance_manager.queue_game_action<set_all_factories_open_argument_t>(country.index, false);
+			}
+			instance_manager.force_tick_and_update();
+		}
+		if (money_ledger_report) {
+			instance_manager.get_money_ledger().enable(instance_manager);
+		}
+		BalanceReport balance;
 		if (subsidise_all) {
 			for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 				instance_manager.queue_game_action<set_all_factories_subsidised_argument_t>(country.index, true);
@@ -1241,10 +1308,22 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		print_population_report(instance_manager);
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
+			if (checksum_every_day) {
+				print_state_checksum(instance_manager);
+			}
+			if (balance_report) {
+				balance.update(instance_manager);
+			}
 			if (research_test && day % 5 == 0) {
 				run_research_step(instance_manager, day % 90 == 0);
 			}
-			if (day % 30 == 0) {
+			if (day % 30 == 0 || (balance_report && std::getenv("BAL_DAILY") != nullptr && day > 60)) {
+				if (money_ledger_report) {
+					fmt::println("{}", instance_manager.get_money_ledger().report(instance_manager));
+				}
+				if (balance_report) {
+					balance.print(instance_manager, balance_goods);
+				}
 				print_economy_report(instance_manager);
 				print_population_report(instance_manager);
 				if (politics_report) {
@@ -1281,6 +1360,13 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 */
 
 int main(int argc, char const* argv[]) {
+	// The tests that need no game files run before anything is loaded
+	for (int i = 1; i < argc; ++i) {
+		if (strcmp(argv[i], "--selftest-pure") == 0) {
+			return run_pure_selftests() ? 0 : 1;
+		}
+	}
+
 	std::string_view program_name = get_filename(argc > 0 ? argv[0] : "", "<program>");
 	fs::path root;
 	memory::vector<memory::string> mods;
@@ -1323,12 +1409,30 @@ int main(int argc, char const* argv[]) {
 			run_tests = true;
 		} else if (strcmp(arg, "-A") == 0) {
 			run_army_test = true;
+		} else if (strcmp(arg, "-D") == 0 && argn + 1 < argc) {
+			defines_dump_path = argv[++argn];
 		} else if ((strcmp(arg, "-W") == 0 || strcmp(arg, "-L") == 0) && argn + 1 < argc) {
 			(arg[1] == 'W' ? replay_save_path : replay_load_path) = argv[++argn];
 		} else if (strcmp(arg, "-X") == 0) {
 			research_test = true;
 		} else if (strcmp(arg, "-P") == 0) {
 			politics_report = true;
+		} else if (strcmp(arg, "-o") == 0 && argn + 1 < argc) {
+			defines_overrides.emplace_back(argv[++argn]);
+		} else if (strcmp(arg, "-B") == 0) {
+			balance_report = true;
+		} else if (strcmp(arg, "-G") == 0) {
+			balance_report = balance_goods = true;
+		} else if (strcmp(arg, "-C") == 0) {
+			checksum_every_day = true;
+		} else if (strcmp(arg, "--selftest") == 0) {
+			run_selftest = true;
+		} else if (strcmp(arg, "--selftest-pure") == 0) {
+			run_selftest_pure = true;
+		} else if (strcmp(arg, "-M") == 0) {
+			money_ledger_report = true;
+		} else if (strcmp(arg, "-N") == 0) {
+			close_all_factories = true;
 		} else if (strcmp(arg, "-R") == 0) {
 			recommended_rules = true;
 		} else if (strcmp(arg, "-T") == 0) {
@@ -1373,7 +1477,15 @@ int main(int argc, char const* argv[]) {
 
 	SPDLOG_INFO("!!! HEADLESS SIMULATION START !!!");
 
-	const bool ret = run_headless(root, mods, run_tests);
+	bool pure_tests_ok = true;
+	if (run_selftest || run_selftest_pure) {
+		pure_tests_ok = run_pure_selftests();
+		if (run_selftest_pure) {
+			return pure_tests_ok ? 0 : -1;
+		}
+	}
+
+	const bool ret = run_headless(root, mods, run_tests) && pure_tests_ok;
 
 	SPDLOG_INFO("!!! HEADLESS SIMULATION END !!!");
 

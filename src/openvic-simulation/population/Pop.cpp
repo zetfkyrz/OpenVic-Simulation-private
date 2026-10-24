@@ -10,6 +10,7 @@
 
 #include <type_safe/strong_typedef.hpp>
 
+#include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/core/error/ErrorMacros.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/object/FixedPoint/Math.hpp"
@@ -313,6 +314,7 @@ void Pop::pay_income_tax(fixed_point_t& income) {
 	}
 	const fixed_point_t effective_tax_rate = tax_collector_nullable->get_effective_tax_rate_by_strata(get_type().strata).get_untracked();
 	const fixed_point_t tax = effective_tax_rate * income;
+	MoneyLedger::record(MoneyLedger::label_t::pop_tax_paid, -tax);
 	tax_collector_nullable->report_pop_income_tax(type, income, tax);
 	income -= tax;
 }
@@ -332,17 +334,20 @@ void Pop::add_artisanal_revenue(const fixed_point_t revenue) {
 	}
 
 	fixed_point_t income;
+	MoneyLedger::record(MoneyLedger::label_t::gross_income_other, revenue);
 	if constexpr (IsTaxable) {
-		if (OV_unlikely(!artisanal_producer_optional.has_value())) {
-			income = revenue;
-		} else {
-			income = std::max(
+		// Only the profit is taxed, but the pop gets the whole revenue: it paid for the inputs out of its own cash
+		// (add_artisan_inputs_expense). Crediting only the profit destroyed the cost of the inputs a second time.
+		fixed_point_t taxable = revenue;
+		if (OV_likely(artisanal_producer_optional.has_value())) {
+			taxable = std::max(
 				fixed_point_t::_0,
 				revenue - artisanal_producer_optional->get_costs_of_production()
 			);
 		}
-
-		pay_income_tax(income);
+		const fixed_point_t taxable_before_tax = taxable;
+		pay_income_tax(taxable);
+		income = revenue - (taxable_before_tax - taxable);
 	} else {
 		income = revenue;
 	}
@@ -351,6 +356,7 @@ void Pop::add_artisanal_revenue(const fixed_point_t revenue) {
 	// The local income shadows the member: `income += income` doubled the income of the artisans (money out of nothing)
 	this->income += income;
 	cash += income;
+	MoneyLedger::record(MoneyLedger::label_t::pop_artisanal_revenue, income);
 }
 template void Pop::add_artisanal_revenue<true>(const fixed_point_t revenue);
 template void Pop::add_artisanal_revenue<false>(const fixed_point_t revenue);
@@ -367,10 +373,12 @@ template void Pop::add_artisanal_revenue<false>(const fixed_point_t revenue);
 			spdlog::error_s("Adding negative " #name " of {} to pop. Context{}", amount, get_pop_context_text()); \
 			return; \
 		} \
+		MoneyLedger::record_gross_income(#name, amount); \
 		pay_income_tax(amount); \
 		name += amount; \
 		income += amount; \
 		cash += amount; \
+		MoneyLedger::record(MoneyLedger::label_t::pop_##name, amount); \
 	}
 
 OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(DEFINE_ADD_INCOME_FUNCTIONS)
@@ -393,6 +401,7 @@ OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(DEFINE_ADD_INCOME_FUNCTIONS)
 			); \
 		} \
 		const fixed_point_t cash_copy = cash -= amount; \
+		MoneyLedger::record(MoneyLedger::label_t::pop_##name, -amount); \
 		if (OV_unlikely(cash_copy < 0)) { \
 			spdlog::error_s( \
 				"Total cash became negative ({}) after adding " #name " of {} to pop. Context:{}", \
@@ -408,6 +417,7 @@ void Pop::add_import_subsidies(const fixed_point_t amount) {
 	//It's not income, otherwise we'd pay income tax.
 	//It's not a negative expense, otherwise total expense might go negative.
 	cash += amount;
+	MoneyLedger::record(MoneyLedger::label_t::pop_import_subsidies, amount);
 }
 
 #define DEFINE_NEEDS_FULFILLED(need_category) \
@@ -550,6 +560,9 @@ void Pop::pop_tick_without_cleanup(
 	OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(SET_TO_ZERO)
 	#undef SET_TO_ZERO
 	income = expenses = 0;
+	// Yesterday's revenue was read by the artisan tick above; start counting today's. It used to be summed up over the whole game, so an
+	// artisan that had ever sold something looked profitable for ever and never changed its production type.
+	artisanal_revenue = 0;
 
 	CountryInstance* const country_to_report_economy_nullable = get_location().get_country_to_report_economy();
 
@@ -744,6 +757,7 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 
 void Pop::after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector) {
 	Pop& pop = *static_cast<Pop*>(actor);
+	MoneyLedger::record(MoneyLedger::label_t::sell_callbacks_artisans, sell_result.money_gained);
 	if (sell_result.money_gained > 0) {
 		OV_ERR_FAIL_COND_MSG(!pop.artisanal_producer_optional.has_value(), "Pop is selling artisanal goods but has no artisan.");
 		ArtisanalProducer& artisan = pop.artisanal_producer_optional.value();
@@ -767,6 +781,7 @@ fixed_point_t Pop::take_cash(const fixed_point_t amount) {
 		return fixed_point_t::_0;
 	}
 	cash -= taken;
+	MoneyLedger::record(MoneyLedger::label_t::pop_cash_taken, -taken);
 	return taken;
 }
 
