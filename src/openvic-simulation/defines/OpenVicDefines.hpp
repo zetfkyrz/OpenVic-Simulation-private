@@ -107,7 +107,21 @@ namespace OpenVic {
 
 	// ----- The groups. One line per parameter: KEY, member, default, minimum, maximum -----
 
-#define OV_AI_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_AI_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	RATE(WAR_CHANCE_PER_YEAR, war_chance_per_year, Rate(25, 100), 0, 1) \
+	RATE(MAX_TARGET_POWER_RATIO, max_target_power_ratio, Rate(60, 100), 0, 100) \
+	RATE(MAX_TARGET_POWER_RATIO_PLAYER, max_target_power_ratio_player, Rate(30, 100), 0, 100) \
+	INT(MAX_RANK_FOR_WARS, max_rank_for_wars, 30, 0, 1000) \
+	INT(WAR_FREE_UNTIL_YEAR, war_free_until_year, 1836, 0, 3000) \
+	INT(WAR_FREE_UNTIL_MONTH, war_free_until_month, 7, 0, 12) \
+	INT(WAR_DECISION_SALT, war_decision_salt, 7, 0, 1000000) \
+	INT(FACTORY_PAYBACK_YEARS, factory_payback_years, 8, 1, 100) \
+	INT(FACTORY_CASH_COST_MULTIPLE, factory_cash_cost_multiple, 3, 1, 100) \
+	INT(EXPECTED_WAGE_DIVISOR, expected_wage_divisor, 2, 1, 100) \
+	RATE(WAR_REGIMENTS_PER_PROVINCE, war_regiments_per_province, Rate(300, 1000), 0, 100) \
+	INT(MIN_WAR_REGIMENTS, min_war_regiments, 3, 0, 1000) \
+	INT(MAX_RECRUITS_PER_MONTH, max_recruits_per_month, 3, 0, 1000) \
+	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_POLITICS_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE)
