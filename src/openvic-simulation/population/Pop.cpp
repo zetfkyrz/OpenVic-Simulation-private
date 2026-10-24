@@ -336,16 +336,18 @@ void Pop::add_artisanal_revenue(const fixed_point_t revenue) {
 	fixed_point_t income;
 	MoneyLedger::record(MoneyLedger::label_t::gross_income_other, revenue);
 	if constexpr (IsTaxable) {
-		if (OV_unlikely(!artisanal_producer_optional.has_value())) {
-			income = revenue;
-		} else {
-			income = std::max(
+		// Only the profit is taxed, but the pop gets the whole revenue: it paid for the inputs out of its own cash
+		// (add_artisan_inputs_expense). Crediting only the profit destroyed the cost of the inputs a second time.
+		fixed_point_t taxable = revenue;
+		if (OV_likely(artisanal_producer_optional.has_value())) {
+			taxable = std::max(
 				fixed_point_t::_0,
 				revenue - artisanal_producer_optional->get_costs_of_production()
 			);
 		}
-
-		pay_income_tax(income);
+		const fixed_point_t taxable_before_tax = taxable;
+		pay_income_tax(taxable);
+		income = revenue - (taxable_before_tax - taxable);
 	} else {
 		income = revenue;
 	}

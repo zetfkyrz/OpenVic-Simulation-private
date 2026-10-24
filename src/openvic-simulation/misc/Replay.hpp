@@ -18,7 +18,8 @@ namespace OpenVic {
 		// Layout of the save file: 1 = header without versions, 2 = adds the simulation version and the hash of the defines
 		inline constexpr int FORMAT_VERSION = 2;
 		// Raise it when a change of the rules of the simulation makes the old replays end in another state
-		inline constexpr int SIMULATION_VERSION = 1;
+		// 2: artisans get the whole revenue of their sales (the cost of the inputs was lost), see docs/BUGS_FIXED.md
+		inline constexpr int SIMULATION_VERSION = 2;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
