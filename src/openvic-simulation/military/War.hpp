@@ -213,12 +213,7 @@ namespace OpenVic {
 		);
 
 		// ---- Peace negotiations ----
-		static constexpr std::int32_t REPARATIONS_COST = 10;
-		static constexpr std::int32_t HUMILIATE_COST = 8;
-		// The share of the treasury of the loser that is paid in reparations, and the prestige that changes hands
-		static constexpr std::int32_t REPARATIONS_PERCENT = 25;
-		static constexpr std::int32_t HUMILIATE_PRESTIGE = 5;
-		static constexpr std::int32_t OFFER_VALID_DAYS = 60;
+		// The costs, the shares and the days of the peace talks are in the group ov_peace of the defines
 
 		// Draft of the terms of a country (the player builds it in the peace window)
 		PeaceTerms& get_peace_draft(CountryInstance const& country, std::uint32_t war_id);

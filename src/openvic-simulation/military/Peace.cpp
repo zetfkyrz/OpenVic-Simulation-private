@@ -88,7 +88,7 @@ fixed_point_t WarManager::get_state_cost(
 		state_weight = get_province_weight(state_province);
 	}
 
-	fixed_point_t cost = fixed_point_t(state_weight) / total_weight * 100;
+	fixed_point_t cost = fixed_point_t(state_weight) / total_weight * get_war_defines().war_score_max;
 	if (cost < fixed_point_t::_1) {
 		cost = fixed_point_t::_1;
 	}
@@ -96,7 +96,7 @@ fixed_point_t WarManager::get_state_cost(
 	// The war goal of the attacker costs half
 	if (winners_are_attackers && war.goal.type == WarGoal::type_t::CONQUER_STATE && war.goal.state_province != nullptr
 		&& same_state(*war.goal.state_province, state_province)) {
-		cost /= 2;
+		cost /= get_peace_defines().war_goal_cost_divisor;
 	}
 	return cost;
 }
@@ -151,10 +151,10 @@ fixed_point_t WarManager::get_terms_cost(War const& war, CountryInstance const& 
 		cost += get_state_cost(war, winners_are_attackers, *state_province);
 	}
 	if (terms.reparations) {
-		cost += REPARATIONS_COST;
+		cost += get_peace_defines().reparations_cost;
 	}
 	if (terms.humiliate) {
-		cost += HUMILIATE_COST;
+		cost += get_peace_defines().humiliate_cost;
 	}
 	return cost;
 }
@@ -174,6 +174,7 @@ bool WarManager::evaluate_offer(
 	const fixed_point_t proposer_score = war.get_score(proposer_is_attacker);
 	const fixed_point_t other_score = war.get_score(!proposer_is_attacker);
 	const fixed_point_t cost = get_terms_cost(war, *proposer, terms);
+	OpenVicPeaceDefines const& pd = get_peace_defines();
 
 	// The leader of the side that answers is tired of the war
 	CountryInstance const* const receiver = war.get_side(!proposer_is_attacker).front();
@@ -188,14 +189,16 @@ bool WarManager::evaluate_offer(
 		// The proposer is losing and gives up territory: accepted if it is enough of what the winner could take
 		if (empty_terms) {
 			// White peace asked by the losing side
-			if (other_score - proposer_score < 15 || days > 3 * 365 || tiredness > fixed_point_t(1) / 2) {
+			if (other_score - proposer_score < pd.white_peace_score_gap || days > pd.white_peace_war_days
+				|| tiredness > pd.white_peace_tiredness.fixed()) {
 				say("Противник согласен на белый мир");
 				return true;
 			}
 			say("Противник побеждает и не хочет белого мира");
 			return false;
 		}
-		if (cost * 2 >= other_score - 5 || tiredness > fixed_point_t(7) / 10 || days > 3 * 365) {
+		if (cost * pd.concede_cost_factor >= other_score - pd.concede_score_margin || tiredness > pd.concede_tiredness.fixed()
+			|| days > pd.white_peace_war_days) {
 			say("Противник доволен уступками");
 			return true;
 		}
@@ -204,7 +207,8 @@ bool WarManager::evaluate_offer(
 	}
 
 	if (empty_terms) {
-		if (other_score - proposer_score < 15 || days > 3 * 365 || tiredness > fixed_point_t(1) / 2) {
+		if (other_score - proposer_score < pd.white_peace_score_gap || days > pd.white_peace_war_days
+				|| tiredness > pd.white_peace_tiredness.fixed()) {
 			say("Противник согласен на белый мир");
 			return true;
 		}
@@ -213,17 +217,17 @@ bool WarManager::evaluate_offer(
 	}
 
 	// The proposer demands: the demand has to fit what the proposer could enforce
-	fixed_point_t available = proposer_score - other_score / 2;
-	if (proposer_score >= 40) {
-		available += 10;
+	fixed_point_t available = proposer_score - other_score / pd.demand_other_score_divisor;
+	if (proposer_score >= pd.demand_strong_score) {
+		available += pd.demand_strong_bonus;
 	}
-	available += tiredness * 20;
-	available += fixed_point_t(std::min(days / 365, 5)) * 4;
+	available += tiredness * pd.demand_tiredness_bonus;
+	available += fixed_point_t(std::min(days / 365, pd.demand_years_cap)) * pd.demand_year_bonus;
 	if (receiver->get_capital() != nullptr) {
 		// The capital of the receiver is in the hands of the proposer's side
 		if (side_contains(war.get_side(proposer_is_attacker), receiver->get_capital()->get_controller())
 			&& receiver->get_capital()->get_controller() != receiver) {
-			available += 15;
+			available += pd.demand_capital_bonus;
 		}
 	}
 
@@ -286,15 +290,15 @@ void WarManager::apply_peace_terms(
 
 	if (terms.reparations) {
 		// A quarter of the treasury of the leader of the losers
-		const fixed_point_t amount = loser_leader.get_cash_stockpile().load() * REPARATIONS_PERCENT / 100;
+		const fixed_point_t amount = get_peace_defines().reparations_share.of(loser_leader.get_cash_stockpile().load());
 		if (amount > fixed_point_t::_0) {
 			loser_leader.spend_cash(amount);
 			winner_leader.add_cash(amount);
 		}
 	}
 	if (terms.humiliate) {
-		winner_leader.add_prestige(HUMILIATE_PRESTIGE);
-		loser_leader.add_prestige(-HUMILIATE_PRESTIGE);
+		winner_leader.add_prestige(get_peace_defines().humiliate_prestige);
+		loser_leader.add_prestige(-get_peace_defines().humiliate_prestige);
 	}
 
 	for (CountryInstance* loser : losers) {
@@ -389,7 +393,7 @@ bool WarManager::answer_peace_offer(
 		const PeaceOffer offer = *it;
 		offers.erase(it);
 		if (!accept) {
-			next_offer_date[offer_key(war_id, offer.from)] = instance_manager.get_today() + Timespan::from_days(30);
+			next_offer_date[offer_key(war_id, offer.from)] = instance_manager.get_today() + Timespan::from_days(get_peace_defines().decline_cooldown_days);
 			return false;
 		}
 
@@ -434,13 +438,14 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 	// Offers that were not answered for long are withdrawn
 	offers.erase(
 		std::remove_if(offers.begin(), offers.end(), [this, today](PeaceOffer const& offer) -> bool {
-			return get_war_by_id(offer.war_id) == nullptr || (today - offer.date).to_int() > OFFER_VALID_DAYS;
+			return get_war_by_id(offer.war_id) == nullptr || (today - offer.date).to_int() > get_peace_defines().offer_valid_days;
 		}),
 		offers.end()
 	);
 
 	// Only once a month and only on the 10th, the costs of looking at every war are small anyway
-	if (today.get_day() != 10) {
+	OpenVicPeaceDefines const& pd = get_peace_defines();
+	if (today.get_day() != pd.ai_peace_day_of_month) {
 		return;
 	}
 
@@ -462,9 +467,9 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 		const fixed_point_t defender_score = war->defender_score;
 
 		// Who is winning clearly
-		const bool attackers_lead = attacker_score >= 30 && attacker_score - defender_score >= 20;
-		const bool defenders_lead = defender_score >= 30 && defender_score - attacker_score >= 20;
-		const bool stalemate = days > 18 * 30 && !attackers_lead && !defenders_lead;
+		const bool attackers_lead = attacker_score >= pd.ai_lead_score && attacker_score - defender_score >= pd.ai_lead_margin;
+		const bool defenders_lead = defender_score >= pd.ai_lead_score && defender_score - attacker_score >= pd.ai_lead_margin;
+		const bool stalemate = days > pd.ai_stalemate_days && !attackers_lead && !defenders_lead;
 
 		for (const bool attacker_side : { true, false }) {
 			CountryInstance& leader = *(attacker_side ? attacker_leader : defender_leader);
@@ -483,10 +488,10 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 			PeaceTerms terms;
 			bool make_offer = false;
 			if (winning) {
-				terms = make_greedy_terms(*this, *war, leader, false, war->get_score(attacker_side) * 7 / 10);
+				terms = make_greedy_terms(*this, *war, leader, false, pd.ai_terms_score_share.of(war->get_score(attacker_side)));
 				make_offer = !terms.states.empty();
 			} else if (losing) {
-				terms = make_greedy_terms(*this, *war, leader, true, war->get_score(!attacker_side) * 7 / 10);
+				terms = make_greedy_terms(*this, *war, leader, true, pd.ai_terms_score_share.of(war->get_score(!attacker_side)));
 				make_offer = true; // even an empty list is a request for a white peace
 			} else if (stalemate) {
 				terms.war_id = war_id;
@@ -503,7 +508,7 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 					end_war(instance_manager, war_id);
 					break;
 				}
-				next_offer_date[key] = today + Timespan::from_days(60);
+				next_offer_date[key] = today + Timespan::from_days(pd.ai_retry_days);
 			} else {
 				// The player decides
 				PeaceOffer offer;
@@ -513,7 +518,7 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 				offer.terms = terms;
 				offer.date = today;
 				offers.push_back(std::move(offer));
-				next_offer_date[key] = today + Timespan::from_days(OFFER_VALID_DAYS + 30);
+				next_offer_date[key] = today + Timespan::from_days(pd.offer_valid_days + pd.ai_player_offer_extra_days);
 			}
 		}
 	}

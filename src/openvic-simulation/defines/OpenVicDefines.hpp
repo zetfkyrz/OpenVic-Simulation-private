@@ -271,12 +271,37 @@ namespace OpenVic {
 	INT(REGIMENTS_PER_TRANSPORT, regiments_per_transport, 4, 0, 1000) \
 	INT(LANDING_ORGANISATION_DIVISOR, landing_organisation_divisor, 2, 1, 1000)
 #define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	INT(OFFER_VALID_DAYS, offer_valid_days, 60, 1, 36500) \
+	INT(DECLINE_COOLDOWN_DAYS, decline_cooldown_days, 30, 0, 36500) \
+	INT(REPARATIONS_COST, reparations_cost, 10, 0, 10000) \
+	INT(HUMILIATE_COST, humiliate_cost, 8, 0, 10000) \
+	RATE(REPARATIONS_SHARE, reparations_share, Rate(25, 100), 0, 1) \
+	INT(HUMILIATE_PRESTIGE, humiliate_prestige, 5, 0, 10000) \
+	INT(WAR_GOAL_COST_DIVISOR, war_goal_cost_divisor, 2, 1, 1000) \
 	INT(WHITE_PEACE_SCORE_GAP, white_peace_score_gap, 15, 0, 10000) \
 	INT(WHITE_PEACE_WAR_DAYS, white_peace_war_days, 1095, 0, 36500) \
+	RATE(WHITE_PEACE_TIREDNESS, white_peace_tiredness, Rate(1, 2), 0, 1) \
 	INT(SURRENDER_SCORE, surrender_score, 40, 0, 10000) \
 	INT(CAPITAL_LOST_SCORE, capital_lost_score, 25, 0, 10000) \
 	INT(LONG_WAR_DAYS, long_war_days, 1825, 0, 36500) \
-	INT(LONG_WAR_SCORE, long_war_score, 20, 0, 10000)
+	INT(LONG_WAR_SCORE, long_war_score, 20, 0, 10000) \
+	INT(CONCEDE_COST_FACTOR, concede_cost_factor, 2, 1, 1000) \
+	INT(CONCEDE_SCORE_MARGIN, concede_score_margin, 5, 0, 10000) \
+	RATE(CONCEDE_TIREDNESS, concede_tiredness, Rate(7, 10), 0, 1) \
+	INT(DEMAND_OTHER_SCORE_DIVISOR, demand_other_score_divisor, 2, 1, 1000) \
+	INT(DEMAND_STRONG_SCORE, demand_strong_score, 40, 0, 10000) \
+	INT(DEMAND_STRONG_BONUS, demand_strong_bonus, 10, 0, 10000) \
+	INT(DEMAND_TIREDNESS_BONUS, demand_tiredness_bonus, 20, 0, 10000) \
+	INT(DEMAND_YEARS_CAP, demand_years_cap, 5, 0, 1000) \
+	INT(DEMAND_YEAR_BONUS, demand_year_bonus, 4, 0, 10000) \
+	INT(DEMAND_CAPITAL_BONUS, demand_capital_bonus, 15, 0, 10000) \
+	INT(AI_PEACE_DAY_OF_MONTH, ai_peace_day_of_month, 10, 1, 28) \
+	INT(AI_LEAD_SCORE, ai_lead_score, 30, 0, 10000) \
+	INT(AI_LEAD_MARGIN, ai_lead_margin, 20, 0, 10000) \
+	INT(AI_STALEMATE_DAYS, ai_stalemate_days, 540, 0, 36500) \
+	RATE(AI_TERMS_SCORE_SHARE, ai_terms_score_share, Rate(7, 10), 0, 1) \
+	INT(AI_RETRY_DAYS, ai_retry_days, 60, 0, 36500) \
+	INT(AI_PLAYER_OFFER_EXTRA_DAYS, ai_player_offer_extra_days, 30, 0, 36500)
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)
