@@ -221,7 +221,11 @@ namespace OpenVic {
 	DOUBLE(MIN_MILITANT_SHARE, min_militant_share, 0.15, 0, 1) \
 	INT(UPRISING_COOLDOWN_DAYS, uprising_cooldown_days, 365, 0, 36500) \
 	INT(AI_SUPPRESSION_DAYS, ai_suppression_days, 90, 0, 36500)
-#define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	INT(MAX_COLONIAL_RANK, max_colonial_rank, 16, 1, 1000) \
+	INT(SEA_RANGE_BASE, sea_range_base, 3, 0, 1000) \
+	INT(SEA_RANGE_PER_BASE_LEVEL, sea_range_per_base_level, 2, 0, 1000) \
+	INT(MIN_COLONISATION_DAYS, min_colonisation_days, 30, 1, 36500)
 #define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE)
