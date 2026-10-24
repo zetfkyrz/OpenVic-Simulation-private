@@ -122,7 +122,21 @@ namespace OpenVic {
 	INT(MIN_WAR_REGIMENTS, min_war_regiments, 3, 0, 1000) \
 	INT(MAX_RECRUITS_PER_MONTH, max_recruits_per_month, 3, 0, 1000) \
 	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100)
-#define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE)
+#define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(35, 100), 0, 1) \
+	RATE(GROWTH_PER_YEAR, growth_per_year, Rate(25, 1000), 0, 10) \
+	RATE(DECLINE_PER_YEAR, decline_per_year, Rate(60, 1000), 0, 10) \
+	RATE(ASSIMILATION_PER_MONTH, assimilation_per_month, Rate(1, 1000), 0, 1) \
+	INT(ASSIMILATION_SAME_GROUP_MULTIPLIER, assimilation_same_group_multiplier, 2, 1, 100) \
+	RATE(PROMOTION_PER_MONTH, promotion_per_month, Rate(4, 100), 0, 1) \
+	RATE(CRAFTSMEN_DEMOTION_UNEMPLOYMENT, craftsmen_demotion_unemployment, Rate(1, 4), 0, 1) \
+	RATE(PEASANTS_PROMOTION_UNEMPLOYMENT, peasants_promotion_unemployment, Rate(15, 100), 0, 1) \
+	RATE(MIGRATION_PER_MONTH, migration_per_month, Rate(3, 1000), 0, 1) \
+	RATE(MIGRATION_SCORE_MARGIN, migration_score_margin, Rate(8, 100), 0, 1) \
+	RATE(MIGRATION_UNEMPLOYMENT_THRESHOLD, migration_unemployment_threshold, Rate(1, 5), 0, 1) \
+	RATE(MIGRATION_LIFE_NEEDS_THRESHOLD, migration_life_needs_threshold, Rate(1, 2), 0, 1) \
+	RATE(SCORE_UNEMPLOYMENT_WEIGHT, score_unemployment_weight, Rate(1, 2), 0, 1) \
+	RATE(SCORE_LIFE_NEEDS_WEIGHT, score_life_needs_weight, Rate(1, 2), 0, 1)
 #define OV_POLITICS_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE)
 #define OV_WAR_DEFINES(INT, FIXED, RATE, DOUBLE)

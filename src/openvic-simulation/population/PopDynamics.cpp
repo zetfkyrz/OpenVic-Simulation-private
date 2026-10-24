@@ -49,7 +49,7 @@ namespace {
 		return province.add_pop(static_cast<PopBase const&>(template_pop).with_changes(type, culture, pop_size_t(0)), deps);
 	}
 
-	ProvinceScore compute_score(ProvinceInstance& province) {
+	ProvinceScore compute_score(ProvinceInstance& province, OpenVicPopulationDefines const& defines) {
 		ProvinceScore result;
 		fixed_point_t total = fixed_point_t::_0;
 		fixed_point_t unemployable_total = fixed_point_t::_0;
@@ -73,13 +73,15 @@ namespace {
 			result.has_pops = true;
 			result.life_needs = life_sum / total;
 			result.unemployment = unemployable_total > fixed_point_t::_0 ? unemployed / unemployable_total : fixed_point_t::_0;
-			result.score = (fixed_point_t::_1 - result.unemployment) / 2 + result.life_needs / 2;
+			result.score = defines.score_unemployment_weight.of(fixed_point_t::_1 - result.unemployment) + defines.score_life_needs_weight.of(result.life_needs);
 		}
 		return result;
 	}
 }
 
 void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps const& pop_deps) {
+	OpenVicPopulationDefines const& defines =
+		instance_manager.definition_manager.get_define_manager().get_openvic_defines().population;
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	PopManager const& pop_manager = instance_manager.definition_manager.get_pop_manager();
 
@@ -91,7 +93,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	std::unordered_map<ProvinceInstance const*, ProvinceScore> scores;
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		if (!province.province_definition.is_water() && province.get_pop_count() > 0) {
-			scores[&province] = compute_score(province);
+			scores[&province] = compute_score(province, defines);
 		}
 	}
 
@@ -154,7 +156,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		}
 		ProvinceInstance* best_destination = nullptr;
 		const ProvinceScore own_score = scores[&province];
-		fixed_point_t best_score = own_score.score + fixed_point_t(MIGRATION_SCORE_MARGIN_PERCENT) / 100;
+		fixed_point_t best_score = own_score.score + defines.migration_score_margin.fixed();
 		for (ProvinceInstance* destination : destinations) {
 			const auto it = scores.find(destination);
 			if (it == scores.end() || !it->second.has_pops) {
@@ -174,12 +176,12 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 
 			// ---- Growth: positive from half met life needs, starvation shrinks the pop faster
 			const fixed_point_t life = pop->get_life_needs_fulfilled();
-			const fixed_point_t breakeven = fixed_point_t(GROWTH_BREAKEVEN_PERCENT) / 100;
+			const fixed_point_t breakeven = defines.growth_breakeven_life_needs.fixed();
 			fixed_point_t yearly_rate;
 			if (life >= breakeven) {
-				yearly_rate = (life - breakeven) / (fixed_point_t::_1 - breakeven) * GROWTH_PERMILLE_PER_YEAR / 1000;
+				yearly_rate = defines.growth_per_year.of((life - breakeven) / (fixed_point_t::_1 - breakeven));
 			} else {
-				yearly_rate = -(breakeven - life) / breakeven * DECLINE_PERMILLE_PER_YEAR / 1000;
+				yearly_rate = defines.decline_per_year.of(-(breakeven - life) / breakeven);
 			}
 			pop->growth_remainder += yearly_rate * size / 12;
 			if (pop->growth_remainder >= fixed_point_t::_1) {
@@ -201,8 +203,11 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			if (owner != nullptr && owner->get_primary_culture() != nullptr
 				&& pop->get_culture_status() == Pop::culture_status_t::UNACCEPTED && !type.is_slave) {
 				Culture const& primary = *owner->get_primary_culture();
-				const int rate = &pop->culture.group == &primary.group ? ASSIMILATION_PERMILLE_PER_MONTH * 2 : ASSIMILATION_PERMILLE_PER_MONTH;
-				pop->assimilation_remainder += fixed_point_t(rate) * type_safe::get(pop->get_size()) / 1000;
+				// Inside a culture group the assimilation is faster
+				const std::int32_t multiplier = &pop->culture.group == &primary.group ? defines.assimilation_same_group_multiplier : 1;
+				pop->assimilation_remainder += defines.assimilation_per_month.of(
+					fixed_point_t(type_safe::get(pop->get_size())) * multiplier
+				);
 				const std::int32_t whole = std::min(take_whole(pop->assimilation_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(province, type, primary, *pop, pop_deps)) {
@@ -216,7 +221,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			// ---- Demotion of unemployed craftsmen / promotion of unemployed farmers and labourers
 			const fixed_point_t unemployment = pop->get_unemployment_fraction();
 			if (craftsmen != nullptr && farmers != nullptr && labourers != nullptr) {
-				if (&type == craftsmen && unemployment > fixed_point_t(1) / 4) {
+				if (&type == craftsmen && unemployment > defines.craftsmen_demotion_unemployment.fixed()) {
 					PopType const* target_type = labourers;
 					// The RGO decides which of the two is needed: the type with more people in the province
 					fixed_point_t farmers_size = fixed_point_t::_0, labourers_size = fixed_point_t::_0;
@@ -230,7 +235,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					if (farmers_size > labourers_size) {
 						target_type = farmers;
 					}
-					pop->migration_remainder += fixed_point_t(type_safe::get(pop->get_unemployed())) * PROMOTION_PERCENT_PER_MONTH / 100;
+					pop->migration_remainder += defines.promotion_per_month.of(fixed_point_t(type_safe::get(pop->get_unemployed())));
 					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *target_type, pop->culture, *pop, pop_deps)) {
@@ -238,9 +243,9 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							target->change_size(whole, 2);
 						}
 					}
-				} else if ((&type == farmers || &type == labourers) && unemployment > fixed_point_t(15) / 100
+				} else if ((&type == farmers || &type == labourers) && unemployment > defines.peasants_promotion_unemployment.fixed()
 					&& state != nullptr && vacancies[state] > 0) {
-					pop->migration_remainder += fixed_point_t(type_safe::get(pop->get_unemployed())) * PROMOTION_PERCENT_PER_MONTH / 100;
+					pop->migration_remainder += defines.promotion_per_month.of(fixed_point_t(type_safe::get(pop->get_unemployed())));
 					const std::int32_t whole = std::min({
 						take_whole(pop->migration_remainder), type_safe::get(pop->get_size()), vacancies[state]
 					});
@@ -257,8 +262,9 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 
 			// ---- Internal migration to a better province: the unemployed and the hungry leave
 			if (best_destination != nullptr && !type.is_slave && type_safe::get(pop->get_size()) > 0
-				&& (unemployment > fixed_point_t(1) / 5 || pop->get_life_needs_fulfilled() < fixed_point_t::_0_50)) {
-				pop->migration_remainder += fixed_point_t(MIGRATION_PERMILLE_PER_MONTH) * type_safe::get(pop->get_size()) / 1000;
+				&& (unemployment > defines.migration_unemployment_threshold.fixed()
+					|| pop->get_life_needs_fulfilled() < defines.migration_life_needs_threshold.fixed())) {
+				pop->migration_remainder += defines.migration_per_month.of(fixed_point_t(type_safe::get(pop->get_size())));
 				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(*best_destination, type, pop->culture, *pop, pop_deps)) {
