@@ -559,6 +559,111 @@ namespace {
 		play(im, 5);
 	}
 
+	// The investment fund: the construction slider sets money aside, the AI keeps its budget out of a loss, the money of the
+	// fund pays the construction of profitable enterprises, and no money appears or disappears without a hook of the ledger
+	void test_investment_fund(Results& r, InstanceManager& im) {
+		CountryInstance* player = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && (player == nullptr || country.get_states().size() > player->get_states().size())) {
+				player = &country;
+			}
+		}
+		r.check(player != nullptr, "investment fund: a country with states exists");
+		if (player == nullptr) {
+			return;
+		}
+
+		MoneyLedger& ledger = im.get_money_ledger();
+		ledger.enable(im);
+
+		// A country played by a human keeps the whole allocation (the AI sets its own)
+		player->set_ai(false);
+		r.check(
+			player->get_construction_spending_slider_value().get_value_untracked() == fixed_point_t::_0,
+			"investment fund: the slider of the allocation starts at nothing"
+		);
+		im.queue_game_action<set_construction_spending_argument_t>(player->index, fixed_point_t::_1);
+		im.force_tick_and_update();
+		r.check(
+			player->get_construction_spending_slider_value().get_value_untracked() == fixed_point_t::_1,
+			"investment fund: the slider of the player can be raised to 100 percent"
+		);
+
+		constexpr int DAYS = 240;
+		play(im, DAYS);
+
+		const fixed_point_t income = player->get_income_yesterday();
+		const fixed_point_t allocation = player->get_investment_allocation();
+		r.check(
+			player->get_investment_fund() + player->get_investment_spent_total() > fixed_point_t::_0,
+			"investment fund: the slider sets money aside every day",
+			fmt::format("fund {}, spent {}", player->get_investment_fund(), player->get_investment_spent_total())
+		);
+		r.check(
+			income > fixed_point_t::_0 && allocation * 2 >= income - fixed_point_t(1) / 100 && allocation * 2 <= income + fixed_point_t(1) / 100,
+			"investment fund: 100 percent of the slider is half of the income",
+			fmt::format("income {}, allocation {}", income, allocation)
+		);
+
+		// The AI sets money aside only out of a surplus of its budget, and its treasury never goes below zero
+		std::int32_t ai_investing = 0, ai_wrong = 0, ai_negative = 0, ai_total = 0, ai_surplus = 0, ai_deficit = 0;
+		fixed_point_t total_fund, total_spent;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || country.get_states().empty()) {
+				continue;
+			}
+			total_fund += country.get_investment_fund();
+			total_spent += country.get_investment_spent_total();
+			if (country.get_cash_stockpile().load() < fixed_point_t::_0) {
+				ai_negative++;
+			}
+			if (country.is_ai()) {
+				ai_total++;
+				if (country.get_balance_before_investment_average() > fixed_point_t::_0) {
+					ai_surplus++;
+				} else {
+					ai_deficit++;
+				}
+			}
+			if (country.is_ai() && country.get_construction_spending_slider_value().get_value_untracked() > fixed_point_t::_0) {
+				ai_investing++;
+				if (country.get_balance_before_investment_average() <= fixed_point_t::_0) {
+					ai_wrong++;
+				}
+			}
+		}
+		r.check(ai_wrong == 0, "investment fund: an AI country sets money aside only while its budget has a surplus", fmt::format("{} of {}", ai_wrong, ai_investing));
+		r.check(ai_negative == 0, "investment fund: no treasury goes below zero", fmt::format("{} countries", ai_negative));
+
+		// Factories built with the money of the fund belong to the pops that were given it
+		std::int32_t owned_by_pops = 0, deficit_projects = 0, projects = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			for (auto const& record : country.get_recent_investments()) {
+				projects++;
+				deficit_projects += record.deficit ? 1 : 0;
+			}
+		}
+		for (StateSet const& state_set : im.get_map_instance().get_state_manager().get_state_sets()) {
+			for (State const& state : state_set.get_states()) {
+				for (FactoryInstance const& factory : state.get_factories()) {
+					owned_by_pops += factory.get_owner_pop_type_index().has_value() ? 1 : 0;
+				}
+			}
+		}
+		fmt::println(
+			"TEST INFO investment fund: after {} days the funds hold {}, {} was paid for projects ({} of the last projects, {} for a good the country lacks), {} factories belong to the pops that built them, {} of {} AI countries set money aside ({} have a surplus, {} a deficit)",
+			DAYS, total_fund, total_spent, projects, deficit_projects, owned_by_pops, ai_investing, ai_total, ai_surplus, ai_deficit
+		);
+		r.check(total_spent > fixed_point_t::_0, "investment fund: the money of the funds builds profitable enterprises");
+
+		r.check(
+			ledger.get_measured_change_raw(im) == ledger.get_holder_sum_raw(),
+			"investment fund: the money stays accounted for (nothing appears or disappears without a payment)",
+			fmt::format("measured {}, explained {}", ledger.get_measured_change_raw(im), ledger.get_holder_sum_raw())
+		);
+		ledger.disable();
+	}
+
 	void test_game(Results& r, Game& game) {
 		constexpr int FIRST_DAYS = 40;
 		constexpr int MORE_DAYS = 20;
@@ -690,6 +795,15 @@ namespace {
 			return;
 		}
 		test_factory_actions(r, *im);
+		game.end();
+
+		// ---- run 7: the investment fund
+		im = game.start();
+		r.check(im != nullptr, "investment fund: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_investment_fund(r, *im);
 		game.end();
 
 		// ---- the defines hash does not change while playing

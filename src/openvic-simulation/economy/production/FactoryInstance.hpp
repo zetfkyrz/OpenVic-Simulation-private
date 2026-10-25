@@ -62,6 +62,22 @@ namespace OpenVic {
 			return static_cast<size_t>(defines->max_factories_per_state);
 		}
 
+	public:
+		// One month of the life of the factory for the statistics window; the last ten years are kept
+		struct MonthRecord {
+			// Last day of the month
+			Date date;
+			// Money from the sales of the goods, the raw materials used up, the wages
+			fixed_point_t revenue;
+			fixed_point_t input_costs;
+			fixed_point_t wages;
+			// Quantity of the goods produced
+			fixed_point_t output;
+			// Average number of employees
+			std::int32_t employees = 0;
+		};
+		static constexpr size_t MAX_HISTORY_MONTHS = 120;
+
 	private:
 		building_level_t PROPERTY(level);
 		bool PROPERTY_CUSTOM_PREFIX(open, is, true);
@@ -75,6 +91,13 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(expansion_fund);
 		// Share of the factory owned by the state (the rest belongs to the capitalists), 0..1
 		fixed_point_t PROPERTY_RW(state_share);
+		// Pop type of the private owners of the factory when it is not the one of the production type (capitalists): the pops
+		// that were given the money of the investment fund to build it
+		std::optional<pop_type_index_t> owner_pop_type_index;
+		memory::vector<MonthRecord> history;
+		MonthRecord month_in_progress;
+		std::int64_t month_employee_days = 0;
+		std::int32_t month_days = 0;
 		// Whether the factory was built by the state (otherwise by capitalists / the game setup)
 		bool PROPERTY_RW_CUSTOM_NAME(built_by_state, was_built_by_state, set_built_by_state, false);
 		// Hiring order inside a state: factories with a higher priority hire first (0 low, 1 normal, 2 high)
@@ -131,6 +154,8 @@ namespace OpenVic {
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 
 		void settle(State& state, MarketInstance const& market_instance);
+		// Closes the month: the record goes into the history
+		void close_month(const Date today);
 		void advance_construction(State& state, const Date today, MarketInstance const& market_instance);
 		void try_auto_expansion(const Date today, MarketInstance const& market_instance);
 		// Pays the dividend out of the budget to the capitalists and the state according to the shares, adds what each got
@@ -207,6 +232,20 @@ namespace OpenVic {
 
 		void set_subsidised(const bool new_subsidised) {
 			subsidised = new_subsidised;
+		}
+
+		[[nodiscard]] std::optional<pop_type_index_t> get_owner_pop_type_index() const {
+			return owner_pop_type_index;
+		}
+		void set_owner_pop_type_index(std::optional<pop_type_index_t> new_owner_pop_type_index) {
+			owner_pop_type_index = new_owner_pop_type_index;
+		}
+		// The pop type that owns the private share: the chosen builder, or the owners of the production type
+		[[nodiscard]] std::optional<pop_type_index_t> get_effective_owner_pop_type_index() const;
+
+		// Months of the history, oldest first (the month in progress is not in it)
+		[[nodiscard]] memory::vector<MonthRecord> const& get_history() const {
+			return history;
 		}
 
 		void tick(State& state, MarketInstance& market_instance, const Date today);

@@ -219,7 +219,21 @@ namespace OpenVic {
 		//store purchase record from last tick and prediction next tick
 		OV_CLAMPED_PROPERTY(army_spending_slider_value);
 		OV_CLAMPED_PROPERTY(navy_spending_slider_value);
+		// The construction slider of the budget is the allocation to the investment fund: at 100 percent half of the income
+		// of the day (see OpenVicEconomyDefines::investment_budget_share) goes into the fund, 1 percent of the slider is 0.5
+		// percent of the budget. The fund is not limited. Once a week the InvestmentPlanner gives its money to the pops
+		// who build the enterprises and railroads that would be profitable.
 		OV_CLAMPED_PROPERTY(construction_spending_slider_value);
+		fixed_point_t PROPERTY(investment_fund);
+		fixed_point_t PROPERTY(investment_deposit_yesterday);
+		fixed_point_t PROPERTY(investment_spent_total);
+		// Money that came to the treasury yesterday (taxes, tariffs, gold, sales of the national stockpile): the budget
+		fixed_point_t PROPERTY(income_yesterday);
+		// Average (about a month) of the daily balance of the treasury before the deposit to the investment fund; the AI
+		// sets its allocation from it so that the budget does not go into a loss
+		fixed_point_t PROPERTY(balance_before_investment_average);
+		std::int32_t balance_samples = 0;
+		atomic_fixed_point_t actual_tax_income;
 		atomic_fixed_point_t PROPERTY(actual_national_stockpile_spending);
 		atomic_fixed_point_t PROPERTY(actual_national_stockpile_income);
 
@@ -583,6 +597,47 @@ namespace OpenVic {
 		bool add_reform(Reform const& new_reform);
 
 		void set_strata_tax_rate_slider_value(Strata const& strata, const fixed_point_t new_value);
+		// The last projects paid from the investment fund (newest last), for the interface
+		struct InvestmentRecord {
+			enum struct kind_t : std::uint8_t { NEW_FACTORY, EXPANDED_FACTORY, RAILROAD };
+			Date date;
+			kind_t kind = kind_t::NEW_FACTORY;
+			BuildingType const* building_type = nullptr;
+			// The state of the factory, or the state of the province of the railroad
+			State const* state = nullptr;
+			ProvinceInstance const* province = nullptr;
+			PopType const* builder = nullptr;
+			fixed_point_t cost;
+			// The project was chosen first because it makes a good that the country lacks
+			bool deficit = false;
+		};
+		static constexpr size_t MAX_INVESTMENT_RECORDS = 16;
+	private:
+		memory::vector<InvestmentRecord> recent_investments;
+	public:
+		[[nodiscard]] memory::vector<InvestmentRecord> const& get_recent_investments() const {
+			return recent_investments;
+		}
+		// Pays a project out of the investment fund (the money is spent on the construction and leaves the economy)
+		void spend_investment_fund(const fixed_point_t amount, InvestmentRecord&& record) {
+			investment_fund -= amount;
+			investment_spent_total += amount;
+			MoneyLedger::record(MoneyLedger::label_t::investment_fund_spent, -amount);
+			if (recent_investments.size() >= MAX_INVESTMENT_RECORDS) {
+				recent_investments.erase(recent_investments.begin());
+			}
+			recent_investments.push_back(std::move(record));
+		}
+		// What the construction slider sets aside per day for the given value of the slider (when it is deposited it cannot be more
+		// than the money in the treasury)
+		[[nodiscard]] fixed_point_t get_investment_allocation(fixed_point_t slider_value) const;
+		[[nodiscard]] fixed_point_t get_investment_allocation() const {
+			return get_investment_allocation(construction_spending_slider_value.get_value_untracked());
+		}
+		// The share of the income that 100 percent of the construction slider sets aside (50 percent)
+		[[nodiscard]] static fixed_point_t get_investment_budget_share() {
+			return openvic_economy_defines->investment_budget_share.fixed();
+		}
 		// Puts money into the national stockpile, e.g. the dividends of state owned factories
 		void add_cash(const fixed_point_t amount) {
 			cash_stockpile += amount;

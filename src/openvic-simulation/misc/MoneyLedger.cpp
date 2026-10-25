@@ -39,7 +39,8 @@ MoneyLedger::Totals MoneyLedger::measure(InstanceManager& instance_manager) {
 		}
 	}
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		totals.countries += country.get_cash_stockpile().load();
+		// The investment fund of the country is its money as well (the daily deposit only moves money from the treasury)
+		totals.countries += country.get_cash_stockpile().load() + country.get_investment_fund();
 	}
 	for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
 		for (State const& state : state_set.get_states()) {

@@ -84,6 +84,8 @@ namespace OpenVic {
 	X(capitalist_fund_in, "factory") \
 	X(capitalist_fund_out, "factory") \
 	X(expansion_fund_spent, "factory") \
+	/* the investment fund of a country pays the construction of an enterprise or a railroad */ \
+	X(investment_fund_spent, "factory") \
 	/* the other changes of the treasury of a country (add_cash / spend_cash) */ \
 	X(country_other_credit, "other") \
 	X(country_other_debit, "other")

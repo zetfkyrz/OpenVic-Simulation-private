@@ -383,6 +383,15 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	profit_yesterday = profit;
 	average_profit += (profit - average_profit) / get_defines().average_profit_days;
 
+	if (level > building_level_t(0)) {
+		month_in_progress.revenue += revenue;
+		month_in_progress.input_costs += consumed_value_pending;
+		month_in_progress.wages += wages;
+		month_in_progress.output += produced_quantity_pending;
+		month_employee_days += type_safe::get(employee_count);
+		month_days++;
+	}
+
 	produced_quantity_pending = 0;
 	consumed_value_pending = 0;
 
@@ -414,13 +423,40 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	}
 }
 
+void FactoryInstance::close_month(const Date today) {
+	if (month_days > 0) {
+		MonthRecord record = month_in_progress;
+		record.date = today - Timespan::from_days(1);
+		record.employees = static_cast<std::int32_t>(month_employee_days / month_days);
+		if (history.size() >= MAX_HISTORY_MONTHS) {
+			history.erase(history.begin());
+		}
+		history.push_back(record);
+	}
+	month_in_progress = MonthRecord {};
+	month_employee_days = 0;
+	month_days = 0;
+}
+
+std::optional<pop_type_index_t> FactoryInstance::get_effective_owner_pop_type_index() const {
+	if (owner_pop_type_index.has_value()) {
+		return owner_pop_type_index;
+	}
+	if (production_type.owner.has_value()) {
+		return production_type.owner->pop_type_index;
+	}
+	return std::nullopt;
+}
+
 void FactoryInstance::advance_construction(State& state, const Date today, MarketInstance const& market_instance) {
 	if (construction_end.has_value() && construction_uses_stockpile && today < *construction_end) {
 		CountryInstance* const owner = state.get_owner();
 		bool worked = false;
 
 		if (owner != nullptr) {
-			construction_pace += owner->get_construction_spending_slider_value().get_value_untracked();
+			// The construction goes on day by day while the goods of the day are in the national stockpile; the construction
+			// slider of the budget is the allocation to the investment fund and does not slow it down
+			construction_pace += fixed_point_t::_1;
 			if (construction_pace >= fixed_point_t::_1) {
 				// All the goods of the day have to be in the stockpile
 				bool goods_available = true;
@@ -471,11 +507,22 @@ void FactoryInstance::pay_dividend(
 	fixed_point_t state_part = amount - capitalists_part;
 
 	if (capitalists_part > 0) {
+		// The private owners are the pops that built the factory (the capitalists unless the investment fund gave the money to
+		// another class); when there are none left in the state the capitalists get the dividend
+		std::optional<pop_type_index_t> owner_type = get_effective_owner_pop_type_index();
 		int32_t total_owner_size = 0;
-		if (production_type.owner.has_value()) {
-			for (Pop const& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+		const auto count_owners = [&state, &total_owner_size](const pop_type_index_t type_index) -> void {
+			total_owner_size = 0;
+			for (Pop const& pop : state.get_pops_cache_by_type()[type_index]) {
 				total_owner_size += type_safe::get(pop.get_size());
 			}
+		};
+		if (owner_type.has_value()) {
+			count_owners(*owner_type);
+		}
+		if (total_owner_size <= 0 && production_type.owner.has_value() && owner_type != production_type.owner->pop_type_index) {
+			owner_type = production_type.owner->pop_type_index;
+			count_owners(*owner_type);
 		}
 
 		if (total_owner_size > 0) {
@@ -483,7 +530,7 @@ void FactoryInstance::pay_dividend(
 			const fixed_point_t saved = capitalists_part * get_defines().capitalist_savings_share.fixed();
 			const fixed_point_t paid_to_pops = capitalists_part - saved;
 			state.add_to_capitalist_fund(saved);
-			for (Pop& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+			for (Pop& pop : state.get_pops_cache_by_type()[*owner_type]) {
 				const fixed_point_t income = paid_to_pops * type_safe::get(pop.get_size()) / total_owner_size;
 				if (income > fixed_point_t::_0) {
 					pop.add_factory_owner_income(income);
@@ -585,6 +632,9 @@ void FactoryInstance::hire(State& state) {
 }
 
 void FactoryInstance::tick(State& state, MarketInstance& market_instance, const Date today) {
+	if (today.is_month_start()) {
+		close_month(today);
+	}
 	settle(state, market_instance);
 	advance_construction(state, today, market_instance);
 

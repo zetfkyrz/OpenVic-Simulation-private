@@ -265,10 +265,10 @@ CountryInstance::CountryInstance(
 	navy_spending_slider_value.set_bounds(economy_defines.get_minimum_navy_spending_slider_value(), 1);
 	navy_spending_slider_value.set_value(1);
 
-	construction_spending_slider_value.set_bounds(
-		economy_defines.get_minimum_construction_spending_slider_value(), 1
-	);
-	construction_spending_slider_value.set_value(1);
+	construction_spending_slider_value.set_bounds(0, 1);
+	// The allocation to the investment fund starts at nothing: the player chooses how much of the budget goes to it, the AI
+	// sets its allocation itself (InvestmentPlanner)
+	construction_spending_slider_value.set_value(0);
 
 	education_spending_slider_value.set_bounds(0, 1);
 	education_spending_slider_value.set_value(fixed_point_t::_0_50);
@@ -2149,6 +2149,7 @@ void CountryInstance::country_tick_before_map(
 		= actual_tariff_income
 		= actual_national_stockpile_spending
 		= actual_national_stockpile_income
+		= actual_tax_income
 	 	= 0;
 }
 
@@ -2194,9 +2195,9 @@ void CountryInstance::calculate_government_good_needs() {
 		}
 	}
 
-	// Factories under construction use goods of the stockpile while the construction slider lets them work
-	const fixed_point_t construction_slider = construction_spending_slider_value.get_value_untracked();
-	if (construction_slider > fixed_point_t::_0) {
+	// Factories under construction use goods of the stockpile (the construction slider is the allocation to the
+	// investment fund, it does not slow the construction down)
+	{
 		for (State const* state : states) {
 			for (FactoryInstance const& factory : state->get_factories()) {
 				if (!factory.is_construction_using_stockpile()) {
@@ -2205,7 +2206,7 @@ void CountryInstance::calculate_government_good_needs() {
 				for (auto const& [good, quantity] : factory.building_type.goods_cost) {
 					good_data_t& good_data = goods_data.at_index(good->index);
 					// Consumed by the factory when it builds, so it only has to be kept in the stockpile
-					const fixed_point_t daily_need = factory.get_daily_construction_goods(*good) * construction_slider;
+					const fixed_point_t daily_need = factory.get_daily_construction_goods(*good);
 					good_data.government_needs += daily_need * openvic_economy_defines->construction_reserve_days;
 					good_data.max_government_consumption += daily_need * openvic_economy_defines->construction_reserve_days;
 				}
@@ -2514,9 +2515,38 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	gold_income.set(gold_income_value);
 	cash_stockpile += gold_income_value;
 	MoneyLedger::record(MoneyLedger::label_t::gold_income, gold_income_value);
+
+	// The budget of the day, and the part of it that the construction slider sets aside for the investment fund
+	income_yesterday = actual_tax_income.load() + actual_tariff_income.load() + gold_income_value + actual_national_stockpile_income.load();
+	investment_deposit_yesterday = fixed_point_t::_0;
+	const fixed_point_t allocation = get_investment_allocation();
+	// An AI country starts to set money aside once it knows its own balance (it sets its allocation from it)
+	if (allocation > fixed_point_t::_0 && !(is_ai() && balance_samples == 0)) {
+		// The money of the allocation is a part of the budget like the other expenses, the treasury cannot go below zero
+		const fixed_point_t deposit = std::min(allocation, cash_stockpile.load());
+		if (deposit > fixed_point_t::_0) {
+			cash_stockpile -= deposit;
+			investment_fund += deposit;
+			investment_deposit_yesterday = deposit;
+		}
+	}
 	free_funds = cash_stockpile.load();
 	const fixed_point_t yesterdays_balance = cash_stockpile - cash_stockpile_start_of_tick;
 	balance_history.push_back(yesterdays_balance);
+
+	// The average balance without the deposit to the investment fund (the first days count fully)
+	const std::int32_t average_days = openvic_economy_defines->investment_ai_average_days;
+	if (balance_samples < average_days) {
+		balance_samples++;
+	}
+	balance_before_investment_average += (yesterdays_balance + investment_deposit_yesterday - balance_before_investment_average) / balance_samples;
+}
+
+fixed_point_t CountryInstance::get_investment_allocation(const fixed_point_t slider_value) const {
+	if (slider_value <= fixed_point_t::_0 || income_yesterday <= fixed_point_t::_0) {
+		return fixed_point_t::_0;
+	}
+	return openvic_economy_defines->investment_budget_share.of(income_yesterday) * slider_value;
 }
 
 CountryInstance::good_data_t::good_data_t()
@@ -2547,6 +2577,7 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 	const std::lock_guard<spin_mutex> lock_guard { taxable_income_mutex };
 	taxable_income_by_pop_type.at(pop_type) += gross_income;
 	cash_stockpile += paid_as_tax;
+	actual_tax_income += paid_as_tax;
 	MoneyLedger::record(MoneyLedger::label_t::tax_income, paid_as_tax);
 }
 

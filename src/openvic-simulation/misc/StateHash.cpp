@@ -58,6 +58,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		hasher.add(country.get_cash_stockpile().load());
+		hasher.add(country.get_investment_fund());
+		hasher.add(country.get_income_yesterday());
+		hasher.add(country.get_balance_before_investment_average());
 		hasher.add(country.get_prestige_untracked());
 		hasher.add(country.is_at_war() ? 1 : 0);
 		hasher.add(country.get_owned_provinces().size());

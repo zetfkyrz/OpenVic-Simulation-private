@@ -1,6 +1,9 @@
 #include <cstdlib>
 #include "InstanceManager.hpp"
 
+#include "openvic-simulation/economy/production/InvestmentPlanner.hpp"
+#include "openvic-simulation/misc/DebugPhaseHash.hpp" // OV_DBG_PHASE
+
 #include "openvic-simulation/ai/CountryAI.hpp"
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/research/ResearchDynamics.hpp"
@@ -229,31 +232,37 @@ void InstanceManager::tick() {
 	{
 		OV_PROFILE_SCOPE(tick_profiler, "tick");
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger begin"); money_ledger.begin_day(*this); }
+		debug::phase_hash(*this, "begin"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "countries before the map");
 			country_instance_manager.country_manager_tick_before_map();
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "before_map"); }
+		debug::phase_hash(*this, "before_map"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "map_tick (provinces, pops)");
 			map_instance.map_tick();
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "map_tick"); }
+		debug::phase_hash(*this, "map_tick"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "factories");
 			map_instance.factory_tick(market_instance, today);
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "factories"); }
+		debug::phase_hash(*this, "factories"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "market (orders)");
 			market_instance.execute_orders();
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "market"); }
+		debug::phase_hash(*this, "market"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "countries after the map");
 			country_instance_manager.country_manager_tick_after_map();
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "after_map"); }
+		debug::phase_hash(*this, "after_map"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "units");
 			unit_instance_manager.tick();
@@ -270,7 +279,12 @@ void InstanceManager::tick() {
 			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
 			colonisation_manager.tick(*this);
 		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "investment");
+			InvestmentPlanner::tick(*this);
+		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "units_wars_credit"); }
+		debug::phase_hash(*this, "uwc"); // OV_DBG_PHASE
 
 		if (today.is_month_start()) {
 			OV_PROFILE_SCOPE(tick_profiler, "monthly");
@@ -304,6 +318,7 @@ void InstanceManager::tick() {
 			}
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "monthly"); }
+		debug::phase_hash(*this, "monthly"); // OV_DBG_PHASE
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "money ledger (checks)");
 			money_ledger.end_day(*this);

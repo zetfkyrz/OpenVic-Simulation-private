@@ -333,6 +333,37 @@ namespace OpenVic {
 	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
 	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650) \
 	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 7, 0, 3650) \
+	/* Investment fund: the construction slider of the budget sets aside this share of the daily income at 100 percent */ \
+	RATE(INVESTMENT_BUDGET_SHARE, investment_budget_share, Rate(50, 100), 0, 1) \
+	/* How often (in days) the profit of the possible enterprises and railroads is reviewed, and how many projects may start per review */ \
+	INT(INVESTMENT_PERIOD_DAYS, investment_period_days, 7, 1, 365) \
+	INT(INVESTMENT_PROJECTS_PER_REVIEW, investment_projects_per_review, 2, 1, 100) \
+	/* A project is approved when the profit of this many days is at least INVESTMENT_MIN_RETURN of its cost */ \
+	INT(INVESTMENT_PROFIT_DAYS, investment_profit_days, 182, 1, 3650) \
+	RATE(INVESTMENT_MIN_RETURN, investment_min_return, Rate(10, 100), 0, 10) \
+	/* The share of the jobs of a new level of a factory that the unemployed of the state must be able to fill */ \
+	RATE(INVESTMENT_MIN_STAFFING, investment_min_staffing, Rate(25, 100), 0, 1) \
+	/* The profit of a level of railroad: this share of the daily revenue of the resource gathering of the province */ \
+	RATE(INVESTMENT_RAILROAD_BONUS, investment_railroad_bonus, Rate(20, 100), 0, 10) \
+	/* Chances (weights) of the pop types to be given the money of the fund and to build the enterprise */ \
+	/* The deficit (first priority of the planner): a good the country needs, makes less than this share of what it needs, and the market */ \
+	/* cannot supply (the demand of the market is more than its supply by this margin) */ \
+	RATE(INVESTMENT_DEFICIT_COVERAGE, investment_deficit_coverage, Rate(50, 100), 0, 1) \
+	RATE(INVESTMENT_DEFICIT_MARGIN, investment_deficit_margin, Rate(10, 100), 0, 10) \
+	/* The AI sets its allocation to the fund once per review so that the budget does not go into a loss: it only invests this share */ \
+	/* of the average daily surplus (average of this many days) and only while the treasury holds this many days of its spending (0: no reserve) */ \
+	INT(INVESTMENT_AI_AVERAGE_DAYS, investment_ai_average_days, 30, 1, 3650) \
+	INT(INVESTMENT_AI_RESERVE_DAYS, investment_ai_reserve_days, 0, 0, 3650) \
+	RATE(INVESTMENT_AI_SURPLUS_SHARE, investment_ai_surplus_share, Rate(75, 100), 0, 1) \
+	/* The AI stops setting money aside while its fund holds the income of this many days (money that nobody uses is not saved) */ \
+	INT(INVESTMENT_AI_MAX_FUND_DAYS, investment_ai_max_fund_days, 120, 1, 36500) \
+	INT(INVESTMENT_WEIGHT_CAPITALISTS, investment_weight_capitalists, 50, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_ARISTOCRATS, investment_weight_aristocrats, 25, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_ARTISANS, investment_weight_artisans, 5, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_CLERGYMEN, investment_weight_clergymen, 5, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_CLERKS, investment_weight_clerks, 5, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_OFFICERS, investment_weight_officers, 5, 0, 10000) \
+	INT(INVESTMENT_WEIGHT_BUREAUCRATS, investment_weight_bureaucrats, 5, 0, 10000) \
 	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1)
 	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
