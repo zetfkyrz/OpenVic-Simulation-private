@@ -587,8 +587,14 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 					capitalist_fraction = 0;
 					break;
 				case STATE_ONLY:
-					// Factories owned entirely by the state are paid for by the state (share 1), the others by the shares
-					state_fraction = state_share;
+					// Only the factories the state owns a share of are subsidised, and the state pays all of their losses;
+					// private factories get nothing from the state (the capitalists pay for them)
+					if (state_share > fixed_point_t::_0) {
+						state_fraction = fixed_point_t::_1;
+						capitalist_fraction = fixed_point_t::_0;
+					} else {
+						state_fraction = fixed_point_t::_0;
+					}
 					break;
 				case BY_SHARE:
 					state_fraction = state_share;
