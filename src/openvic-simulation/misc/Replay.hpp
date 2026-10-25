@@ -24,7 +24,7 @@ namespace OpenVic {
 		// 5: a price rises only if the buyers can pay the whole supply, otherwise it falls (stuck prices, run-away scarce goods)
 		// 6: pops start with 7 days of savings (POP_START_SAVINGS_DAYS), against the hunger of the first months
 		// 7: the credit system is new (offers, delays, schedule), the old credit actions are skipped when a save is loaded
-		inline constexpr int SIMULATION_VERSION = 10;
+		inline constexpr int SIMULATION_VERSION = 11;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

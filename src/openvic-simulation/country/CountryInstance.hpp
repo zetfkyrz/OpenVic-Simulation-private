@@ -141,8 +141,9 @@ namespace OpenVic {
 	public:
 		// Who pays the losses of the subsidised factories: ALL (the state pays the whole loss), BY_SHARE (the state pays its
 		// share of the ownership, the capitalists the rest), CRISIS (like BY_SHARE while the capitalists have money, when their
-		// money runs out the state also pays their part, whatever its share is)
-		enum struct subsidy_mode_t : uint32_t { ALL = 0, BY_SHARE = 1, CRISIS = 2 };
+		// money runs out the state also pays their part, whatever its share is), HARD_CRISIS (like CRISIS, but every month
+		// the state takes over the share of the factory that it paid for instead of the capitalists)
+		enum struct subsidy_mode_t : uint32_t { ALL = 0, BY_SHARE = 1, CRISIS = 2, HARD_CRISIS = 3 };
 	private:
 		subsidy_mode_t PROPERTY_RW(subsidy_mode, subsidy_mode_t::BY_SHARE);
 		// Central bank: yearly interest rates of the loans the country gives to its capitalists and to other countries

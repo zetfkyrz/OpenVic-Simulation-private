@@ -186,6 +186,16 @@ void MapInstance::map_tick() {
 	//state tick will update pop employment via factories
 }
 
+void MapInstance::monthly_factory_takeovers(MarketInstance const& market_instance) {
+	for (StateSet& state_set : state_manager.get_mutable_state_sets()) {
+		for (State& state : state_set.get_mutable_states()) {
+			for (FactoryInstance& factory : state.get_mutable_factories()) {
+				factory.apply_crisis_takeover(market_instance);
+			}
+		}
+	}
+}
+
 void MapInstance::factory_tick(MarketInstance& market_instance, const Date today) {
 	for (StateSet& state_set : state_manager.get_mutable_state_sets()) {
 		for (State& state : state_set.get_mutable_states()) {

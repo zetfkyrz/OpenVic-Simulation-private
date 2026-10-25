@@ -87,6 +87,9 @@ namespace OpenVic {
 		// Losses covered by the capitalists of the state
 		fixed_point_t private_cover_today;
 		fixed_point_t PROPERTY(private_cover_yesterday);
+		// Money the state paid this month for the capitalists in the hard anti-crisis mode: at the start of the next month
+		// the state takes over the share of the factory worth this money
+		fixed_point_t PROPERTY(crisis_covered);
 		// Whether the factory has received its founding capital, which factories added by the game setup have not yet
 		bool is_funded = false;
 		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
@@ -181,6 +184,12 @@ namespace OpenVic {
 		// the state have run out of money. A subsidised private factory in the mode "by share" is not helped by the state and
 		// works like any other factory.
 		[[nodiscard]] bool receives_state_subsidy(CountryInstance const* owner, State const& state) const;
+
+		// The share the state would take over for the money it covered for the capitalists, in whole percents (rounded up,
+		// never more than the share of the capitalists), 0 if there is nothing to take
+		[[nodiscard]] std::int32_t get_pending_takeover_percent(MarketInstance const& market_instance) const;
+		// Takes the share over (monthly, hard anti-crisis mode): the share of the state grows, the shares stay within 100%
+		void apply_crisis_takeover(MarketInstance const& market_instance);
 
 		// What a trade of a share of the factory would be like (the same rules as trade_share)
 		struct TradeQuote {

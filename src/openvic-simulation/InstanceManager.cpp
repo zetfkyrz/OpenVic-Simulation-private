@@ -279,6 +279,10 @@ void InstanceManager::tick() {
 				market_instance.record_price_history();
 			}
 			{
+				OV_PROFILE_SCOPE(tick_profiler, "factory takeovers");
+				map_instance.monthly_factory_takeovers(market_instance);
+			}
+			{
 				OV_PROFILE_SCOPE(tick_profiler, "pop dynamics");
 				PopDynamics::monthly_update(*this, pop_deps);
 			}

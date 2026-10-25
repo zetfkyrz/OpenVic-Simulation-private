@@ -761,7 +761,7 @@ bool GameActionManager::VariantVisitor::operator() (set_central_bank_rates_argum
 
 bool GameActionManager::VariantVisitor::operator() (set_subsidy_mode_argument_t const& argument) const {
 	const auto [country_index, mode] = argument;
-	if (OV_unlikely(mode > static_cast<std::uint32_t>(CountryInstance::subsidy_mode_t::CRISIS))) {
+	if (OV_unlikely(mode > static_cast<std::uint32_t>(CountryInstance::subsidy_mode_t::HARD_CRISIS))) {
 		spdlog::error_s("GAME_ACTION_SET_SUBSIDY_MODE called with invalid mode: {}", mode);
 		return false;
 	}

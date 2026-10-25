@@ -90,6 +90,8 @@ namespace OpenVic {
 		void map_tick();
 		// Ticks the factories of all states, after the province tick as that resets the employment of pops
 		void factory_tick(MarketInstance& market_instance, const Date today);
+		// Monthly: in the hard anti-crisis mode the state takes over the shares of the factories it paid for
+		void monthly_factory_takeovers(MarketInstance const& market_instance);
 		void initialise_for_new_game(InstanceManager const& instance_manager);
 	};
 }

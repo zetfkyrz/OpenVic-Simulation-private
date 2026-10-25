@@ -117,10 +117,58 @@ bool FactoryInstance::receives_state_subsidy(CountryInstance const* owner, State
 	case BY_SHARE:
 		return state_share > fixed_point_t::_0;
 	case CRISIS:
+	case HARD_CRISIS:
 		// In normal times like "by share"; the state steps in when the capitalists have no money left
 		return state_share > fixed_point_t::_0 || state.get_capitalist_money(Loan::purpose_t::LOSS_COVER, 0) < fixed_point_t::_1;
 	}
 	return false;
+}
+
+std::int32_t FactoryInstance::get_pending_takeover_percent(MarketInstance const& market_instance) const {
+	if (level <= building_level_t(0) || crisis_covered <= fixed_point_t::_0) {
+		return 0;
+	}
+	const fixed_point_t value = calculate_value(market_instance);
+	if (value <= fixed_point_t::_0) {
+		return 0;
+	}
+	// The part of the value of the factory that the state paid for, in whole percents rounded up
+	std::int32_t percent = std::min<std::int32_t>(100, (crisis_covered * 100 / value).ceil<std::int32_t>());
+	percent = std::max<std::int32_t>(percent, 1);
+	// Never more than the capitalists own: the shares of the owners stay within 100%
+	const fixed_point_t capitalists_share = fixed_point_t::_1 - state_share;
+	if (capitalists_share <= fixed_point_t::_0) {
+		return 0;
+	}
+	const std::int32_t capitalists_percent = (capitalists_share * 100).ceil<std::int32_t>();
+	return std::min(percent, capitalists_percent);
+}
+
+void FactoryInstance::apply_crisis_takeover(MarketInstance const& market_instance) {
+	if (crisis_covered <= fixed_point_t::_0) {
+		return;
+	}
+	if (level <= building_level_t(0)) {
+		crisis_covered = fixed_point_t::_0;
+		return;
+	}
+	const fixed_point_t capitalists_share = fixed_point_t::_1 - state_share;
+	if (capitalists_share <= fixed_point_t::_0) {
+		// The state owns everything already, there is nothing to take
+		crisis_covered = fixed_point_t::_0;
+		return;
+	}
+	const std::int32_t percent = get_pending_takeover_percent(market_instance);
+	if (percent <= 0) {
+		return; // the value is not known, the money stays accounted for the next month
+	}
+	const fixed_point_t taken = fixed_point_t(percent) / 100;
+	state_share = state_share + taken;
+	// Whole shares: no more than 100%, and no crumbs of a fraction of a percent left to the capitalists
+	if (state_share >= fixed_point_t::_1 || fixed_point_t::_1 - state_share < fixed_point_t(1) / 1000) {
+		state_share = fixed_point_t::_1;
+	}
+	crisis_covered = fixed_point_t::_0;
 }
 
 FactoryInstance::TradeQuote FactoryInstance::quote_trade(
@@ -634,6 +682,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 			fixed_point_t state_fraction = 0;
 			fixed_point_t capitalist_fraction = fixed_point_t::_1 - state_share;
 			bool crisis = false;
+			bool hard = false;
 			if (subsidised) {
 				switch (owner->get_subsidy_mode()) {
 					using enum CountryInstance::subsidy_mode_t;
@@ -648,6 +697,12 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 					// By share, and the state also pays the part of the capitalists that they cannot pay
 					state_fraction = state_share;
 					crisis = true;
+					break;
+				case HARD_CRISIS:
+					// The same, but the state takes the share of the factory that it paid for (see apply_crisis_takeover)
+					state_fraction = state_share;
+					crisis = true;
+					hard = true;
 					break;
 				}
 			}
@@ -672,6 +727,13 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 				budget += paid;
 				MoneyLedger::record(MoneyLedger::label_t::factory_subsidy, paid);
 				subsidy_today += paid;
+				if (hard) {
+					// What the state paid beyond its own part was paid for the capitalists
+					const fixed_point_t own_part = shortfall * state_fraction;
+					if (paid > own_part) {
+						crisis_covered += paid - own_part;
+					}
+				}
 			}
 		}
 	}
