@@ -179,14 +179,37 @@ void InstanceManager::update_gamestate() {
 
 	SPDLOG_INFO("Update: {}", today);
 
-	update_modifier_sums();
+	const auto update_start = TickProfiler::clock_t::now();
+	{
+		OV_PROFILE_SCOPE(tick_profiler, "update_gamestate");
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "modifier_sums");
+			update_modifier_sums();
+		}
 
-	// Update gamestate...
-	map_instance.update_gamestate(*this);
-	country_instance_manager.update_gamestate(today, map_instance);
-	unit_instance_manager.update_gamestate();
+		// Update gamestate...
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "map (provinces, states)");
+			map_instance.update_gamestate(*this);
+		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "countries");
+			country_instance_manager.update_gamestate(today, map_instance);
+		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "units");
+			unit_instance_manager.update_gamestate();
+		}
 
-	gamestate_updated();
+		{
+			// What the game does with the new state (map colours, the interface), see GameSingleton
+			OV_PROFILE_SCOPE(tick_profiler, "callback (colours and interface)");
+			gamestate_updated();
+		}
+	}
+	tick_profiler.record_update(
+		std::chrono::duration<double, std::milli>(TickProfiler::clock_t::now() - update_start).count()
+	);
 	gamestate_needs_update = false;
 
 	currently_updating_gamestate = false;
@@ -202,33 +225,87 @@ void InstanceManager::tick() {
 	SPDLOG_INFO("Tick: {}", today);
 
 	// Tick...
-	money_ledger.begin_day(*this);
-	country_instance_manager.country_manager_tick_before_map();
-	money_ledger.end_phase(*this, "before_map");
-	map_instance.map_tick();
-	money_ledger.end_phase(*this, "map_tick");
-	map_instance.factory_tick(market_instance, today);
-	money_ledger.end_phase(*this, "factories");
-	market_instance.execute_orders();
-	money_ledger.end_phase(*this, "market");
-	country_instance_manager.country_manager_tick_after_map();
-	money_ledger.end_phase(*this, "after_map");
-	unit_instance_manager.tick();
-	war_manager.tick(*this);
-	credit_manager.tick(*this);
-	colonisation_manager.tick(*this);
-	money_ledger.end_phase(*this, "units_wars_credit");
+	const auto tick_start = TickProfiler::clock_t::now();
+	{
+		OV_PROFILE_SCOPE(tick_profiler, "tick");
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger begin"); money_ledger.begin_day(*this); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "countries before the map");
+			country_instance_manager.country_manager_tick_before_map();
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "before_map"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "map_tick (provinces, pops)");
+			map_instance.map_tick();
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "map_tick"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "factories");
+			map_instance.factory_tick(market_instance, today);
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "factories"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "market (orders)");
+			market_instance.execute_orders();
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "market"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "countries after the map");
+			country_instance_manager.country_manager_tick_after_map();
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "after_map"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "units");
+			unit_instance_manager.tick();
+		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "wars");
+			war_manager.tick(*this);
+		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "credits");
+			credit_manager.tick(*this);
+		}
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
+			colonisation_manager.tick(*this);
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "units_wars_credit"); }
 
-	if (today.is_month_start()) {
-		market_instance.record_price_history();
-		PopDynamics::monthly_update(*this, pop_deps);
-		PoliticsDynamics::monthly_update(*this);
-		RebelDynamics::monthly_update(*this);
-		ResearchDynamics::monthly_update(*this);
-		CountryAI::monthly_update(*this);
+		if (today.is_month_start()) {
+			OV_PROFILE_SCOPE(tick_profiler, "monthly");
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "price history");
+				market_instance.record_price_history();
+			}
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "pop dynamics");
+				PopDynamics::monthly_update(*this, pop_deps);
+			}
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "politics");
+				PoliticsDynamics::monthly_update(*this);
+			}
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "rebels");
+				RebelDynamics::monthly_update(*this);
+			}
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "research");
+				ResearchDynamics::monthly_update(*this);
+			}
+			{
+				OV_PROFILE_SCOPE(tick_profiler, "country AI");
+				CountryAI::monthly_update(*this);
+			}
+		}
+		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "monthly"); }
+		{
+			OV_PROFILE_SCOPE(tick_profiler, "money ledger (checks)");
+			money_ledger.end_day(*this);
+		}
 	}
-	money_ledger.end_phase(*this, "monthly");
-	money_ledger.end_day(*this);
+	tick_profiler.record_tick(std::chrono::duration<double, std::milli>(TickProfiler::clock_t::now() - tick_start).count());
 }
 
 void InstanceManager::initialise_pop_savings() {

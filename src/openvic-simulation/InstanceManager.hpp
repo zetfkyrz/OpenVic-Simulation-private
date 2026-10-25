@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <vector>
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
 #include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/research/ResearchDynamics.hpp"
@@ -81,6 +82,8 @@ namespace OpenVic {
 		 * e.g. if we want to remove military units from the province they're in when they're destructed. */
 		MapInstance PROPERTY_REF(map_instance);
 		SimulationClock PROPERTY_REF(simulation_clock);
+		// Times the parts of the ticks and the updates for the performance debugger (off by default)
+		TickProfiler PROPERTY_REF(tick_profiler);
 		ConsoleInstance PROPERTY_REF(console_instance);
 
 		bool PROPERTY_CUSTOM_PREFIX(game_instance_setup, is, false);

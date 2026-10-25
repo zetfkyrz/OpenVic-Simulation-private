@@ -26,7 +26,7 @@ namespace OpenVic {
 		static constexpr speed_rates_t GAME_SPEEDS = []() constexpr -> speed_rates_t {
 			using namespace std::chrono_literals;
 			return {
-				3s, 2s, 1s, 100ms, 40ms
+				3s, 1500ms, 1s, 500ms, 300ms
 			};
 		}();
 		static constexpr speed_t MIN_SPEED = 0, MAX_SPEED = std::size(GAME_SPEEDS) - 1;
