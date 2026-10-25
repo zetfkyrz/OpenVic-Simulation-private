@@ -176,6 +176,25 @@ namespace OpenVic {
 			State& state, CountryInstance& country, MarketInstance const& market_instance, fixed_point_t share,
 			bool state_buys
 		);
+		// The state really pays (a part of) the losses of the factory: it is subsidised and the subsidy mode says that the
+		// state pays for it (the mode "all", or the state owns a share of the factory). A subsidised private factory in the mode
+		// "only state" or "by share" is not helped by the state and works like any other factory.
+		[[nodiscard]] bool receives_state_subsidy(CountryInstance const* owner) const;
+
+		// What a trade of a share of the factory would be like (the same rules as trade_share)
+		struct TradeQuote {
+			enum struct reason_t : std::uint8_t { OK, NOT_BUILT, NOTHING_TO_TRADE, NO_CASH, NO_PROFIT, NO_CAPITAL };
+			bool possible = false;
+			reason_t reason = reason_t::OK;
+			// The share that would be traded (the capitalists may only afford a part of what was asked) and its price
+			fixed_point_t share;
+			fixed_point_t price;
+		};
+		[[nodiscard]] TradeQuote quote_trade(
+			State const& state, CountryInstance const& country, MarketInstance const& market_instance, fixed_point_t share,
+			bool state_buys
+		) const;
+
 		void set_subsidised(const bool new_subsidised) {
 			subsidised = new_subsidised;
 		}

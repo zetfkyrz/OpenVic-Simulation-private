@@ -106,38 +106,82 @@ fixed_point_t FactoryInstance::calculate_value(MarketInstance const& market_inst
 	return std::max(from_profit, replacement);
 }
 
-bool FactoryInstance::trade_share(
-	State& state, CountryInstance& country, MarketInstance const& market_instance, fixed_point_t share, const bool state_buys
-) {
-	if (level <= building_level_t(0) || share <= fixed_point_t::_0) {
+bool FactoryInstance::receives_state_subsidy(CountryInstance const* owner) const {
+	if (!subsidised || owner == nullptr) {
 		return false;
+	}
+	return owner->get_subsidy_mode() == CountryInstance::subsidy_mode_t::ALL || state_share > fixed_point_t::_0;
+}
+
+FactoryInstance::TradeQuote FactoryInstance::quote_trade(
+	State const& state, CountryInstance const& country, MarketInstance const& market_instance, fixed_point_t share,
+	const bool state_buys
+) const {
+	TradeQuote quote;
+	if (level <= building_level_t(0)) {
+		quote.reason = TradeQuote::reason_t::NOT_BUILT;
+		return quote;
 	}
 
 	const fixed_point_t value = calculate_value(market_instance);
 
 	if (state_buys) {
 		share = std::min(share, fixed_point_t::_1 - state_share);
-		const fixed_point_t price = value * share;
-		if (share <= fixed_point_t::_0 || country.get_spendable_cash() < price) {
-			return false;
+		if (share <= fixed_point_t::_0) {
+			quote.reason = TradeQuote::reason_t::NOTHING_TO_TRADE;
+			return quote;
 		}
-		country.spend_cash(price);
-		state.add_to_capitalist_fund(price);
-		state_share += share;
-		return true;
+		quote.share = share;
+		quote.price = value * share;
+		// The whole treasury counts (not only what the budget of the day leaves free): a buyout is a decision of the player
+		if (country.get_cash_stockpile().load() < quote.price) {
+			quote.reason = TradeQuote::reason_t::NO_CASH;
+			return quote;
+		}
+		quote.possible = true;
+		return quote;
 	}
 
 	// The capitalists only buy a factory that makes a profit, with the savings they have
 	share = std::min(share, state_share);
-	if (share <= fixed_point_t::_0 || average_profit <= fixed_point_t::_0 || value <= fixed_point_t::_0) {
-		return false;
+	if (share <= fixed_point_t::_0) {
+		quote.reason = TradeQuote::reason_t::NOTHING_TO_TRADE;
+		return quote;
+	}
+	quote.share = share;
+	quote.price = value * share;
+	if (average_profit <= fixed_point_t::_0 || value <= fixed_point_t::_0) {
+		quote.reason = TradeQuote::reason_t::NO_PROFIT;
+		return quote;
 	}
 	const fixed_point_t affordable = std::min(share, state.get_capitalist_fund() / value);
+	quote.share = affordable;
+	quote.price = value * affordable;
 	if (affordable < get_defines().min_affordable_share.fixed()) {
+		quote.reason = TradeQuote::reason_t::NO_CAPITAL;
+		return quote;
+	}
+	quote.possible = true;
+	return quote;
+}
+
+bool FactoryInstance::trade_share(
+	State& state, CountryInstance& country, MarketInstance const& market_instance, fixed_point_t share, const bool state_buys
+) {
+	const TradeQuote quote = quote_trade(state, country, market_instance, share, state_buys);
+	if (!quote.possible) {
 		return false;
 	}
-	country.add_cash(state.take_from_capitalist_fund(value * affordable));
-	state_share -= affordable;
+
+	if (state_buys) {
+		country.spend_cash(quote.price);
+		state.add_to_capitalist_fund(quote.price);
+		state_share += quote.share;
+		return true;
+	}
+
+	country.add_cash(state.take_from_capitalist_fund(quote.price));
+	state_share -= quote.share;
 	return true;
 }
 
@@ -298,7 +342,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		unprofitable_days++;
 		profitable_days = 0;
 		efficiency = std::max(efficiency - fixed_point_t::epsilon * get_defines().efficiency_loss_epsilons, get_defines().efficiency_min);
-		if (subsidised) {
+		if (receives_state_subsidy(state.get_owner())) {
 			// The state pays for the losses: the factory neither slows down nor closes
 			throttle = fixed_point_t::_1;
 			return;
@@ -579,7 +623,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		if (shortfall > 0) {
 			fixed_point_t state_fraction = 0;
 			fixed_point_t capitalist_fraction = fixed_point_t::_1 - state_share;
-			if (subsidised) {
+			if (receives_state_subsidy(owner)) {
 				switch (owner->get_subsidy_mode()) {
 					using enum CountryInstance::subsidy_mode_t;
 				case ALL:
