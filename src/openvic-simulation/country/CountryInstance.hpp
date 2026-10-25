@@ -139,9 +139,10 @@ namespace OpenVic {
 		ProvinceInstance* PROPERTY_PTR(capital, nullptr);
 		bool PROPERTY_RW_CUSTOM_NAME(ai, is_ai, set_ai, true);
 	public:
-		// Which subsidised factories the state pays the losses of: ALL (the whole loss), STATE_ONLY (factories owned by
-		// the state only), BY_SHARE (the state pays its share of the ownership, the capitalists the rest)
-		enum struct subsidy_mode_t : uint32_t { ALL = 0, STATE_ONLY = 1, BY_SHARE = 2 };
+		// Who pays the losses of the subsidised factories: ALL (the state pays the whole loss), BY_SHARE (the state pays its
+		// share of the ownership, the capitalists the rest), CRISIS (like BY_SHARE while the capitalists have money, when their
+		// money runs out the state also pays their part, whatever its share is)
+		enum struct subsidy_mode_t : uint32_t { ALL = 0, BY_SHARE = 1, CRISIS = 2 };
 	private:
 		subsidy_mode_t PROPERTY_RW(subsidy_mode, subsidy_mode_t::BY_SHARE);
 		// Central bank: yearly interest rates of the loans the country gives to its capitalists and to other countries

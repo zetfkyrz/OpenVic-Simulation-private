@@ -106,11 +106,21 @@ fixed_point_t FactoryInstance::calculate_value(MarketInstance const& market_inst
 	return std::max(from_profit, replacement);
 }
 
-bool FactoryInstance::receives_state_subsidy(CountryInstance const* owner) const {
+bool FactoryInstance::receives_state_subsidy(CountryInstance const* owner, State const& state) const {
 	if (!subsidised || owner == nullptr) {
 		return false;
 	}
-	return owner->get_subsidy_mode() == CountryInstance::subsidy_mode_t::ALL || state_share > fixed_point_t::_0;
+	switch (owner->get_subsidy_mode()) {
+		using enum CountryInstance::subsidy_mode_t;
+	case ALL:
+		return true;
+	case BY_SHARE:
+		return state_share > fixed_point_t::_0;
+	case CRISIS:
+		// In normal times like "by share"; the state steps in when the capitalists have no money left
+		return state_share > fixed_point_t::_0 || state.get_capitalist_money(Loan::purpose_t::LOSS_COVER, 0) < fixed_point_t::_1;
+	}
+	return false;
 }
 
 FactoryInstance::TradeQuote FactoryInstance::quote_trade(
@@ -342,7 +352,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		unprofitable_days++;
 		profitable_days = 0;
 		efficiency = std::max(efficiency - fixed_point_t::epsilon * get_defines().efficiency_loss_epsilons, get_defines().efficiency_min);
-		if (receives_state_subsidy(state.get_owner())) {
+		if (receives_state_subsidy(state.get_owner(), state)) {
 			// The state pays for the losses: the factory neither slows down nor closes
 			throttle = fixed_point_t::_1;
 			return;
@@ -623,44 +633,45 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		if (shortfall > 0) {
 			fixed_point_t state_fraction = 0;
 			fixed_point_t capitalist_fraction = fixed_point_t::_1 - state_share;
-			if (receives_state_subsidy(owner)) {
+			bool crisis = false;
+			if (subsidised) {
 				switch (owner->get_subsidy_mode()) {
 					using enum CountryInstance::subsidy_mode_t;
 				case ALL:
 					state_fraction = fixed_point_t::_1;
 					capitalist_fraction = 0;
 					break;
-				case STATE_ONLY:
-					// Only the factories the state owns a share of are subsidised, and the state pays all of their losses;
-					// private factories get nothing from the state (the capitalists pay for them)
-					if (state_share > fixed_point_t::_0) {
-						state_fraction = fixed_point_t::_1;
-						capitalist_fraction = fixed_point_t::_0;
-					} else {
-						state_fraction = fixed_point_t::_0;
-					}
-					break;
 				case BY_SHARE:
 					state_fraction = state_share;
+					break;
+				case CRISIS:
+					// By share, and the state also pays the part of the capitalists that they cannot pay
+					state_fraction = state_share;
+					crisis = true;
 					break;
 				}
 			}
 
+			// The capitalists pay their part from their savings (and the credits they took)
+			fixed_point_t capitalists_paid = 0;
+			if (capitalist_fraction > 0) {
+				capitalists_paid = state.take_capitalist_money(shortfall * capitalist_fraction, Loan::purpose_t::LOSS_COVER, 0);
+				budget += capitalists_paid;
+				MoneyLedger::record(MoneyLedger::label_t::factory_private_cover, capitalists_paid);
+				private_cover_today += capitalists_paid;
+			}
+
+			fixed_point_t state_target = shortfall * state_fraction;
+			if (crisis) {
+				state_target += shortfall * capitalist_fraction - capitalists_paid;
+			}
 			const fixed_point_t treasury = owner->get_spendable_cash();
-			if (state_fraction > 0 && treasury > 0) {
-				const fixed_point_t paid = std::min(shortfall * state_fraction, treasury);
+			if (state_target > 0 && treasury > 0) {
+				const fixed_point_t paid = std::min(state_target, treasury);
 				owner->spend_cash(paid);
 				budget += paid;
 				MoneyLedger::record(MoneyLedger::label_t::factory_subsidy, paid);
 				subsidy_today += paid;
-			}
-			if (capitalist_fraction > 0) {
-				const fixed_point_t paid = state.take_capitalist_money(
-					shortfall * capitalist_fraction, Loan::purpose_t::LOSS_COVER, 0
-				);
-				budget += paid;
-				MoneyLedger::record(MoneyLedger::label_t::factory_private_cover, paid);
-				private_cover_today += paid;
 			}
 		}
 	}

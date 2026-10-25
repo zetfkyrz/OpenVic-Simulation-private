@@ -177,9 +177,10 @@ namespace OpenVic {
 			bool state_buys
 		);
 		// The state really pays (a part of) the losses of the factory: it is subsidised and the subsidy mode says that the
-		// state pays for it (the mode "all", or the state owns a share of the factory). A subsidised private factory in the mode
-		// "only state" or "by share" is not helped by the state and works like any other factory.
-		[[nodiscard]] bool receives_state_subsidy(CountryInstance const* owner) const;
+		// state pays for it: the mode "all", or the state owns a share of the factory, or (anti-crisis mode) the capitalists of
+		// the state have run out of money. A subsidised private factory in the mode "by share" is not helped by the state and
+		// works like any other factory.
+		[[nodiscard]] bool receives_state_subsidy(CountryInstance const* owner, State const& state) const;
 
 		// What a trade of a share of the factory would be like (the same rules as trade_share)
 		struct TradeQuote {
