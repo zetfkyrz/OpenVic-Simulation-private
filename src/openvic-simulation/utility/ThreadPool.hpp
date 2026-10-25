@@ -69,6 +69,8 @@ namespace OpenVic {
 		bool is_cancellation_requested = false;
 		Date const& current_date;
 
+		inline static std::atomic<std::size_t> worker_thread_count_override = 0;
+
 		void loop_until_cancelled(
 			work_t& work_type,
 			GameRulesManager const& game_rules_manager,
@@ -87,6 +89,11 @@ namespace OpenVic {
 	public:
 		ThreadPool(Date const& new_current_date);
 		~ThreadPool();
+
+		// The number of worker threads of the pools that are created from now on (0: the number of the hardware threads). The result
+		// of the simulation must not depend on it, because the work is always split into WORK_BUNDLE_COUNT bundles, each with a random
+		// number generator of its own. The self tests and the headless option -j use it to check exactly that.
+		static void set_worker_thread_count(const std::size_t count);
 
 		void initialise_threadpool(
 			GameRulesManager const& game_rules_manager,

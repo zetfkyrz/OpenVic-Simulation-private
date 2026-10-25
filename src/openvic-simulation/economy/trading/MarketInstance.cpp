@@ -1,6 +1,8 @@
 #include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "MarketInstance.hpp"
 
+#include <mutex>
+
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/defines/CountryDefines.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
@@ -64,19 +66,9 @@ void MarketInstance::place_market_sell_order(MarketSellOrder&& market_sell_order
 
 	GoodMarket& good_instance = *good_instance_manager.get_good_instance_by_index(good_index);
 	if (good_instance.good_definition.is_money) {
-		// Gold is not traded: its workers are paid with money that is created here
-		MoneyLedger::record(
-			MoneyLedger::label_t::gold_worker_pay,
-			quantity * country_defines.get_gold_to_worker_pay_rate() * good_instance.good_definition.base_price
-		);
-		market_sell_order.call_after_trade(
-			{
-				market_sell_order.good_index,
-				quantity,
-				quantity * country_defines.get_gold_to_worker_pay_rate() * good_instance.good_definition.base_price
-			},
-			reusable_vector
-		);
+		// Gold is not traded: its workers are paid with money that is created when the market has run (see pay_gold_orders)
+		const std::lock_guard<spin_mutex> lock_guard { gold_orders_lock };
+		gold_sell_orders.push_back(std::move(market_sell_order));
 		return;
 	}
 
@@ -85,6 +77,20 @@ void MarketInstance::place_market_sell_order(MarketSellOrder&& market_sell_order
 
 void MarketInstance::execute_orders() {
 	thread_pool.process_good_execute_orders();
+	pay_gold_orders();
+}
+
+void MarketInstance::pay_gold_orders() {
+	// Not in parallel, so the order of the orders does not matter: every payment only adds money to the pops
+	memory::vector<fixed_point_t> reusable_vector;
+	for (MarketSellOrder const& gold_sell_order : gold_sell_orders) {
+		GoodInstance const& good_instance = *good_instance_manager.get_good_instance_by_index(gold_sell_order.good_index);
+		const fixed_point_t money_gained = gold_sell_order.quantity * country_defines.get_gold_to_worker_pay_rate()
+			* good_instance.good_definition.base_price;
+		MoneyLedger::record(MoneyLedger::label_t::gold_worker_pay, money_gained);
+		gold_sell_order.call_after_trade({ gold_sell_order.good_index, gold_sell_order.quantity, money_gained }, reusable_vector);
+	}
+	gold_sell_orders.clear();
 }
 
 void MarketInstance::record_price_history() {

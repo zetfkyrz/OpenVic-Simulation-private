@@ -2,6 +2,8 @@
 
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/core/thread/SpinMutex.hpp"
+#include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
 namespace OpenVic {
@@ -17,8 +19,15 @@ namespace OpenVic {
 		ThreadPool& thread_pool;
 		CountryDefines const& country_defines;
 		GoodInstanceManager& good_instance_manager;
+
+		// Gold is not traded. Its orders wait here (the RGOs place them while the provinces are being processed at the same time) until
+		// the market has run, and then the workers and owners are paid in one thread. The owners are pops of other provinces, whose own
+		// tick reads their money at the same time, so a payment at once made the orders of the day depend on the speed of the threads.
+		spin_mutex gold_orders_lock;
+		memory::vector<MarketSellOrder> gold_sell_orders;
+		void pay_gold_orders();
 	public:
-		constexpr MarketInstance(
+		MarketInstance(
 			ThreadPool& new_thread_pool,
 			CountryDefines const& new_country_defines,
 			GoodInstanceManager& new_good_instance_manager

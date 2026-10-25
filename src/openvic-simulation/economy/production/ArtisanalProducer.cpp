@@ -533,7 +533,9 @@ ProductionType const* ArtisanalProducer::pick_production_type(
 	PopValuesFromProvince const& values_from_province,
 	RandomU32& random_number_generator
 ) const {
-	bool should_pick_new_production_type;
+	//A profitable artisan keeps its production type unless the chance to swap is above 0 (GOODS_FOCUS_SWAP_CHANCE is 0 in Victoria 2).
+	//Without the initial value neither branch below sets it in that case and the decision was made by whatever was left on the stack.
+	bool should_pick_new_production_type = false;
 	const auto ranked_artisanal_production_types = values_from_province.get_ranked_artisanal_production_types();
 
 	if (ranked_artisanal_production_types.empty()) {

@@ -1,10 +1,12 @@
 #include "Pop.hpp"
 
+#include <atomic>
 #include <concepts> // IWYU pragma: keep for lambda
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <ranges>
+#include <type_traits>
 
 #include <fmt/std.h>
 
@@ -50,6 +52,17 @@
 using namespace OpenVic;
 
 constexpr pop_size_t TRUNCATION_ACCEPTABLE_BELOW_SIZE = 16;
+
+static_assert(std::is_trivially_copyable_v<fixed_point_t>);
+
+// The market callbacks of different goods run at the same time and add to the same pop (an artisan that sells two goods, the owners
+// of several RGOs of a state). The sums that are not atomic members are added with a compare and swap, so no addition is lost
+// (a lost addition of the artisanal revenue changed what the artisan decided on the next day).
+static void add_atomically(fixed_point_t& sum, const fixed_point_t amount) {
+	std::atomic_ref<fixed_point_t> sum_ref { sum };
+	fixed_point_t expected = sum_ref.load(std::memory_order_relaxed);
+	while (!sum_ref.compare_exchange_weak(expected, expected + amount, std::memory_order_relaxed)) {}
+}
 
 PopBase::PopBase(
 	PopType const& new_type, Culture const& new_culture, Religion const& new_religion, pop_size_t new_size,
@@ -352,9 +365,9 @@ void Pop::add_artisanal_revenue(const fixed_point_t revenue) {
 		income = revenue;
 	}
 
-	artisanal_revenue += revenue;
+	add_atomically(artisanal_revenue, revenue);
 	// The local income shadows the member: `income += income` doubled the income of the artisans (money out of nothing)
-	this->income += income;
+	add_atomically(this->income, income);
 	cash += income;
 	MoneyLedger::record(MoneyLedger::label_t::pop_artisanal_revenue, income);
 }
@@ -375,8 +388,8 @@ template void Pop::add_artisanal_revenue<false>(const fixed_point_t revenue);
 		} \
 		MoneyLedger::record_gross_income(#name, amount); \
 		pay_income_tax(amount); \
-		name += amount; \
-		income += amount; \
+		add_atomically(name, amount); \
+		add_atomically(income, amount); \
 		cash += amount; \
 		MoneyLedger::record(MoneyLedger::label_t::pop_##name, amount); \
 	}
@@ -392,7 +405,7 @@ OV_DO_FOR_ALL_TYPES_OF_POP_INCOME(DEFINE_ADD_INCOME_FUNCTIONS)
 			} \
 			return; \
 		} \
-		name += amount; \
+		add_atomically(name, amount); \
 		const fixed_point_t expenses_copy = expenses += amount; \
 		if (OV_unlikely(expenses_copy < 0)) { \
 			spdlog::error_s( \

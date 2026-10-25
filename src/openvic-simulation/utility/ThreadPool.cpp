@@ -172,6 +172,10 @@ void ThreadPool::await_completion() {
 ThreadPool::ThreadPool(Date const& new_current_date)
 	: current_date {new_current_date} {}
 
+void ThreadPool::set_worker_thread_count(const std::size_t count) {
+	worker_thread_count_override = count;
+}
+
 ThreadPool::~ThreadPool() {
 	{
 		std::lock_guard<std::mutex> thread_lock { thread_mutex };
@@ -239,8 +243,11 @@ void ThreadPool::initialise_threadpool(
 		provinces_begin = provinces_end;
 	}
 
+	const std::size_t thread_count_override = worker_thread_count_override;
 	const std::size_t max_worker_threads = std::min(
-		std::max<std::size_t>(std::thread::hardware_concurrency(), 1),
+		thread_count_override > 0
+			? thread_count_override
+			: std::max<std::size_t>(std::thread::hardware_concurrency(), 1),
 		WORK_BUNDLE_COUNT
 	);
 	threads.reserve(max_worker_threads);

@@ -23,6 +23,7 @@
 #include <openvic-simulation/misc/MoneyLedger.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/misc/StateHash.hpp>
+#include <openvic-simulation/utility/ThreadPool.hpp>
 
 using namespace OpenVic;
 
@@ -715,6 +716,31 @@ namespace {
 		const std::string save_2 = Replay::serialise(im->get_action_history());
 		r.check(hash_2 == hash_1, "determinism: two runs with the same actions end in the same state", hex(hash_1) + " != " + hex(hash_2));
 		r.check(save_2 == save_1, "determinism: two runs write the same action history");
+		game.end();
+
+		// ---- run 2b: the same game with one worker thread, the result must not depend on the number of threads
+		ThreadPool::set_worker_thread_count(1);
+		im = game.start();
+		ThreadPool::set_worker_thread_count(0);
+		r.check(im != nullptr, "determinism: the instance with one thread starts");
+		if (im == nullptr) {
+			return;
+		}
+		give_orders(*im);
+		std::vector<std::uint64_t> days_one_thread;
+		std::vector<DayDetails> details_one_thread;
+		play_recording(*im, FIRST_DAYS, days_one_thread, details_one_thread);
+		const std::uint64_t hash_one_thread = StateHash::compute(*im);
+		for (std::size_t day = 0; day < days_1.size() && day < days_one_thread.size(); ++day) {
+			if (days_1[day] != days_one_thread[day]) {
+				fmt::println("TEST INFO determinism: with one thread the game first differs on day {} after the orders", day + 1);
+				break;
+			}
+		}
+		r.check(
+			hash_one_thread == hash_1, "determinism: the result does not depend on the number of threads (one thread, all threads)",
+			hex(hash_1) + " != " + hex(hash_one_thread)
+		);
 		game.end();
 
 		// ---- run 3: a save game: the state after loading equals the state before saving

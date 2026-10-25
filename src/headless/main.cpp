@@ -41,6 +41,7 @@
 #include <openvic-simulation/pathfinding/AStarPathing.hpp>
 #include <openvic-simulation/testing/Testing.hpp>
 #include <openvic-simulation/utility/Logger.hpp>
+#include <openvic-simulation/utility/ThreadPool.hpp>
 
 #include "BalanceReport.hpp"
 #include "SelfTest.hpp"
@@ -79,7 +80,7 @@ static std::string defines_dump_path;
 static bool money_ledger_report = false, close_all_factories = false;
 // --selftest: the self tests (SelfTest.hpp), --selftest-pure: only those that need no game files
 static bool run_selftest = false, run_selftest_pure = false;
-// -C: print the CHECKSUM after every day of the economy report (to find the first day two builds differ)
+// -C: print the CHECKSUM after every day, also of the first ticks before the economy report (to find the first day two runs differ)
 static bool checksum_every_day = false;
 // -o group.KEY=value (repeated): overrides a value of openvic_defines.lua for this run (for calibration experiments)
 static std::vector<std::string> defines_overrides;
@@ -879,6 +880,8 @@ static void print_tariff_report(InstanceManager& instance_manager) {
 static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
+	fmt::println(file, "    -C : Print the CHECKSUM of the state after every day (two runs must print the same lines).");
+	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
 	fmt::println(file, "    -b : Use the following path as the base directory (instead of searching for one).");
@@ -1234,6 +1237,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		while (++ticks_passed < TICK_COUNT) {
 			const test_time_point_t tick_start = testing_clock_t::now();
 			game_manager.get_instance_manager()->force_tick_and_update();
+			if (checksum_every_day) {
+				print_state_checksum(*game_manager.get_instance_manager());
+			}
 			const test_time_point_t tick_end = testing_clock_t::now();
 
 			const test_duration_t tick_duration = tick_end - tick_start;
@@ -1445,6 +1451,12 @@ int main(int argc, char const* argv[]) {
 				return -1;
 			}
 			bookmark_index = static_cast<size_t>(std::max(0, std::atoi(argv[argn])));
+		} else if (strcmp(arg, "-j") == 0) {
+			if (++argn >= argc) {
+				fmt::println(stderr, "Missing number of threads after \"-j\".");
+				return -1;
+			}
+			ThreadPool::set_worker_thread_count(static_cast<size_t>(std::max(0, std::atoi(argv[argn]))));
 		} else if (strcmp(arg, "-e") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing number of days after \"-e\".");
