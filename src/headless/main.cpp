@@ -173,6 +173,18 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		static_cast<double>(country_cash + pop_cash + budgets)
 	);
 
+	if (CountryInstance const* const eng = instance_manager.get_country_instance_manager().get_country_instance_by_identifier("ENG")) {
+		fixed_point_t needs_value = 0, spending_value = 0;
+		for (auto const& [good_instance, good_data] : eng->get_goods_data()) {
+			needs_value += (good_data.army_needs + good_data.navy_needs) * good_instance.get_price();
+		}
+		fmt::println(
+			"ARMYCOST {} ENG army supply/day={:.1f} navy={:.1f} | needs of the day at prices={:.1f} | actual stockpile spending={:.1f} regiments={}",
+			instance_manager.get_today(), static_cast<double>(eng->calculate_army_supply_cost_per_day()),
+			static_cast<double>(eng->calculate_navy_supply_cost_per_day()), static_cast<double>(needs_value),
+			static_cast<double>(eng->get_actual_national_stockpile_spending().load()), eng->get_regiment_count()
+		);
+	}
 	{
 		// The investment funds: how much money sits in them and where
 		fixed_point_t total_funds = 0;

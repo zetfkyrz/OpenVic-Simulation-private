@@ -318,7 +318,7 @@ namespace OpenVic {
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)
 #define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE) \
-	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 8, 1, 64) \
+	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 12, 1, 64) \
 	INT(FACTORY_VALUE_PAYBACK_YEARS, factory_value_payback_years, 6, 1, 1000) \
 	INT(FACTORY_REPLACEMENT_VALUE_DIVISOR, factory_replacement_value_divisor, 4, 1, 1000) \
 	INT(DEFAULT_CONSTRUCTION_DAYS, default_construction_days, 180, 1, 36500) \
@@ -454,7 +454,7 @@ namespace OpenVic {
 	RATE(OUTSIDE_COST, outside_cost, Rate(4, 100), 0, 1) \
 	RATE(SPOT_COST, spot_cost, Rate(5, 100), 0, 1) \
 	/* The share of the freight that goes to the investment fund of the country (the rest goes to the treasury) */ \
-	RATE(FREIGHT_FUND_SHARE, freight_fund_share, Rate(30, 100), 0, 1) \
+	RATE(FREIGHT_FUND_SHARE, freight_fund_share, Rate(0, 100), 0, 1) \
 	/* Subsistence: the workers of a resource gathering operation keep this share of its output for themselves (only goods that they */ \
 	/* need), without a market, at no freight; railroads in the province turn the farms to the market: at the best railroad the share */ \
 	/* is reduced by SUBSISTENCE_RAIL_RELIEF */ \
