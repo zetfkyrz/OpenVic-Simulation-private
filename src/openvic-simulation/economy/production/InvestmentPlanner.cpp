@@ -253,6 +253,20 @@ void InvestmentPlanner::review(InstanceManager& instance_manager, CountryInstanc
 				continue;
 			}
 
+			// A factory whose jobs were all filled for months wants to grow: first of all, without the profit test
+			if (existing != nullptr && existing->is_expansion_wanted()) {
+				Candidate wanted;
+				wanted.state = state;
+				wanted.building_type = &building_type;
+				wanted.factory = existing;
+				wanted.cost = cost;
+				wanted.score = fixed_point_t::_100;
+				wanted.priority = -1;
+				wanted.order = order++;
+				candidates.push_back(wanted);
+				continue;
+			}
+
 			// What a level earns per day: the money from selling its goods minus the raw materials it uses
 			fixed_point_t per_day =
 				production_type->base_output_quantity * market.get_good_instance(production_type->output_good.index).get_price();
@@ -386,6 +400,7 @@ void InvestmentPlanner::review(InstanceManager& instance_manager, CountryInstanc
 			const std::int32_t level = static_cast<std::int32_t>(type_safe::get(candidate.factory->get_level()));
 			candidate.factory->set_state_share(candidate.factory->get_state_share() * level / (level + 1));
 			candidate.factory->start_construction(today);
+			candidate.factory->clear_expansion_wanted();
 			record.kind = CountryInstance::InvestmentRecord::kind_t::EXPANDED_FACTORY;
 		} else {
 			if (builder == nullptr || !state.has_free_factory_slot()) {

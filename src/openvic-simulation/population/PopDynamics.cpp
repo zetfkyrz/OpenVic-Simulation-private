@@ -27,6 +27,8 @@ namespace {
 		fixed_point_t life_needs;
 		fixed_point_t score; // 0..1, higher is better
 		bool has_pops = false;
+		// The sums the score of the region (state) is made of
+		fixed_point_t total, unemployable_total, unemployed, life_sum;
 	};
 
 	// Whole people from a fraction: the whole part is returned and removed from the accumulator
@@ -71,6 +73,10 @@ namespace {
 			}
 		}
 
+		result.total = total;
+		result.unemployable_total = unemployable_total;
+		result.unemployed = unemployed;
+		result.life_sum = life_sum;
 		if (total > fixed_point_t::_0) {
 			result.has_pops = true;
 			result.life_needs = life_sum / total;
@@ -98,6 +104,39 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			scores[&province] = compute_score(province, defines);
 		}
 	}
+
+	// The scores of the regions (states): the people move between regions, a move between the provinces of one region means nothing
+	std::unordered_map<State const*, ProvinceScore> state_scores;
+	for (auto const& [province_ptr, province_score] : scores) {
+		State const* const score_state = province_ptr->get_state();
+		if (score_state == nullptr) {
+			continue;
+		}
+		ProvinceScore& sum = state_scores[score_state];
+		sum.total += province_score.total;
+		sum.unemployable_total += province_score.unemployable_total;
+		sum.unemployed += province_score.unemployed;
+		sum.life_sum += province_score.life_sum;
+	}
+	for (auto& [score_state, sum] : state_scores) {
+		if (sum.total > fixed_point_t::_0) {
+			sum.has_pops = true;
+			sum.life_needs = sum.life_sum / sum.total;
+			sum.unemployment = sum.unemployable_total > fixed_point_t::_0 ? sum.unemployed / sum.unemployable_total : fixed_point_t::_0;
+			sum.score = defines.score_unemployment_weight.of(fixed_point_t::_1 - sum.unemployment)
+				+ defines.score_life_needs_weight.of(sum.life_needs);
+		}
+	}
+	const auto region_score = [&scores, &state_scores](ProvinceInstance const* province) -> ProvinceScore {
+		if (province->get_state() != nullptr) {
+			const auto it = state_scores.find(province->get_state());
+			if (it != state_scores.end()) {
+				return it->second;
+			}
+		}
+		const auto it = scores.find(province);
+		return it != scores.end() ? it->second : ProvinceScore {};
+	};
 
 	// Free jobs of the open factories of each state
 	std::unordered_map<State const*, std::int32_t> vacancies;
@@ -206,36 +245,30 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 		}
 
-		// Possible destinations of migrants: the other provinces of the state and the land neighbours of the same owner
+		// Possible destinations of migrants: the land neighbours of the same owner in other regions (the better region wins)
 		std::vector<ProvinceInstance*> destinations;
 		if (owner != nullptr) {
-			if (state != nullptr) {
-				for (ProvinceInstance& other : state->get_provinces()) {
-					if (&other != &province) {
-						destinations.push_back(&other);
-					}
-				}
-			}
 			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
 				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
 					continue;
 				}
 				ProvinceInstance& other = map_instance.get_province_instance_by_definition(adjacency.get_to());
-				if (other.get_owner() == owner && std::find(destinations.begin(), destinations.end(), &other) == destinations.end()) {
+				if (other.get_owner() == owner && other.get_state() != state
+					&& std::find(destinations.begin(), destinations.end(), &other) == destinations.end()) {
 					destinations.push_back(&other);
 				}
 			}
 		}
 		ProvinceInstance* best_destination = nullptr;
-		const ProvinceScore own_score = scores[&province];
+		const ProvinceScore own_score = region_score(&province);
 		fixed_point_t best_score = own_score.score + defines.migration_score_margin.fixed();
 		for (ProvinceInstance* destination : destinations) {
-			const auto it = scores.find(destination);
-			if (it == scores.end() || !it->second.has_pops) {
+			const ProvinceScore destination_score = region_score(destination);
+			if (!destination_score.has_pops) {
 				continue;
 			}
-			if (it->second.score > best_score) {
-				best_score = it->second.score;
+			if (destination_score.score > best_score) {
+				best_score = destination_score.score;
 				best_destination = destination;
 			}
 		}

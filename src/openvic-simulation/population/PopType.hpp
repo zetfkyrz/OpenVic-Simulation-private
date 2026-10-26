@@ -70,6 +70,14 @@ namespace OpenVic {
 		bool parse_scripts(DefinitionManager const& definition_manager);
 
 	public:
+		// An addition of the OpenVic rules: the pop needs a little of a good every day (everyday needs), unless the files already say so
+		void add_everyday_need(const good_index_t good_index, const fixed_point_t quantity) {
+			everyday_needs.emplace(good_index, quantity);
+		}
+
+	private:
+
+	public:
 		Strata const& strata;
 		const pop_sprite_t sprite;
 		const pop_size_t max_size;

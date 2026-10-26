@@ -2148,6 +2148,9 @@ void CountryInstance::country_tick_before_map(
 		= actual_import_subsidies_spending
 		= actual_tariff_income
 		= actual_transport_income
+		= treasury_other_income
+		= treasury_other_spending
+		= treasury_subsidy_spending
 		= actual_national_stockpile_spending
 		= actual_national_stockpile_income
 		= actual_tax_income
@@ -2517,6 +2520,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	const fixed_point_t transport_to_fund = openvic_trade_defines->freight_fund_share.of(transport_total);
 	const fixed_point_t transport_to_treasury = transport_total - transport_to_fund;
 	cash_stockpile += transport_to_treasury;
+	transport_to_treasury_last = transport_to_treasury;
 	investment_fund += transport_to_fund;
 	MoneyLedger::record(MoneyLedger::label_t::transport_fee_income, transport_total);
 
@@ -2537,6 +2541,18 @@ void CountryInstance::country_tick_after_map(const Date today) {
 			cash_stockpile -= deposit;
 			investment_fund += deposit;
 			investment_deposit_yesterday = deposit;
+		}
+	}
+	// The money of the fund that nobody uses goes back to the treasury (and on to the pops by the budget): a fund that holds more than a
+	// few months of the income of the country is not a plan any more but a hoard, and the pops are short of the money
+	{
+		const fixed_point_t fund_limit = income_yesterday * openvic_economy_defines->investment_fund_max_days;
+		if (investment_fund > fund_limit) {
+			const fixed_point_t released = openvic_economy_defines->investment_fund_release_share.of(investment_fund - fund_limit);
+			if (released > fixed_point_t::_0) {
+				investment_fund -= released;
+				cash_stockpile += released;
+			}
 		}
 	}
 	free_funds = cash_stockpile.load();
@@ -2713,6 +2729,30 @@ fixed_point_t CountryInstance::apply_tariff(const fixed_point_t money_spent_on_i
 	const fixed_point_t tariff = effective_tariff_rate_value * money_spent_on_imports;
 	actual_tariff_income += tariff;
 	return tariff;
+}
+
+fixed_point_t CountryInstance::calculate_army_supply_cost_per_day() const {
+	fixed_point_t total = fixed_point_t::_0;
+	for (ArmyInstance const& army : armies) {
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			for (auto const& [good, quantity] : regiment.unit_type.get_supply_cost()) {
+				total += quantity * regiment.unit_type.supply_consumption * market_instance.get_good_instance(good->index).get_price();
+			}
+		}
+	}
+	return total;
+}
+
+fixed_point_t CountryInstance::calculate_navy_supply_cost_per_day() const {
+	fixed_point_t total = fixed_point_t::_0;
+	for (NavyInstance const& navy : navies) {
+		for (ShipInstance const& ship : navy.get_ship_instances()) {
+			for (auto const& [good, quantity] : ship.unit_type.get_supply_cost()) {
+				total += quantity * ship.unit_type.supply_consumption * market_instance.get_good_instance(good->index).get_price();
+			}
+		}
+	}
+	return total;
 }
 
 CountryInstance::good_data_t& CountryInstance::get_good_data(GoodInstance const& good_instance) {

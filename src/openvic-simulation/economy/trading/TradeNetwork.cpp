@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_map>
 
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
@@ -13,6 +14,7 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
@@ -166,13 +168,32 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 	const fixed_point_t max_rail_level = has_railroad
 		? fixed_point_t(std::max<std::int32_t>(1, type_safe::get(railroad->max_level))) : fixed_point_t::_1;
 
-	// ---- Provinces: the railroad and the freight to the market of the own country
+	// ---- Provinces: the railroad, and the freight to the market of the own country. The market works at the level of the region (the state),
+	// not of the province: the freight and the share of the output that the workers keep depend on the average railroad of the state.
+	// The railroad of the province itself counts only at the border (a railroad carries goods over it only if both sides have one).
 	const fixed_point_t freight_range = defines.internal_freight_max.fixed() - defines.internal_freight_min.fixed();
+	raw_rail.assign(map_instance.get_province_instances().size(), fixed_point_t::_0);
+	std::unordered_map<State const*, std::pair<fixed_point_t, std::int32_t>> state_rail;
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		fixed_point_t fraction = fixed_point_t::_0;
 		if (has_railroad && !province.province_definition.is_water()) {
 			const fixed_point_t level = type_safe::get(province.get_buildings()[railroad->province_building_index.value()].get_level());
 			fraction = std::min(fixed_point_t::_1, level / max_rail_level);
+		}
+		raw_rail[type_safe::get(province.province_definition.index)] = fraction;
+		if (province.get_state() != nullptr && !province.province_definition.is_water()) {
+			auto& entry = state_rail[province.get_state()];
+			entry.first += fraction;
+			entry.second++;
+		}
+	}
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		fixed_point_t fraction = raw_rail[type_safe::get(province.province_definition.index)];
+		if (province.get_state() != nullptr) {
+			const auto it = state_rail.find(province.get_state());
+			if (it != state_rail.end() && it->second.second > 0) {
+				fraction = it->second.first / it->second.second;
+			}
 		}
 		province.set_trade_data(
 			fraction,
@@ -228,7 +249,9 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 				continue;
 			}
 			// Both sides must have the railroad for it to carry goods over the border
-			const fixed_point_t rail = std::min(province.get_infrastructure_fraction(), other_province->get_infrastructure_fraction());
+			const fixed_point_t rail = std::min(
+				raw_rail[type_safe::get(province.province_definition.index)], raw_rail[type_safe::get(other_province->province_definition.index)]
+			);
 			land_cap[o * n + d] += fixed_point_t(defines.land_capacity_base) + fixed_point_t(defines.land_capacity_per_rail_level) * (rail * max_rail_level);
 			land_rail[o * n + d] = std::max(land_rail[o * n + d], rail);
 			land_crossings[o]++;

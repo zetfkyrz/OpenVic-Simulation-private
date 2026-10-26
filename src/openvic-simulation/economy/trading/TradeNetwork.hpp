@@ -55,6 +55,7 @@ namespace OpenVic {
 		std::vector<fixed_point_t> sea_capacity; // by country: the sum of its ports
 		std::vector<std::int32_t> land_crossings; // by country: neighbouring pairs of provinces with other countries
 		std::vector<fixed_point_t> best_rail; // by country: the best railroad level at the border (0..1)
+		std::vector<fixed_point_t> raw_rail; // by province: its own railroad level (0..1)
 
 		// The sea zones (static), the distance between every two of them in map pixels (negative: not connected)
 		bool zones_built = false;

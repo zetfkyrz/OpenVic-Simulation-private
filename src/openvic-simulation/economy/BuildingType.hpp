@@ -116,6 +116,10 @@ namespace OpenVic {
 		string_set_t PROPERTY(building_type_types);
 		BuildingType const* PROPERTY(infrastructure_building_type);
 		BuildingType const* PROPERTY(port_building_type);
+		// Wood in the construction goods (the group ov_economy of the defines): every building that needs cement needs lumber for it
+		// (a part of the quantity of the cement) and a fixed quantity of timber on top
+		fixed_point_t lumber_per_cement;
+		fixed_point_t timber_per_cement_building;
 
 		memory::vector<std::reference_wrapper<const BuildingType>> province_building_types;
 	public:
@@ -124,6 +128,11 @@ namespace OpenVic {
 		}
 
 		BuildingTypeManager();
+
+		void set_wood_rules(const fixed_point_t new_lumber_per_cement, const fixed_point_t new_timber_per_cement_building) {
+			lumber_per_cement = new_lumber_per_cement;
+			timber_per_cement_building = new_timber_per_cement_building;
+		}
 
 		bool add_building_type(std::string_view identifier, BuildingType::building_type_args_t& building_type_args);
 

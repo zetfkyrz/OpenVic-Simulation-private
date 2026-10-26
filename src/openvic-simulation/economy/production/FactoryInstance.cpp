@@ -390,6 +390,7 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 		month_in_progress.wages += wages;
 		month_in_progress.output += produced_quantity_pending;
 		month_employee_days += type_safe::get(employee_count);
+		month_max_employee_days += type_safe::get(max_employee_count);
 		month_days++;
 	}
 
@@ -429,6 +430,14 @@ void FactoryInstance::close_month(const Date today) {
 		MonthRecord record = month_in_progress;
 		record.date = today - Timespan::from_days(1);
 		record.employees = static_cast<std::int32_t>(month_employee_days / month_days);
+		record.max_employees = static_cast<std::int32_t>(month_max_employee_days / month_days);
+		// The month counts for the check of the expansion only when the factory worked all of it (a level is not being built)
+		if (level > building_level_t(0) && !construction_end.has_value() && record.max_employees > 0) {
+			fill_since_check.push_back(fp::from_fraction(record.employees, record.max_employees));
+			if (static_cast<std::int32_t>(fill_since_check.size()) >= get_defines().expansion_check_months) {
+				check_due = true;
+			}
+		}
 		if (history.size() >= MAX_HISTORY_MONTHS) {
 			history.erase(history.begin());
 		}
@@ -436,6 +445,7 @@ void FactoryInstance::close_month(const Date today) {
 	}
 	month_in_progress = MonthRecord {};
 	month_employee_days = 0;
+	month_max_employee_days = 0;
 	month_days = 0;
 }
 
@@ -497,6 +507,10 @@ void FactoryInstance::advance_construction(State& state, const Date today, Marke
 	level += building_level_t(1);
 	construction_start.reset();
 	construction_end.reset();
+	// The count of the months for the next check of the expansion starts from the completion
+	fill_since_check.clear();
+	check_due = false;
+	expansion_wanted = false;
 	grant_starting_budget(market_instance, building_level_t(1));
 	is_funded = true;
 }
@@ -559,28 +573,54 @@ void FactoryInstance::pay_dividend(
 	state_income += state_part;
 }
 
-void FactoryInstance::try_auto_expansion(const Date today, MarketInstance const& market_instance) {
-	// Checked at the start of each month, like the monthly hiring of the workers
-	if (!today.is_month_start() || !open || !can_be_expanded()) {
+void FactoryInstance::try_auto_expansion(State& state, const Date today, MarketInstance const& market_instance) {
+	// Checked every EXPANSION_CHECK_MONTHS months from the completion of the factory: when the jobs were filled (EXPANSION_MIN_EMPLOYMENT)
+	// in every one of those months the owners want to expand it. They pay from the expansion fund of the factory or from the savings
+	// of the capitalists of the state; if neither has the money the investment fund of the country is asked (see InvestmentPlanner).
+	if (!check_due) {
+		return;
+	}
+	check_due = false;
+	memory::vector<fixed_point_t> fills;
+	fills.swap(fill_since_check);
+
+	if (!open || !can_be_expanded() || fills.empty()) {
+		expansion_wanted = false;
 		return;
 	}
 
-	// Most of the jobs have to be filled, otherwise a bigger factory would not find workers
-	const int32_t max_employees = type_safe::get(max_employee_count);
-	if (max_employees <= 0 || static_cast<int64_t>(type_safe::get(employee_count)) * Rate::DENOMINATOR
-			< static_cast<int64_t>(max_employees) * get_defines().expansion_min_employment.numerator) {
-		return;
+	const fixed_point_t min_fill = get_defines().expansion_min_employment.fixed();
+	for (const fixed_point_t fill : fills) {
+		if (fill < min_fill) {
+			expansion_wanted = false;
+			return;
+		}
 	}
+	expansion_wanted = true;
 
 	const fixed_point_t cost = calculate_construction_cost(building_type, market_instance);
-	if (expansion_fund < cost) {
+	if (expansion_fund >= cost) {
+		expansion_fund -= cost;
+		MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -cost);
+		profitable_days = 0;
+		expansion_wanted = false;
+		start_construction(today);
 		return;
 	}
 
-	expansion_fund -= cost;
-	MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -cost);
-	profitable_days = 0;
-	start_construction(today);
+	// The capitalists of the state build with their own money (the new level is theirs: the share of the state shrinks)
+	const std::int32_t construction_days = static_cast<std::int32_t>(calculate_construction_time(building_type).to_int());
+	if (state.get_capitalist_money(Loan::purpose_t::CONSTRUCTION, construction_days) >= cost) {
+		const fixed_point_t paid = state.take_capitalist_money(cost, Loan::purpose_t::CONSTRUCTION, construction_days);
+		if (paid >= cost) {
+			MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -paid);
+			const std::int32_t level_value = static_cast<std::int32_t>(type_safe::get(level));
+			state_share = state_share * level_value / (level_value + 1);
+			profitable_days = 0;
+			expansion_wanted = false;
+			start_construction(today);
+		}
+	}
 }
 
 void FactoryInstance::hire(State& state) {
@@ -668,7 +708,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 
 	hire(state);
 
-	try_auto_expansion(today, market_instance);
+	try_auto_expansion(state, today, market_instance);
 
 	const int32_t max_employees = type_safe::get(max_employee_count);
 	const fixed_point_t workforce_fraction = max_employees > 0
@@ -777,7 +817,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 			const fixed_point_t treasury = owner->get_spendable_cash();
 			if (state_target > 0 && treasury > 0) {
 				const fixed_point_t paid = std::min(state_target, treasury);
-				owner->spend_cash(paid);
+				owner->spend_cash_for_subsidy(paid);
 				budget += paid;
 				MoneyLedger::record(MoneyLedger::label_t::factory_subsidy, paid);
 				subsidy_today += paid;

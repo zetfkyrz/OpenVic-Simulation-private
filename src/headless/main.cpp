@@ -173,6 +173,26 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		static_cast<double>(country_cash + pop_cash + budgets)
 	);
 
+	{
+		// The investment funds: how much money sits in them and where
+		fixed_point_t total_funds = 0;
+		std::vector<std::pair<double, CountryInstance const*>> funds;
+		for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			total_funds += country.get_investment_fund();
+			funds.push_back({ static_cast<double>(country.get_investment_fund()), &country });
+		}
+		std::sort(funds.begin(), funds.end(), [](auto const& lhs, auto const& rhs) { return lhs.first > rhs.first; });
+		fmt::print("FUNDS {} total={:.0f} | top:", instance_manager.get_today(), static_cast<double>(total_funds));
+		for (size_t i = 0; i < funds.size() && i < 6; ++i) {
+			fmt::print(
+				" {} fund={:.0f} income/day={:.0f} cash={:.0f} slider={:.2f} ai={}", funds[i].second->get_identifier(), funds[i].first,
+				static_cast<double>(funds[i].second->get_income_yesterday()), static_cast<double>(funds[i].second->get_cash_stockpile().load()),
+				static_cast<double>(funds[i].second->get_construction_spending_slider_value().get_value_untracked()), funds[i].second->is_ai()
+			);
+		}
+		fmt::println("");
+	}
+
 	// The world trade of yesterday (docs/TRADE.md)
 	TradeNetwork const& trade_network = instance_manager.get_trade_network();
 	if (trade_network.is_ready()) {

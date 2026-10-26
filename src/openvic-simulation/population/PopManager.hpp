@@ -101,6 +101,8 @@ namespace OpenVic {
 		bool load_delayed_parse_pop_type_data(UnitTypeManager const& unit_type_manager, IssueManager const& issue_manager);
 
 		bool load_pop_type_chances_file(ast::NodeCPtr root);
+		// An addition of the OpenVic rules: all the pops (but the slaves) need a little timber and lumber every day
+		void add_wood_needs(GoodDefinition const* timber, GoodDefinition const* lumber, fixed_point_t timber_need, fixed_point_t lumber_need);
 
 		bool load_pop_bases_into_vector(
 			RebelManager const& rebel_manager, memory::vector<PopBase>& vec, PopType const& type, ast::NodeCPtr pop_node,

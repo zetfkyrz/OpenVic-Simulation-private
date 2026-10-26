@@ -198,6 +198,31 @@ bool BuildingTypeManager::load_buildings_file(
 				"port", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.port))
 			)(value);
 
+			// The wood of the construction: lumber for the cement and timber on top of it
+			GoodDefinition const* const cement = good_definition_manager.get_good_definition_by_identifier("cement");
+			GoodDefinition const* const lumber = good_definition_manager.get_good_definition_by_identifier("lumber");
+			GoodDefinition const* const timber = good_definition_manager.get_good_definition_by_identifier("timber");
+			if (cement != nullptr && lumber != nullptr && timber != nullptr) {
+				auto cement_it = building_type_args.goods_cost.find(cement);
+				if (cement_it != building_type_args.goods_cost.end() && cement_it.value() > fixed_point_t::_0) {
+					const fixed_point_t cement_quantity = cement_it.value();
+					const auto add_cost = [&building_type_args](GoodDefinition const* good, const fixed_point_t quantity) -> void {
+						auto it = building_type_args.goods_cost.find(good);
+						if (it != building_type_args.goods_cost.end()) {
+							it.value() += quantity;
+						} else {
+							building_type_args.goods_cost.emplace(good, quantity);
+						}
+					};
+					if (lumber_per_cement > fixed_point_t::_0) {
+						add_cost(lumber, cement_quantity * lumber_per_cement);
+					}
+					if (timber_per_cement_building > fixed_point_t::_0) {
+						add_cost(timber, timber_per_cement_building);
+					}
+				}
+			}
+
 			ret &= add_building_type(key, building_type_args);
 
 			return ret;

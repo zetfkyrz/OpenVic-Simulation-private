@@ -556,3 +556,20 @@ bool PopManager::parse_scripts(DefinitionManager const& definition_manager) {
 	ret &= conversion_chance.parse_scripts(definition_manager);
 	return ret;
 }
+
+void PopManager::add_wood_needs(
+	GoodDefinition const* timber, GoodDefinition const* lumber, const fixed_point_t timber_need, const fixed_point_t lumber_need
+) {
+	for (PopType const& const_pop_type : get_pop_types()) {
+		PopType& pop_type = const_cast<PopType&>(const_pop_type);
+		if (pop_type.is_slave) {
+			continue;
+		}
+		if (timber != nullptr && timber_need > fixed_point_t::_0) {
+			pop_type.add_everyday_need(timber->index, timber_need);
+		}
+		if (lumber != nullptr && lumber_need > fixed_point_t::_0) {
+			pop_type.add_everyday_need(lumber->index, lumber_need);
+		}
+	}
+}

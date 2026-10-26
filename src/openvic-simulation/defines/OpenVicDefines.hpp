@@ -326,7 +326,7 @@ namespace OpenVic {
 	RATE(CAPITALIST_SAVINGS_SHARE, capitalist_savings_share, Rate(3, 10), 0, 1) \
 	INT(STOCKPILE_TARGET_DAYS, stockpile_target_days, 2, 0, 365) \
 	FIXED(EXPANSION_FUND_SHARE, expansion_fund_share, fixed_point_t::_0_10 * 2, 0, 1) \
-	RATE(EXPANSION_MIN_EMPLOYMENT, expansion_min_employment, Rate(80, 100), 0, 1) \
+	RATE(EXPANSION_MIN_EMPLOYMENT, expansion_min_employment, Rate(90, 100), 0, 1) \
 	INT(WORKING_CAPITAL_DAYS, working_capital_days, 5, 0, 365) \
 	INT(MIN_WORKING_CAPITAL, min_working_capital, 20, 0, 100000000) \
 	INT(DIVIDEND_EXCESS_DIVISOR, dividend_excess_divisor, 10, 1, 1000) \
@@ -367,7 +367,7 @@ namespace OpenVic {
 	INT(INVESTMENT_AI_RESERVE_DAYS, investment_ai_reserve_days, 0, 0, 3650) \
 	RATE(INVESTMENT_AI_SURPLUS_SHARE, investment_ai_surplus_share, Rate(75, 100), 0, 1) \
 	/* The AI stops setting money aside while its fund holds the income of this many days (money that nobody uses is not saved) */ \
-	INT(INVESTMENT_AI_MAX_FUND_DAYS, investment_ai_max_fund_days, 120, 1, 36500) \
+	INT(INVESTMENT_AI_MAX_FUND_DAYS, investment_ai_max_fund_days, 14, 1, 36500) \
 	INT(INVESTMENT_WEIGHT_CAPITALISTS, investment_weight_capitalists, 50, 0, 10000) \
 	INT(INVESTMENT_WEIGHT_ARISTOCRATS, investment_weight_aristocrats, 25, 0, 10000) \
 	INT(INVESTMENT_WEIGHT_ARTISANS, investment_weight_artisans, 5, 0, 10000) \
@@ -375,7 +375,20 @@ namespace OpenVic {
 	INT(INVESTMENT_WEIGHT_CLERKS, investment_weight_clerks, 5, 0, 10000) \
 	INT(INVESTMENT_WEIGHT_OFFICERS, investment_weight_officers, 5, 0, 10000) \
 	INT(INVESTMENT_WEIGHT_BUREAUCRATS, investment_weight_bureaucrats, 5, 0, 10000) \
-	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1)
+	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1) \
+	/* The money of the investment fund that nobody uses: when the fund holds more than this many days of the income of the country, */ \
+	/* this share of the excess goes back to the treasury every day (and from there to the budget, the pops get it as salaries) */ \
+	INT(INVESTMENT_FUND_MAX_DAYS, investment_fund_max_days, 14, 1, 36500) \
+	RATE(INVESTMENT_FUND_RELEASE_SHARE, investment_fund_release_share, Rate(10, 100), 0, 1) \
+	/* Wood: what a pop of 200000 needs of timber and lumber per day as an everyday need (the original game has none; food is about 100 times more) */ \
+	FIXED(POP_TIMBER_NEED, pop_timber_need, fixed_point_t(25) / 1000, 0, 100) \
+	FIXED(POP_LUMBER_NEED, pop_lumber_need, fixed_point_t(25) / 1000, 0, 100) \
+	/* Every building that needs cement needs this much lumber for each unit of cement, and this much timber on top (the construction goods) */ \
+	FIXED(LUMBER_PER_CEMENT, lumber_per_cement, fixed_point_t::_0_50, 0, 100) \
+	INT(TIMBER_PER_CEMENT_BUILDING, timber_per_cement_building, 100, 0, 100000) \
+	/* A factory is checked for expansion every this many months from its completion: it is expanded when its workplaces were filled */ \
+	/* (EXPANSION_MIN_EMPLOYMENT) in every one of the months since the last check */ \
+	INT(EXPANSION_CHECK_MONTHS, expansion_check_months, 3, 1, 120)
 	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(TERM_SHORT_DAYS, term_short_days, 1825, 30, 36500) \
@@ -441,7 +454,7 @@ namespace OpenVic {
 	RATE(OUTSIDE_COST, outside_cost, Rate(4, 100), 0, 1) \
 	RATE(SPOT_COST, spot_cost, Rate(5, 100), 0, 1) \
 	/* The share of the freight that goes to the investment fund of the country (the rest goes to the treasury) */ \
-	RATE(FREIGHT_FUND_SHARE, freight_fund_share, Rate(70, 100), 0, 1) \
+	RATE(FREIGHT_FUND_SHARE, freight_fund_share, Rate(30, 100), 0, 1) \
 	/* Subsistence: the workers of a resource gathering operation keep this share of its output for themselves (only goods that they */ \
 	/* need), without a market, at no freight; railroads in the province turn the farms to the market: at the best railroad the share */ \
 	/* is reduced by SUBSISTENCE_RAIL_RELIEF */ \

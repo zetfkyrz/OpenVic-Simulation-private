@@ -280,6 +280,12 @@ namespace OpenVic {
 		atomic_fixed_point_t actual_tariff_income;
 		// The freight the sellers of the country paid yesterday (inside the country and on the way abroad), see TradeNetwork
 		atomic_fixed_point_t actual_transport_income;
+		// The treasury of the last day by the sources that have no figure of their own (reset at the start of the tick, filled by
+		// add_cash / spend_cash): used by the budget window
+		atomic_fixed_point_t treasury_other_income;
+		atomic_fixed_point_t treasury_other_spending;
+		atomic_fixed_point_t treasury_subsidy_spending;
+		fixed_point_t transport_to_treasury_last = 0;
 		fixed_point_t get_actual_net_tariffs_balance() const {
 			return actual_tariff_income.load() - actual_import_subsidies_spending.load();
 		}
@@ -654,15 +660,41 @@ namespace OpenVic {
 		// Puts money into the national stockpile, e.g. the dividends of state owned factories
 		void add_cash(const fixed_point_t amount) {
 			cash_stockpile += amount;
+			treasury_other_income += amount;
 			MoneyLedger::record(MoneyLedger::label_t::country_other_credit, amount);
 			free_funds += amount;
 		}
 		// Takes money out of the national stockpile, e.g. to pay for construction
 		void spend_cash(const fixed_point_t amount) {
 			cash_stockpile -= amount;
+			treasury_other_spending += amount;
 			MoneyLedger::record(MoneyLedger::label_t::country_other_debit, -amount);
 			free_funds -= amount;
 		}
+		// The same, but the money covers the losses of the subsidised factories
+		void spend_cash_for_subsidy(const fixed_point_t amount) {
+			cash_stockpile -= amount;
+			treasury_subsidy_spending += amount;
+			MoneyLedger::record(MoneyLedger::label_t::country_other_debit, -amount);
+			free_funds -= amount;
+		}
+		// Money of the last day that came to the treasury or left it by the sources that have no figure of their own
+		[[nodiscard]] fixed_point_t get_treasury_other_income() const {
+			return treasury_other_income.load();
+		}
+		[[nodiscard]] fixed_point_t get_treasury_other_spending() const {
+			return treasury_other_spending.load();
+		}
+		[[nodiscard]] fixed_point_t get_treasury_subsidy_spending() const {
+			return treasury_subsidy_spending.load();
+		}
+		// The part of the freight of the last day that went to the treasury (the rest went to the investment fund)
+		[[nodiscard]] fixed_point_t get_transport_to_treasury() const {
+			return transport_to_treasury_last;
+		}
+		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
+		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;
+		[[nodiscard]] fixed_point_t calculate_navy_supply_cost_per_day() const;
 		// The money that is not committed to the budget and the national stockpile purchases of the day: what can be
 		// spent on subsidies, loans and the like while the day is being simulated without overspending the treasury
 		fixed_point_t get_spendable_cash() const {

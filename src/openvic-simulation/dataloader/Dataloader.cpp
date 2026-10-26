@@ -1024,6 +1024,14 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load pop types!");
 		ret = false;
 	}
+	{
+		OpenVicEconomyDefines const& openvic_economy = definition_manager.get_define_manager().get_openvic_defines().economy;
+		GoodDefinitionManager const& goods = definition_manager.get_economy_manager().get_good_definition_manager();
+		definition_manager.get_pop_manager().add_wood_needs(
+			goods.get_good_definition_by_identifier("timber"), goods.get_good_definition_by_identifier("lumber"),
+			openvic_economy.pop_timber_need, openvic_economy.pop_lumber_need
+		);
+	}
 	if (!definition_manager.get_economy_manager().load_production_types_file(
 		game_rules_manager,
 		definition_manager.get_pop_manager(),
@@ -1031,6 +1039,12 @@ bool Dataloader::load_defines(
 	)) {
 		spdlog::critical_s("Failed to load production types!");
 		ret = false;
+	}
+	{
+		OpenVicEconomyDefines const& openvic_economy = definition_manager.get_define_manager().get_openvic_defines().economy;
+		definition_manager.get_economy_manager().get_building_type_manager().set_wood_rules(
+			openvic_economy.lumber_per_cement, fixed_point_t(openvic_economy.timber_per_cement_building)
+		);
 	}
 	if (!definition_manager.get_economy_manager().load_buildings_file(definition_manager.get_modifier_manager(),
 		parse_defines(lookup_file(buildings_file)).get_file_node()

@@ -8,6 +8,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/core/object/FixedPoint/Math.hpp"
 #include "openvic-simulation/economy/BuildingLevel.hpp"
 #include "openvic-simulation/population/PopSize.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
@@ -75,6 +76,8 @@ namespace OpenVic {
 			fixed_point_t output;
 			// Average number of employees
 			std::int32_t employees = 0;
+			// Average number of the jobs of the factory
+			std::int32_t max_employees = 0;
 		};
 		static constexpr size_t MAX_HISTORY_MONTHS = 120;
 
@@ -97,6 +100,12 @@ namespace OpenVic {
 		memory::vector<MonthRecord> history;
 		MonthRecord month_in_progress;
 		std::int64_t month_employee_days = 0;
+		std::int64_t month_max_employee_days = 0;
+		// The expansion check (EXPANSION_CHECK_MONTHS of the defines): the share of the jobs that was filled in every month since the
+		// last check (counted from the completion of the factory), whether the check is due, and whether the factory wants to grow
+		memory::vector<fixed_point_t> fill_since_check;
+		bool check_due = false;
+		bool PROPERTY_CUSTOM_PREFIX(expansion_wanted, is, false);
 		std::int32_t month_days = 0;
 		// Whether the factory was built by the state (otherwise by capitalists / the game setup)
 		bool PROPERTY_RW_CUSTOM_NAME(built_by_state, was_built_by_state, set_built_by_state, false);
@@ -157,7 +166,7 @@ namespace OpenVic {
 		// Closes the month: the record goes into the history
 		void close_month(const Date today);
 		void advance_construction(State& state, const Date today, MarketInstance const& market_instance);
-		void try_auto_expansion(const Date today, MarketInstance const& market_instance);
+		void try_auto_expansion(State& state, const Date today, MarketInstance const& market_instance);
 		// Pays the dividend out of the budget to the capitalists and the state according to the shares, adds what each got
 		void pay_dividend(State& state, fixed_point_t amount, fixed_point_t& capitalists_income, fixed_point_t& state_income);
 		void hire(State& state);
@@ -178,6 +187,18 @@ namespace OpenVic {
 		// Fraction of the construction that is done, 0 if nothing is being built
 		[[nodiscard]] fixed_point_t get_construction_progress(const Date today) const;
 		[[nodiscard]] bool can_be_expanded() const;
+		// The share of the jobs that is filled today (0 when there are none)
+		[[nodiscard]] fixed_point_t get_fill_fraction() const {
+			const int32_t max_employees = type_safe::get(max_employee_count);
+			return max_employees > 0 ? fp::from_fraction(static_cast<int32_t>(type_safe::get(employee_count)), max_employees) : fixed_point_t::_0;
+		}
+		// The share of the jobs that was filled in the months since the last check of the expansion (the months that are done)
+		[[nodiscard]] memory::vector<fixed_point_t> const& get_fill_since_check() const {
+			return fill_since_check;
+		}
+		void clear_expansion_wanted() {
+			expansion_wanted = false;
+		}
 
 		// Cost of building or expanding by one level at the current market prices
 		[[nodiscard]] static fixed_point_t calculate_construction_cost(
