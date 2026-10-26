@@ -268,10 +268,16 @@ namespace OpenVic {
 		atomic_fixed_point_t PROPERTY(actual_unemployment_subsidies_spending);
 
 		//base here means not scaled by slider or pop size
-		IndexedFlatMap<PopType, DerivedState<fixed_point_t>> administration_salary_base_by_pop_type;
-		IndexedFlatMap<PopType, DerivedState<fixed_point_t>> education_salary_base_by_pop_type;
-		IndexedFlatMap<PopType, DerivedState<fixed_point_t>> military_salary_base_by_pop_type;
-		IndexedFlatMap<PopType, DerivedState<fixed_point_t>> social_income_variant_base_by_pop_type;
+		// The bases of the salaries and of the welfare of a type of pop: the costs of its needs (shared by all countries, they change with the
+		// prices every day) times the corruption of the country. They are worked out when they are asked for: as reactive states (one per type
+		// of pop and country, made again every day) they cost many times more than the product.
+		fixed_point_t get_administration_salary_base(PopType const& pop_type);
+		fixed_point_t get_education_salary_base(PopType const& pop_type);
+		fixed_point_t get_military_salary_base(PopType const& pop_type);
+		fixed_point_t get_social_income_variant_base(PopType const& pop_type);
+		// The levels of the pensions and of the unemployment benefit of today (the modifiers do not change during a tick), set by country_tick_before_map
+		fixed_point_t pension_level_today;
+		fixed_point_t unemployment_benefit_today;
 
 		OV_CLAMPED_PROPERTY(tariff_rate_slider_value);
 		fixed_point_t actual_import_subsidies_budget;

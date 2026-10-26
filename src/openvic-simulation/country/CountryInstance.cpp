@@ -142,46 +142,6 @@ CountryInstance::CountryInstance(
 			};
 		}
 	},
-	administration_salary_base_by_pop_type{
-		country_instance_deps.pop_types,
-		[this](PopType const& pop_type)->auto {
-			return [this,&pop_type](DependencyTracker& tracker)->fixed_point_t {
-				return corruption_cost_multiplier.get(tracker)
-					* shared_country_values.get_shared_pop_type_values(pop_type)
-						.get_administration_salary_base(tracker);
-			};
-		}
-	},
-	education_salary_base_by_pop_type{
-		country_instance_deps.pop_types,
-		[this](PopType const& pop_type)->auto {
-			return [this,&pop_type](DependencyTracker& tracker)->fixed_point_t {
-				return corruption_cost_multiplier.get(tracker)
-					* shared_country_values.get_shared_pop_type_values(pop_type)
-						.get_education_salary_base(tracker);
-			};
-		}
-	},
-	military_salary_base_by_pop_type{
-		country_instance_deps.pop_types,
-		[this](PopType const& pop_type)->auto {
-			return [this,&pop_type](DependencyTracker& tracker)->fixed_point_t {
-				return corruption_cost_multiplier.get(tracker)
-					* shared_country_values.get_shared_pop_type_values(pop_type)
-						.get_military_salary_base(tracker);
-			};
-		}
-	},
-	social_income_variant_base_by_pop_type{
-		country_instance_deps.pop_types,
-		[this](PopType const& pop_type)->auto {
-			return [this,&pop_type](DependencyTracker& tracker)->fixed_point_t {
-				return corruption_cost_multiplier.get(tracker)
-					* shared_country_values.get_shared_pop_type_values(pop_type)
-						.get_social_income_variant_base(tracker);
-			};
-		}
-	},
 	tax_rate_slider_value_by_strata { country_instance_deps.stratas },
 
 	/* Technology */
@@ -1495,22 +1455,30 @@ void CountryInstance::_update_budget() {
 	int64_t projected_unemployment_subsidies_spending_unscaled_by_slider_running_total = 0;
 
 	{
+		// The same for every type of pop: looked up once, not for every type
+		const fixed_point_t corruption_cost_multiplier_copy = corruption_cost_multiplier.get_untracked();
+		const fixed_point_t pension_level = get_modifier_effect_value(*modifier_effect_cache.get_pension_level());
+		const fixed_point_t unemployment_benefit = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
+
 		pop_type_index_t pop_type_index {};
 		for (const pop_sum_t pop_size : get_population_by_type()) {
 			PopType const& pop_type = pop_types[pop_type_index];
+			SharedPopTypeValues const& pop_type_values = shared_country_values.get_shared_pop_type_values(pop_type);
 			const int64_t size = type_safe::get(pop_size);
+			const fixed_point_t social_income_variant_base =
+				corruption_cost_multiplier_copy * pop_type_values.get_social_income_variant_base_untracked();
 			projected_administration_spending_unscaled_by_slider_running_total += size
-				* administration_salary_base_by_pop_type.at(pop_type).get_untracked().get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked()).get_raw_value();
 			projected_education_spending_unscaled_by_slider_running_total += size
-				* education_salary_base_by_pop_type.at(pop_type).get_untracked().get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()).get_raw_value();
 			projected_military_spending_unscaled_by_slider_running_total += size
-				* military_salary_base_by_pop_type.at(pop_type).get_untracked().get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked()).get_raw_value();
 			projected_pensions_spending_unscaled_by_slider_running_total += size
-				* calculate_pensions_base(pop_type).get_raw_value();
+				* (pension_level * social_income_variant_base).get_raw_value();
 			projected_unemployment_subsidies_spending_unscaled_by_slider_running_total += type_safe::get(
 					get_unemployed_pops_by_type()[pop_type_index]
 				)
-				* calculate_unemployment_subsidies_base(pop_type).get_raw_value();
+				* (unemployment_benefit * social_income_variant_base).get_raw_value();
 			++pop_type_index;
 		}
 	}
@@ -1533,20 +1501,37 @@ void CountryInstance::_update_budget() {
 	));
 }
 
+fixed_point_t CountryInstance::get_administration_salary_base(PopType const& pop_type) {
+	return corruption_cost_multiplier.get_untracked()
+		* shared_country_values.get_shared_pop_type_values(pop_type).get_administration_salary_base_untracked();
+}
+fixed_point_t CountryInstance::get_education_salary_base(PopType const& pop_type) {
+	return corruption_cost_multiplier.get_untracked()
+		* shared_country_values.get_shared_pop_type_values(pop_type).get_education_salary_base_untracked();
+}
+fixed_point_t CountryInstance::get_military_salary_base(PopType const& pop_type) {
+	return corruption_cost_multiplier.get_untracked()
+		* shared_country_values.get_shared_pop_type_values(pop_type).get_military_salary_base_untracked();
+}
+fixed_point_t CountryInstance::get_social_income_variant_base(PopType const& pop_type) {
+	return corruption_cost_multiplier.get_untracked()
+		* shared_country_values.get_shared_pop_type_values(pop_type).get_social_income_variant_base_untracked();
+}
+
 fixed_point_t CountryInstance::calculate_pensions_base(PopType const& pop_type) {
 	return get_modifier_effect_value(*modifier_effect_cache.get_pension_level())
-		* social_income_variant_base_by_pop_type.at(pop_type).get_untracked();
+		* get_social_income_variant_base(pop_type);
 }
 fixed_point_t CountryInstance::calculate_unemployment_subsidies_base(PopType const& pop_type) {
 	return get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit())
-		* social_income_variant_base_by_pop_type.at(pop_type).get_untracked();
+		* get_social_income_variant_base(pop_type);
 }
 fixed_point_t CountryInstance::calculate_minimum_wage_base(PopType const& pop_type) {
 	if (pop_type.is_slave) {
 		return 0;
 	}
 	return get_modifier_effect_value(*modifier_effect_cache.get_minimum_wage())
-		* social_income_variant_base_by_pop_type.at(pop_type).get_untracked();
+		* get_social_income_variant_base(pop_type);
 }
 
 void CountryInstance::_update_current_tech(const Date today) {
@@ -2083,6 +2068,10 @@ void CountryInstance::country_tick_before_map(
 	// + reparations + war subsidies
 	// + industrial subsidies
 	// + loan interest
+
+	// The modifiers do not change during the tick: the levels the pops of the country get their welfare by are looked up once, not for every pop
+	pension_level_today = get_modifier_effect_value(*modifier_effect_cache.get_pension_level());
+	unemployment_benefit_today = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
 
 	fixed_point_t available_funds = cash_stockpile_start_of_tick = cash_stockpile;
 	const fixed_point_t projected_administration_spending_copy = projected_administration_spending.get_untracked();
@@ -2720,10 +2709,12 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 	PopType const& pop_type = pop.get_type();
 	const pop_size_t pop_size = pop.get_size();
 	SharedPopTypeValues const& pop_type_values = shared_country_values.get_shared_pop_type_values(pop_type);
+	// Not changed while the pops are ticked, and the same for all the pops of the country
+	const fixed_point_t corruption_cost_multiplier_copy = corruption_cost_multiplier.get_untracked();
 
 	if (actual_administration_budget > 0) {
 		const fixed_point_t administration_salary = fp::mul_div(
-			pop_size * administration_salary_base_by_pop_type.at(pop_type).get_untracked(),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked()),
 			actual_administration_budget,
 			projected_administration_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -2735,7 +2726,7 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 
 	if (actual_education_budget > 0) {
 		const fixed_point_t education_salary = fp::mul_div(
-			pop_size * education_salary_base_by_pop_type.at(pop_type).get_untracked(),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()),
 			actual_education_budget,
 			projected_education_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -2747,7 +2738,7 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 
 	if (actual_military_budget > 0) {
 		const fixed_point_t military_salary = fp::mul_div(
-			pop_size * military_salary_base_by_pop_type.at(pop_type).get_untracked(),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked()),
 			actual_military_budget,
 			projected_military_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -2758,8 +2749,10 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 	}
 
 	if (actual_social_budget > 0) {
+		const fixed_point_t social_income_variant_base =
+			corruption_cost_multiplier_copy * pop_type_values.get_social_income_variant_base_untracked();
 		const fixed_point_t pension_income = fp::mul_div(
-			pop_size * calculate_pensions_base(pop_type),
+			pop_size * (pension_level_today * social_income_variant_base),
 			actual_social_budget,
 			projected_social_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -2769,7 +2762,7 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 		}
 
 		const fixed_point_t unemployment_subsidies = fp::mul_div(
-			pop.get_unemployed() * calculate_unemployment_subsidies_base(pop_type),
+			pop.get_unemployed() * (unemployment_benefit_today * social_income_variant_base),
 			actual_social_budget,
 			projected_social_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
