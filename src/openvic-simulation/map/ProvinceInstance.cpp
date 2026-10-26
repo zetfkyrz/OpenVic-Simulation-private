@@ -404,6 +404,19 @@ void ProvinceInstance::province_tick(
 		}
 	}
 
+	// The demand of the pops for the goods of their needs, added up by the pops, goes to the country once
+	memory::vector<fixed_point_t>& need_demand_per_good = reusable_pop_values.pop_need_demand_per_good;
+	CountryInstance* const country_to_report_economy_nullable = get_country_to_report_economy();
+	for (std::size_t i = 0; i < need_demand_per_good.size(); ++i) {
+		fixed_point_t& demand = need_demand_per_good[i];
+		if (demand != fixed_point_t::_0) {
+			if (country_to_report_economy_nullable != nullptr) {
+				country_to_report_economy_nullable->report_pop_need_demand_total(good_index_t(i), demand);
+			}
+			demand = fixed_point_t::_0;
+		}
+	}
+
 	for (BuildingInstance& building : buildings) {
 		building.tick(today);
 	}

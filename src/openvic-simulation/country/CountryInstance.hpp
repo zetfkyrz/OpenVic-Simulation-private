@@ -915,6 +915,8 @@ namespace OpenVic {
 		void report_pop_income_tax(PopType const& pop_type, const fixed_point_t gross_income, const fixed_point_t paid_as_tax);
 		void report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
 		void report_pop_need_demand(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
+		// The same for the demand of many pops added up (the pop type does not matter for the demand)
+		void report_pop_need_demand_total(const good_index_t good_index, const fixed_point_t quantity);
 		void report_input_consumption(ProductionType const& production_type, const good_index_t good_index, const fixed_point_t quantity);
 		void report_input_demand(ProductionType const& production_type, const good_index_t good_index, const fixed_point_t quantity);
 		void report_output(ProductionType const& production_type, const fixed_point_t quantity);

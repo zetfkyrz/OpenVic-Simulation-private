@@ -37,6 +37,17 @@
 #endif
 #endif // OV_SPEED_INLINE
 
+// For the code that reports an error and is (almost) never run: out of line, so the function that has the check stays small enough to be inlined
+#ifndef OV_COLD_NOINLINE
+#if defined(__GNUC__)
+#define OV_COLD_NOINLINE __attribute__((noinline, cold))
+#elif defined(_MSC_VER)
+#define OV_COLD_NOINLINE __declspec(noinline)
+#else
+#define OV_COLD_NOINLINE
+#endif
+#endif // OV_COLD_NOINLINE
+
 #ifndef OV_NO_UNIQUE_ADDRESS
 #if __has_cpp_attribute(msvc::no_unique_address)
 #define OV_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]

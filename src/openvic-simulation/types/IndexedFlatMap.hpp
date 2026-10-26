@@ -13,6 +13,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/portable/ForwardableSpan.hpp"
 #include "openvic-simulation/core/template/Concepts.hpp"
+#include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/types/ConstructorTags.hpp"
 #include "openvic-simulation/utility/Getters.hpp" // IWYU pragma: keep for _get_property
 #include "openvic-simulation/utility/Logger.hpp"
@@ -464,6 +465,18 @@ namespace OpenVic {
 			);
 		}
 
+		// Out of line and cold: the checks of at_index and get_key_at_index stay small, so that they are inlined into the hot loops
+		OV_COLD_NOINLINE void report_index_out_of_range(const std::size_t index) const {
+			spdlog::error_s(
+				"DEVELOPER: OpenVic::IndexedFlatMap<{},{}> attempted to access index {} which is outside the map's defined range [{}, {}].",
+				type_name<ForwardedKeyType>(),
+				type_name<ValueType>(),
+				index,
+				min_index,
+				max_index
+			);
+		}
+
 		constexpr ValueType& at(ForwardedKeyType const& key) {
 			static_assert(has_index<ForwardedKeyType>);
 			return values[get_internal_index_from_key(key)];
@@ -479,15 +492,8 @@ namespace OpenVic {
 			&& std::same_as<KeyType, ForwardedKeyType>
 		constexpr ValueType& at_index(const index_t typed_index) {
 			const std::size_t index = get_index_as_size_t(typed_index);
-			if (index < min_index || index > max_index) {
-				spdlog::error_s(
-					"DEVELOPER: OpenVic::IndexedFlatMap<{},{}> attempted to access index {} which is outside the map's defined range [{}, {}].",
-					type_name<ForwardedKeyType>(),
-					type_name<ValueType>(),
-					index,
-					min_index,
-					max_index
-				);
+			if (OV_unlikely(index < min_index || index > max_index)) {
+				report_index_out_of_range(index);
 				assert(index >= min_index && index <= max_index);
 			}
 			return values[index - min_index];
@@ -498,15 +504,8 @@ namespace OpenVic {
 			&& std::same_as<KeyType, ForwardedKeyType>
 		constexpr ValueType const& at_index(const index_t typed_index) const {
 			const std::size_t index = get_index_as_size_t(typed_index);
-			if (index < min_index || index > max_index) {
-				spdlog::error_s(
-					"DEVELOPER: OpenVic::IndexedFlatMap<{},{}> attempted to access index {} which is outside the map's defined range [{}, {}].",
-					type_name<ForwardedKeyType>(),
-					type_name<ValueType>(),
-					index,
-					min_index,
-					max_index
-				);
+			if (OV_unlikely(index < min_index || index > max_index)) {
+				report_index_out_of_range(index);
 				assert(index >= min_index && index <= max_index);
 			}
 			return values[index - min_index];
@@ -517,15 +516,8 @@ namespace OpenVic {
 			&& std::same_as<KeyType, ForwardedKeyType>
 		constexpr ForwardedKeyType const& get_key_at_index(const index_t typed_index) const {
 			const std::size_t index = get_index_as_size_t(typed_index);
-			if (index < min_index || index > max_index) {
-				spdlog::error_s(
-					"DEVELOPER: OpenVic::IndexedFlatMap<{},{}> attempted to access index {} which is outside the map's defined range [{}, {}].",
-					type_name<ForwardedKeyType>(),
-					type_name<ValueType>(),
-					index,
-					min_index,
-					max_index
-				);
+			if (OV_unlikely(index < min_index || index > max_index)) {
+				report_index_out_of_range(index);
 				assert(index >= min_index && index <= max_index);
 			}
 			return keys[index - min_index];

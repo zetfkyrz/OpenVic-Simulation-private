@@ -51,6 +51,7 @@ PopValuesFromProvince::PopValuesFromProvince(
 	good_instance_manager { new_good_instance_manager },
 	modifier_effect_cache { new_modifier_effect_cache },
 	production_type_manager { new_production_type_manager },
+	pop_need_demand_per_good(new_good_instance_manager.get_good_instances().size(), fixed_point_t::_0),
 	defines { new_defines },
 	effects_by_strata {
 		generate_values,

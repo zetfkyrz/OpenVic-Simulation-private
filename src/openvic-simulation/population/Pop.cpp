@@ -1,5 +1,6 @@
 #include "Pop.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <concepts> // IWYU pragma: keep for lambda
 #include <cstddef>
@@ -303,23 +304,32 @@ memory::string Pop::get_pop_context_text() const {
 void Pop::reserve_needs_fulfilled_goods() {
 	PopType const& pop_type = type.get();
 	#define RESERVE_NEEDS(need_category) \
-		need_category##_needs_fulfilled_goods.reserve(pop_type.get_##need_category##_needs().size());
+		need_category##_needs.reserve(pop_type.get_##need_category##_needs().size()); \
+		need_category##_needs_fulfilled_goods_list.reserve(pop_type.get_##need_category##_needs().size());
 
 	OV_DO_FOR_ALL_NEED_CATEGORIES(RESERVE_NEEDS)
 	#undef RESERVE_NEEDS
 }
 
-void Pop::fill_needs_fulfilled_goods_with_false() {
-	PopType const& pop_type = type.get();
-	#define FILL_WITH_FALSE(need_category) \
-		need_category##_needs_fulfilled_goods.clear(); \
-		for (auto [good, base_demand] : pop_type.get_##need_category##_needs()) { \
-			need_category##_needs_fulfilled_goods.emplace(good, false); \
-		}
-
-	OV_DO_FOR_ALL_NEED_CATEGORIES(FILL_WITH_FALSE)
-	#undef FILL_WITH_FALSE
-}
+#define DEFINE_NEEDS_FULFILLED_GOODS(need_category) \
+	ordered_map<good_index_t, bool> Pop::get_##need_category##_needs_fulfilled_goods() const { \
+		ordered_map<good_index_t, bool> result; \
+		if (!needs_fulfilled_goods_recorded) { \
+			return result; \
+		} \
+		result.reserve(type.get().get_##need_category##_needs().size()); \
+		for (auto [good, base_demand] : type.get().get_##need_category##_needs()) { \
+			result.emplace( \
+				good, \
+				std::find( \
+					need_category##_needs_fulfilled_goods_list.begin(), need_category##_needs_fulfilled_goods_list.end(), good \
+				) != need_category##_needs_fulfilled_goods_list.end() \
+			); \
+		} \
+		return result; \
+	}
+OV_DO_FOR_ALL_NEED_CATEGORIES(DEFINE_NEEDS_FULFILLED_GOODS)
+#undef DEFINE_NEEDS_FULFILLED_GOODS
 
 void Pop::pay_income_tax(fixed_point_t& income) {
 	CountryInstance* const tax_collector_nullable = get_location().get_country_to_report_economy();
@@ -446,7 +456,7 @@ OV_DO_FOR_ALL_NEED_CATEGORIES(DEFINE_NEEDS_FULFILLED)
 #undef DEFINE_NEEDS_FULFILLED
 
 void Pop::allocate_for_needs(
-	fixed_point_map_t<good_index_t> const& scaled_needs,
+	need_list_t const& scaled_needs,
 	forwardable_span<fixed_point_t> money_to_spend_per_good,
 	memory::vector<fixed_point_t>& reusable_vector,
 	fixed_point_t& weights_sum,
@@ -456,27 +466,32 @@ void Pop::allocate_for_needs(
 		return;
 	}
 
-	memory::vector<fixed_point_t>& money_to_spend_per_good_draft = reusable_vector;
-	money_to_spend_per_good_draft.resize(scaled_needs.size(), 0);
+	// The prices do not change while the pops are ticked, so what depends only on the good is worked out once and not in every round below.
+	// reusable_vector: [0, count) the money planned for every good, [count, 2 count) the most money the good can use,
+	// [2 count, 3 count) its weight (the inverse of its price)
+	const std::size_t count = scaled_needs.size();
+	reusable_vector.assign(3 * count, fixed_point_t::_0);
+	fixed_point_t* const money_to_spend_per_good_draft = reusable_vector.data();
+	fixed_point_t* const max_money_to_spend_per_good = money_to_spend_per_good_draft + count;
+	fixed_point_t* const weight_per_good = max_money_to_spend_per_good + count;
+	for (std::size_t i = 0; i < count; ++i) {
+		auto const& [good_index, max_quantity_to_buy] = scaled_needs[i];
+		max_money_to_spend_per_good[i] = market_instance.get_max_money_to_allocate_to_buy_quantity(good_index, max_quantity_to_buy);
+		weight_per_good[i] = market_instance.get_good_instance(good_index).get_price_inverse();
+	}
 	fixed_point_t cash_left_to_spend_draft = cash_left_to_spend;
 
 	bool needs_redistribution = true;
 	while (needs_redistribution) {
 		needs_redistribution = false;
-		for (auto it = scaled_needs.begin(); it < scaled_needs.end(); it++) {
-			const good_index_t good_index = it.key();
-			const fixed_point_t max_quantity_to_buy = it.value();
-			const ptrdiff_t i = it - scaled_needs.begin();
-			const fixed_point_t max_money_to_spend = market_instance.get_max_money_to_allocate_to_buy_quantity(
-				good_index,
-				max_quantity_to_buy
-			);
+		for (std::size_t i = 0; i < count; ++i) {
+			const fixed_point_t max_money_to_spend = max_money_to_spend_per_good[i];
 			if (money_to_spend_per_good_draft[i] >= max_money_to_spend) {
 				continue;
 			}
 
-			fixed_point_t weight = market_instance.get_good_instance(good_index).get_price_inverse();
-			fixed_point_t cash_available_for_good = fp::mul_div(
+			const fixed_point_t weight = weight_per_good[i];
+			const fixed_point_t cash_available_for_good = fp::mul_div(
 				cash_left_to_spend_draft,
 				weight,
 				weights_sum
@@ -490,7 +505,8 @@ void Pop::allocate_for_needs(
 				break;
 			}
 
-			const fixed_point_t max_possible_quantity_bought = cash_available_for_good / market_instance.get_min_next_price(good_index);
+			const fixed_point_t max_possible_quantity_bought =
+				cash_available_for_good / market_instance.get_min_next_price(scaled_needs[i].first);
 			if (max_possible_quantity_bought < fixed_point_t::epsilon) {
 				money_to_spend_per_good_draft[i] = 0;
 			} else {
@@ -499,10 +515,9 @@ void Pop::allocate_for_needs(
 		}
 	}
 
-	for (auto it = scaled_needs.begin(); it < scaled_needs.end(); it++) {
-		const ptrdiff_t i = it - scaled_needs.begin();
+	for (std::size_t i = 0; i < count; ++i) {
 		const fixed_point_t money_to_spend = money_to_spend_per_good_draft[i];
-		money_to_spend_per_good[type_safe::get(it.key())] += money_to_spend;
+		money_to_spend_per_good[type_safe::get(scaled_needs[i].first)] += money_to_spend;
 		cash_left_to_spend -= money_to_spend;
 	}
 
@@ -551,7 +566,11 @@ void Pop::pop_tick_without_cleanup(
 		&& get_life_needs_fulfilled() < population_defines->hunger_life_needs_threshold.fixed()) {
 		hungry_days++;
 	}
-	fill_needs_fulfilled_goods_with_false();
+	// Yesterday's fulfilled goods are forgotten, today's are recorded as the goods are bought (after_buy)
+	#define FORGET_FULFILLED_GOODS(need_category) need_category##_needs_fulfilled_goods_list.clear();
+	OV_DO_FOR_ALL_NEED_CATEGORIES(FORGET_FULFILLED_GOODS)
+	#undef FORGET_FULFILLED_GOODS
+	needs_fulfilled_goods_recorded = true;
 	
 	fixed_point_map_t<good_index_t> goods_to_sell {};
 	if (artisanal_producer_optional.has_value()) {
@@ -606,6 +625,7 @@ void Pop::pop_tick_without_cleanup(
 	fixed_point_t subsistence_left = location_rgo.get_subsistence_entitlement(*this);
 	const good_index_t subsistence_good_index = location_rgo.get_subsistence_good_index();
 
+	memory::vector<fixed_point_t>& need_demand_per_good = shared_values.pop_need_demand_per_good;
 	#define FILL_NEEDS(need_category) \
 		need_category##_needs.clear(); \
 		const fixed_point_t need_category##_needs_scalar = base_needs_scalar * shared_strata_values.get_shared_##need_category##_needs_scalar(); \
@@ -621,10 +641,11 @@ void Pop::pop_tick_without_cleanup(
 					continue; \
 				} \
 				if (country_to_report_economy_nullable != nullptr) { \
-					country_to_report_economy_nullable->report_pop_need_demand(pop_type, good_index, max_quantity_to_buy); \
+					/* Added up here and sent to the country once per province (a lock for every good of every pop was slow) */ \
+					need_demand_per_good[type_safe::get(good_index)] += max_quantity_to_buy; \
 				} \
 				need_category##_needs_desired_quantity += max_quantity_to_buy; \
-				auto goods_to_sell_iterator = goods_to_sell.find(good_index); \
+				auto goods_to_sell_iterator = goods_to_sell.empty() ? goods_to_sell.end() : goods_to_sell.find(good_index); \
 				if (goods_to_sell_iterator != goods_to_sell.end() && goods_to_sell_iterator.value() > 0) { \
 					const fixed_point_t own_produce_consumed = std::min(goods_to_sell_iterator.value(), max_quantity_to_buy); \
 					goods_to_sell_iterator.value() -= own_produce_consumed; \
@@ -646,7 +667,7 @@ void Pop::pop_tick_without_cleanup(
 				} \
 				if (OV_likely(max_quantity_to_buy > 0)) { \
 					need_category##_needs_price_inverse_sum += market_instance.get_good_instance(good_index).get_price_inverse(); \
-					need_category##_needs[good_index] += max_quantity_to_buy; \
+					need_category##_needs.emplace_back(good_index, max_quantity_to_buy); \
 					max_quantity_to_buy_per_good[type_safe::get(good_index)] += max_quantity_to_buy; \
 				} \
 			} \
@@ -763,13 +784,16 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 		if (quantity_left_to_consume <= 0) { \
 			return; \
 		} \
-		const fixed_point_map_t<good_index_t>::const_iterator need_category##it = pop.need_category##_needs.find(good_index); \
+		const need_list_t::const_iterator need_category##it = std::find_if( \
+			pop.need_category##_needs.begin(), pop.need_category##_needs.end(), \
+			[good_index](std::pair<good_index_t, fixed_point_t> const& need) -> bool { return need.first == good_index; } \
+		); \
 		if (need_category##it != pop.need_category##_needs.end()) { \
 			const fixed_point_t desired_quantity = need_category##it->second; \
 			fixed_point_t consumed_quantity; \
 			if (quantity_left_to_consume >= desired_quantity) { \
 				consumed_quantity = desired_quantity; \
-				pop.need_category##_needs_fulfilled_goods.at(good_index) = true; \
+				pop.need_category##_needs_fulfilled_goods_list.push_back(good_index); \
 			} else { \
 				consumed_quantity = quantity_left_to_consume; \
 			} \

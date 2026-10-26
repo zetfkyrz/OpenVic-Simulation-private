@@ -14,28 +14,6 @@
 
 using namespace OpenVic;
 
-bool MarketInstance::get_is_available(const good_index_t good_index) const {
-	return good_instance_manager.get_good_instance_by_index(good_index)->get_is_available();
-}
-
-fixed_point_t MarketInstance::get_max_next_price(const good_index_t good_index) const {
-	return good_instance_manager.get_good_instance_by_index(good_index)->get_max_next_price();
-}
-
-fixed_point_t MarketInstance::get_min_next_price(const good_index_t good_index) const {
-	return good_instance_manager.get_good_instance_by_index(good_index)->get_min_next_price();
-}
-
-fixed_point_t MarketInstance::get_max_money_to_allocate_to_buy_quantity(const good_index_t good_index, const fixed_point_t quantity) const {
-	//round up so money_to_spend >= max_next_price * max_quantity_to_buy;
-	//always add epsilon as money_to_spend == max_next_price * max_quantity_to_buy is rare and this is cheaper for performance.
-	return quantity * get_max_next_price(good_index) + fixed_point_t::epsilon;
-}
-
-GoodInstance const& MarketInstance::get_good_instance(const good_index_t good_index) const {
-	return *good_instance_manager.get_good_instance_by_index(good_index);
-}
-
 void MarketInstance::place_buy_up_to_order(BuyUpToOrder&& buy_up_to_order) {
 	const good_index_t good_index = buy_up_to_order.good_index;
 	if (OV_unlikely(buy_up_to_order.max_quantity <= 0)) {

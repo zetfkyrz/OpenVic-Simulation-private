@@ -3,6 +3,7 @@
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/thread/SpinMutex.hpp"
+#include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
@@ -35,11 +36,24 @@ namespace OpenVic {
 			country_defines { new_country_defines },
 			good_instance_manager { new_good_instance_manager } {}
 
-		bool get_is_available(const good_index_t good_index) const;
-		fixed_point_t get_max_next_price(const good_index_t good_index) const;
-		fixed_point_t get_min_next_price(const good_index_t good_index) const;
-		fixed_point_t get_max_money_to_allocate_to_buy_quantity(const good_index_t good_index, const fixed_point_t quantity) const;
-		GoodInstance const& get_good_instance(const good_index_t good_index) const;
+		// Inline: every pop asks these for every good of its needs every day
+		bool get_is_available(const good_index_t good_index) const {
+			return good_instance_manager.get_good_instance_by_index(good_index)->get_is_available();
+		}
+		fixed_point_t get_max_next_price(const good_index_t good_index) const {
+			return good_instance_manager.get_good_instance_by_index(good_index)->get_max_next_price();
+		}
+		fixed_point_t get_min_next_price(const good_index_t good_index) const {
+			return good_instance_manager.get_good_instance_by_index(good_index)->get_min_next_price();
+		}
+		fixed_point_t get_max_money_to_allocate_to_buy_quantity(const good_index_t good_index, const fixed_point_t quantity) const {
+			//round up so money_to_spend >= max_next_price * max_quantity_to_buy;
+			//always add epsilon as money_to_spend == max_next_price * max_quantity_to_buy is rare and this is cheaper for performance.
+			return quantity * get_max_next_price(good_index) + fixed_point_t::epsilon;
+		}
+		GoodInstance const& get_good_instance(const good_index_t good_index) const {
+			return *good_instance_manager.get_good_instance_by_index(good_index);
+		}
 		void place_buy_up_to_order(BuyUpToOrder&& buy_up_to_order);
 		void place_market_sell_order(MarketSellOrder&& market_sell_order, memory::vector<fixed_point_t>& reusable_vector);
 		void execute_orders();

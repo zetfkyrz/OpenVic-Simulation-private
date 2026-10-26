@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <utility>
 
 #include <type_safe/strong_typedef.hpp>
 
@@ -33,6 +34,9 @@ namespace OpenVic {
 	struct Reform;
 	struct Religion;
 	struct SellResult;
+
+	// A list of goods with a quantity (the needs of a pop that are left to buy)
+	using need_list_t = memory::vector<std::pair<good_index_t, fixed_point_t>>;
 
 	struct PopBase {
 		friend PopManager;
@@ -160,9 +164,14 @@ namespace OpenVic {
 			moveable_atomic_fixed_point_t need_category##_needs_acquired_quantity, need_category##_needs_desired_quantity; \
 			public: \
 				fixed_point_t get_##need_category##_needs_fulfilled() const; \
+				/* Which goods of the needs of the pop type were fulfilled today (bought in the full quantity), built when asked for */ \
+				ordered_map<good_index_t, bool> get_##need_category##_needs_fulfilled_goods() const; \
 			private: \
-				fixed_point_map_t<good_index_t> PROPERTY(need_category##_needs); /* TODO pool? (if recalculating in UI is acceptable) */ \
-				ordered_map<good_index_t, bool> PROPERTY(need_category##_needs_fulfilled_goods);
+				/* The goods the pop still has to buy today, in the order of the needs of the pop type, the quantity is scaled to the pop. \
+				   Rebuilt every day (a flat list: every good is in it at most once). */ \
+				need_list_t PROPERTY(need_category##_needs); \
+				/* The goods that were fulfilled today, in the order they were bought (only these are recorded, not the whole list of false) */ \
+				memory::vector<good_index_t> need_category##_needs_fulfilled_goods_list;
 
 		OV_DO_FOR_ALL_NEED_CATEGORIES(NEED_MEMBERS)
 		#undef NEED_MEMBERS
@@ -177,12 +186,13 @@ namespace OpenVic {
 
 		std::size_t PROPERTY(regiment_count, 0);
 		std::size_t PROPERTY(max_supported_regiments, 0);
+		// Whether the pop has had a day of buying yet (before that the lists of fulfilled goods are empty, not "all false")
+		bool needs_fulfilled_goods_recorded = false;
 
 		memory::string get_pop_context_text() const;
 		void reserve_needs_fulfilled_goods();
-		void fill_needs_fulfilled_goods_with_false();
 		void allocate_for_needs(
-			fixed_point_map_t<good_index_t> const& scaled_needs,
+			need_list_t const& scaled_needs,
 			forwardable_span<fixed_point_t> money_to_spend_per_good,
 			memory::vector<fixed_point_t>& reusable_vector,
 			fixed_point_t& price_inverse_sum,

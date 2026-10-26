@@ -56,6 +56,10 @@ namespace OpenVic {
 			const strata_index_t strata_size
 		);
 
+		// Scratch of the thread that ticks the pops of a province: the demand of the pops for the goods of their needs, by good (the pops add
+		// to it, the province sends it to its country once and clears it, see ProvinceInstance::province_tick)
+		mutable memory::vector<fixed_point_t> pop_need_demand_per_good;
+
 		void update_pop_values_from_province(ProvinceInstance& province);
 	};
 }

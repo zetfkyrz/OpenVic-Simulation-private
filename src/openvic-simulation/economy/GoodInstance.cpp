@@ -41,16 +41,6 @@ GoodInstance const* GoodInstanceManager::get_good_instance_by_identifier(std::st
 		? nullptr
 		: &get_good_instance_by_definition(*good_definition);
 }
-GoodInstance* GoodInstanceManager::get_good_instance_by_index(typename GoodInstance::index_t index) {
-	return good_instance_by_definition.contains_index(index)
-		? &good_instance_by_definition.at_index(index)
-		: nullptr;
-}
-GoodInstance const* GoodInstanceManager::get_good_instance_by_index(typename GoodInstance::index_t index) const {
-	return good_instance_by_definition.contains_index(index)
-		? &good_instance_by_definition.at_index(index)
-		: nullptr;
-}
 GoodInstance& GoodInstanceManager::get_good_instance_by_definition(GoodDefinition const& good_definition) {
 	return good_instance_by_definition.at(good_definition);
 }

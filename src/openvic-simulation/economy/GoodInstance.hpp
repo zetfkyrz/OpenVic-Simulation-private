@@ -1,5 +1,6 @@
 #pragma once
 
+#include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/trading/GoodMarket.hpp"
 #include "openvic-simulation/types/HasIndex.hpp"
 #include "openvic-simulation/types/HasIdentifier.hpp"
@@ -51,8 +52,17 @@ namespace OpenVic {
 		}
 		GoodInstance* get_good_instance_by_identifier(std::string_view identifier);
 		GoodInstance const* get_good_instance_by_identifier(std::string_view identifier) const;
-		GoodInstance* get_good_instance_by_index(typename GoodInstance::index_t index);
-		GoodInstance const* get_good_instance_by_index(typename GoodInstance::index_t index) const;
+		// Inline: these are called millions of times a day by the pops and the market (the range check is the only work)
+		GoodInstance* get_good_instance_by_index(typename GoodInstance::index_t index) {
+			return good_instance_by_definition.contains_index(index)
+				? &good_instance_by_definition.at_index(index)
+				: nullptr;
+		}
+		GoodInstance const* get_good_instance_by_index(typename GoodInstance::index_t index) const {
+			return good_instance_by_definition.contains_index(index)
+				? &good_instance_by_definition.at_index(index)
+				: nullptr;
+		}
 		GoodInstance& get_good_instance_by_definition(GoodDefinition const& good_definition);
 
 		void enable_good(GoodDefinition const& good);

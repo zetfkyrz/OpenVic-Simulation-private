@@ -2682,6 +2682,11 @@ void CountryInstance::report_pop_need_demand(PopType const& pop_type, const good
 	const std::lock_guard<spin_mutex> lock_guard { *good_data.mutex };
 	good_data.pop_demand += quantity;
 }
+void CountryInstance::report_pop_need_demand_total(const good_index_t good_index, const fixed_point_t quantity) {
+	good_data_t& good_data = goods_data.at_index(good_index);
+	const std::lock_guard<spin_mutex> lock_guard { *good_data.mutex };
+	good_data.pop_demand += quantity;
+}
 void CountryInstance::report_input_consumption(ProductionType const& production_type, const good_index_t good_index, const fixed_point_t quantity) {
 	good_data_t& good_data = goods_data.at_index(good_index);
 	const std::lock_guard<spin_mutex> lock_guard { *good_data.mutex };

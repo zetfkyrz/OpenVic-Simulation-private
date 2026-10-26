@@ -390,7 +390,9 @@ void ArtisanalProducer::artisan_tick(
 	}
 
 	for (auto const& [good, stockpiled_quantity] : stockpile) {
-		if (production_type_nullable == nullptr || production_type_nullable->input_goods.contains(&good)) {
+		// Nothing to sell of a good that is not in the stockpile (almost all of them): the pop only sells and uses the goods that are > 0,
+		// so there is no need to make an entry for every good of the game for every artisan every day
+		if (stockpiled_quantity == 0 || production_type_nullable == nullptr || production_type_nullable->input_goods.contains(&good)) {
 			continue;
 		}
 
