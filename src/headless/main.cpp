@@ -17,6 +17,7 @@
 #include <spdlog/logger.h>
 #include <spdlog/sinks/callback_sink.h>
 
+#include <openvic-simulation/misc/StateHash.hpp>
 #include <openvic-simulation/core/memory/MemoryTracker.hpp>
 #include <openvic-simulation/core/memory/Vector.hpp>
 #include <openvic-simulation/GameManager.hpp>
@@ -746,8 +747,8 @@ static void print_state_checksum(InstanceManager& instance_manager) {
 	}
 	army_count = static_cast<std::int64_t>(instance_manager.get_unit_instance_manager().get_armies().size());
 	SPDLOG_INFO(
-		"CHECKSUM {} pops={} popcash={} treasury={} owners={} armies={} actions={}", instance_manager.get_today(), pop_total,
-		cash_raw, treasury_raw, province_owner_hash, army_count, instance_manager.get_action_history().size()
+		"CHECKSUM {} pops={} popcash={} treasury={} owners={} armies={} actions={} state={:016x}", instance_manager.get_today(), pop_total,
+		cash_raw, treasury_raw, province_owner_hash, army_count, instance_manager.get_action_history().size(), StateHash::compute(instance_manager)
 	);
 }
 

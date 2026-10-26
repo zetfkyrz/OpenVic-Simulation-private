@@ -2,6 +2,9 @@
 
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/country/CountryParty.hpp"
+#include "openvic-simulation/DefinitionManager.hpp"
+#include "openvic-simulation/politics/Ideology.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
@@ -48,6 +51,19 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(pop.get_consciousness());
 			hasher.add(pop.get_literacy());
 			hasher.add_signed(pop.hungry_days);
+			// The political support the monthly politics worked out (ideologies, party policies, reforms) and the votes
+			for (fixed_point_t const value : pop.get_supporter_equivalents_by_ideology()) {
+				hasher.add(value);
+			}
+			for (fixed_point_t const value : pop.get_supporter_equivalents_by_party_policy()) {
+				hasher.add(value);
+			}
+			for (fixed_point_t const value : pop.get_supporter_equivalents_by_reform()) {
+				hasher.add(value);
+			}
+			for (auto const& entry : pop.get_vote_equivalents_by_party()) {
+				hasher.add(entry.second);
+			}
 		}
 		hasher.add(province.get_rgo().get_subsistence_pool());
 		for (ArmyInstance const& army : province.get_armies()) {
@@ -67,6 +83,14 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_army_supply_level());
 		hasher.add(country.get_navy_supply_level());
 		hasher.add(country.is_at_war() ? 1 : 0);
+		if (CountryParty const* const ruling_party = country.get_ruling_party_untracked(); ruling_party != nullptr) {
+			for (const char character : ruling_party->get_identifier()) {
+				hasher.add(static_cast<std::uint64_t>(static_cast<unsigned char>(character)));
+			}
+		}
+		for (Ideology const& ideology : instance_manager.definition_manager.get_politics_manager().get_ideology_manager().get_ideologies()) {
+			hasher.add(country.get_upper_house_proportion_by_ideology().at(ideology));
+		}
 		hasher.add(country.get_owned_provinces().size());
 	}
 
