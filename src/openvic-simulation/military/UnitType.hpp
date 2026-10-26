@@ -65,6 +65,7 @@ namespace OpenVic {
 			GoodDefinition const* good;
 			fixed_point_t construction_amount; // The amount of the good in the construction cost of the unit
 			bool consumable; // A good that is used up (food, fuel, coal) rather than worn out
+			bool engine_fuel; // Coal and fuel: a ship burns them only when it is not in a port
 		};
 
 	private:

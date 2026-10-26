@@ -18,8 +18,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(organisation);
 		fixed_point_t PROPERTY(max_organisation);
 		fixed_point_t PROPERTY(strength);
-		// The day of the month the unit was created on: once a month on this day it uses its supplies
-		int32_t PROPERTY_RW(supply_day, 1);
+		// The day (counted from the start of the calendar) the unit was created on: the supplies are used every period of days from it
+		int64_t PROPERTY_RW(supply_origin, 0);
 
 	protected:
 		UnitInstance(
@@ -44,10 +44,12 @@ namespace OpenVic {
 
 		void set_name(std::string_view new_name);
 
-		// The supplies are used once a month, on the day of the month the unit was created on (on the last day of a shorter month)
-		bool is_supply_day(const Date today) const {
-			const int32_t day = static_cast<int32_t>(today.get_day());
-			return day == supply_day || (supply_day > day && (today + Timespan::from_days(1)).is_month_start());
+		// The supplies are used up every period of days (ov_economy SUPPLY_PERIOD_DAYS) counted from the day the unit was created on
+		static int64_t get_supply_day_number(const Date date) {
+			return static_cast<int64_t>(date - Date {});
+		}
+		bool is_supply_day(const Date today, const int32_t period_days) const {
+			return (get_supply_day_number(today) - supply_origin) % period_days == 0;
 		}
 
 		// Combat helpers, values are clamped to [0, max]

@@ -59,7 +59,8 @@ UnitType::UnitType(
 			}
 		}
 		const std::string_view identifier = good->get_identifier();
-		supply_items.push_back({ good, construction_amount, identifier == "canned_food" || identifier == "fuel" || identifier == "coal" });
+		const bool engine_fuel = identifier == "fuel" || identifier == "coal";
+		supply_items.push_back({ good, construction_amount, engine_fuel || identifier == "canned_food", engine_fuel });
 	}
 
 	for (auto [terrain, modifier_value] : mutable_iterator(unit_args.terrain_modifier_values)) {

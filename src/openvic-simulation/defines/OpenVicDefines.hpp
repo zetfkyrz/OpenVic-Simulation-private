@@ -341,23 +341,8 @@ namespace OpenVic {
 	FIXED(THROTTLE_LOSS, throttle_loss, fixed_point_t::_0_10, 0, 1) \
 	FIXED(THROTTLE_MIN, throttle_min, fixed_point_t::_0_20, 0.01, 1) \
 	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1) \
-	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 30, 0, 3650) \
-	/* Supplies of the army and the navy: a unit uses every month this share of what its construction cost (its supply_cost goods; */ \
-	/* a good that is not in the construction cost, such as ammunition, takes the amount of small_arms). The goods that are used up */ \
-	/* (canned_food, fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, convoys) the durable one. */ \
-	/* The supplies are spread over SUPPLY_DAYS_IN_MONTH days */ \
-	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 100), 0, 10) \
-	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(10, 100), 0, 10) \
-	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 100), 0, 10) \
-	RATE(NAVY_SUPPLY_CONSUMABLE_SHARE, navy_supply_consumable_share, Rate(10, 100), 0, 10) \
-	INT(SUPPLY_DAYS_IN_MONTH, supply_days_in_month, 30, 1, 365) \
-	/* The units that move use this many times more, on the land of an enemy (a country at war with the owner) this many times more */ \
-	/* (both together are multiplied) */ \
-	FIXED(SUPPLY_MOVING_MULTIPLIER, supply_moving_multiplier, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) \
-	FIXED(SUPPLY_ENEMY_LAND_MULTIPLIER, supply_enemy_land_multiplier, fixed_point_t::_2, 0, 100) \
-	/* The supply level of the army and of the navy (1 = fully equipped) goes to the level of the budget slider times the share of the */ \
-	/* needs the stockpile could give; it changes by this share a day. The attack, defence and gun power are multiplied by it */ \
-	RATE(SUPPLY_LEVEL_CHANGE_PER_DAY, supply_level_change_per_day, Rate(2, 100), 0, 1) \
+	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
+	/* Supplies of the army and the navy: every SUPPLY_PERIOD_DAYS days (counted from the day a unit was created) a unit uses this */ 	/* share of what its construction cost (its supply_cost goods; a good that is not in the construction cost, such as ammunition, */ 	/* takes the amount of small_arms). The goods that are used up (canned_food, fuel, coal) take the consumable share, the equipment */ 	/* (arms, ammunition, artillery, convoys) the durable one */ 	INT(SUPPLY_PERIOD_DAYS, supply_period_days, 3, 1, 365) 	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 1000), 0, 10) 	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(1, 100), 0, 10) 	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 1000), 0, 10) 	RATE(NAVY_SUPPLY_CONSUMABLE_SHARE, navy_supply_consumable_share, Rate(1, 100), 0, 10) 	/* The coal and the fuel of ships (their share replaces the consumable one): a fleet that stands at sea, one that moves, one in a port */ 	RATE(NAVY_FUEL_SHARE_AT_SEA, navy_fuel_share_at_sea, Rate(1, 1000), 0, 10) 	RATE(NAVY_FUEL_SHARE_MOVING, navy_fuel_share_moving, Rate(1, 100), 0, 10) 	RATE(NAVY_FUEL_SHARE_IN_PORT, navy_fuel_share_in_port, Rate(0, 100), 0, 10) 	/* The other goods of a group that moves use this many times more, on the land of an enemy (a country at war with the owner) */ 	/* every good of a group uses this many times more (both together are multiplied) */ 	FIXED(SUPPLY_MOVING_MULTIPLIER, supply_moving_multiplier, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) 	FIXED(SUPPLY_ENEMY_LAND_MULTIPLIER, supply_enemy_land_multiplier, fixed_point_t::_2, 0, 100) 	/* The supply level of the army and of the navy (1 = fully equipped) goes to the level of the budget slider times the share of the */ 	/* needs the stockpile could give; it changes by this share a day. The attack, defence and gun power are multiplied by it */ 	RATE(SUPPLY_LEVEL_CHANGE_PER_DAY, supply_level_change_per_day, Rate(2, 100), 0, 1) \
 	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650) \
 	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 7, 0, 3650) \
 	/* Investment fund: the construction slider of the budget sets aside this share of the daily income at 100 percent */ \

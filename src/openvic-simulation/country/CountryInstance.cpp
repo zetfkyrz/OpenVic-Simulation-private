@@ -68,22 +68,33 @@ using enum CountryInstance::country_status_t;
 
 namespace {
 	// What a unit uses of each of its supply goods: the share (of the durable or of the consumable goods, of the army or of the
-	// navy) of the amount that its construction needed, per month (whole_month) or per day on average, times the multiplier
+	// navy; for the coal and the fuel of a ship: at sea, on the move or in a port) of the amount that its construction needed, per
+	// period (whole_period) or per day on average, times the state of its group and the scale (the slider of the budget)
 	template<typename Callback>
 	void for_each_daily_supply(
-		UnitType const& unit_type, const bool is_army, const fixed_point_t multiplier, Callback&& callback,
-		const bool whole_month = false
+		UnitType const& unit_type, const bool is_army, CountryInstance::supply_state_t const& state, const fixed_point_t scale,
+		Callback&& callback, const bool whole_period = false
 	) {
 		OpenVicEconomyDefines const& defines = *CountryInstance::openvic_economy_defines;
-		fixed_point_t scale = multiplier * unit_type.supply_consumption;
-		if (!whole_month) {
-			scale = scale / defines.supply_days_in_month;
-		}
 		for (UnitType::supply_item_t const& item : unit_type.get_supply_items()) {
-			Rate const& share = is_army
-				? (item.consumable ? defines.army_supply_consumable_share : defines.army_supply_durable_share)
-				: (item.consumable ? defines.navy_supply_consumable_share : defines.navy_supply_durable_share);
-			callback(*item.good, share.of(item.construction_amount) * scale);
+			fixed_point_t multiplier = state.multiplier;
+			Rate const* share = nullptr;
+			if (!is_army && item.engine_fuel) {
+				share = state.moving ? &defines.navy_fuel_share_moving
+					: state.in_port ? &defines.navy_fuel_share_in_port : &defines.navy_fuel_share_at_sea;
+			} else {
+				share = is_army
+					? (item.consumable ? &defines.army_supply_consumable_share : &defines.army_supply_durable_share)
+					: (item.consumable ? &defines.navy_supply_consumable_share : &defines.navy_supply_durable_share);
+				if (state.moving) {
+					multiplier = multiplier * defines.supply_moving_multiplier;
+				}
+			}
+			fixed_point_t amount = share->of(item.construction_amount) * multiplier * unit_type.supply_consumption * scale;
+			if (!whole_period) {
+				amount = amount / defines.supply_period_days;
+			}
+			callback(*item.good, amount);
 		}
 	}
 }
@@ -2197,21 +2208,21 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	//		government_needs += daily_needs
 	//		max_government_consumption += remainder
 	const auto add_unit_needs = [this, today](
-		UnitInstance const& unit, const fixed_point_t multiplier, const fixed_point_t slider, const bool is_army
+		UnitInstance const& unit, supply_state_t const& state, const fixed_point_t slider, const bool is_army
 	) -> void {
 		if (slider <= fixed_point_t::_0) {
 			return;
 		}
 		// What the stockpile is kept ready for: the average of a day
-		for_each_daily_supply(unit.unit_type, is_army, multiplier * slider, [this, is_army](GoodDefinition const& good, const fixed_point_t daily_need) {
+		for_each_daily_supply(unit.unit_type, is_army, state, slider, [this, is_army](GoodDefinition const& good, const fixed_point_t daily_need) {
 			good_data_t& good_data = goods_data.at_index(good.index);
 			(is_army ? good_data.army_needs : good_data.navy_needs) += daily_need;
 		});
-		// What the unit uses up on its supply day (once a month, from the date of its creation)
-		if (unit.is_supply_day(today)) {
-			for_each_daily_supply(unit.unit_type, is_army, multiplier * slider, [this, is_army](GoodDefinition const& good, const fixed_point_t month_need) {
+		// What the unit uses up on its supply day (every period of days, counted from the day of its creation)
+		if (unit.is_supply_day(today, openvic_economy_defines->supply_period_days)) {
+			for_each_daily_supply(unit.unit_type, is_army, state, slider, [this, is_army](GoodDefinition const& good, const fixed_point_t period_need) {
 				good_data_t& good_data = goods_data.at_index(good.index);
-				(is_army ? good_data.army_due : good_data.navy_due) += month_need;
+				(is_army ? good_data.army_due : good_data.navy_due) += period_need;
 			}, true);
 		}
 	};
@@ -2220,15 +2231,15 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	const fixed_point_t navy_slider = navy_spending_slider_value.get_value_untracked();
 
 	for (ArmyInstance const& army : armies) {
-		const fixed_point_t multiplier = get_supply_multiplier(army);
+		const supply_state_t state = get_supply_state(army);
 		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-			add_unit_needs(regiment, multiplier, army_slider, true);
+			add_unit_needs(regiment, state, army_slider, true);
 		}
 	}
 	for (NavyInstance const& navy : navies) {
-		const fixed_point_t multiplier = get_supply_multiplier(navy);
+		const supply_state_t state = get_supply_state(navy);
 		for (ShipInstance const& ship : navy.get_ship_instances()) {
-			add_unit_needs(ship, multiplier, navy_slider, false);
+			add_unit_needs(ship, state, navy_slider, false);
 		}
 	}
 
@@ -2786,27 +2797,26 @@ fixed_point_t CountryInstance::apply_tariff(const fixed_point_t money_spent_on_i
 	return tariff;
 }
 
-fixed_point_t CountryInstance::get_supply_multiplier(UnitInstanceGroup const& group) const {
-	fixed_point_t multiplier = fixed_point_t::_1;
-	if (group.is_moving()) {
-		multiplier = multiplier * openvic_economy_defines->supply_moving_multiplier;
-	}
-	// The land of an enemy: its owner (or the one who holds it) is at war with this country
+CountryInstance::supply_state_t CountryInstance::get_supply_state(UnitInstanceGroup const& group) const {
 	ProvinceInstance const& location = group.get_location();
+	supply_state_t state { get_supply_research_multiplier(), group.is_moving(), false };
+	// A group that stands on land (a fleet in a port) is in a port
+	state.in_port = !state.moving && !location.province_definition.is_water();
+	// The land of an enemy: its owner (or the one who holds it) is at war with this country
 	CountryInstance const* const owner = location.get_owner();
 	CountryInstance const* const controller = location.get_controller();
 	if ((owner != nullptr && is_at_war_with(*owner)) || (controller != nullptr && is_at_war_with(*controller))) {
-		multiplier = multiplier * openvic_economy_defines->supply_enemy_land_multiplier;
+		state.multiplier = state.multiplier * openvic_economy_defines->supply_enemy_land_multiplier;
 	}
-	return multiplier;
+	return state;
 }
 
 fixed_point_t CountryInstance::calculate_army_supply_cost_per_day() const {
 	fixed_point_t total = fixed_point_t::_0;
 	for (ArmyInstance const& army : armies) {
-		const fixed_point_t multiplier = get_supply_multiplier(army);
+		const supply_state_t state = get_supply_state(army);
 		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-			for_each_daily_supply(regiment.unit_type, true, multiplier, [this, &total](GoodDefinition const& good, const fixed_point_t daily_need) {
+			for_each_daily_supply(regiment.unit_type, true, state, fixed_point_t::_1, [this, &total](GoodDefinition const& good, const fixed_point_t daily_need) {
 				total += daily_need * market_instance.get_good_instance(good.index).get_price();
 			});
 		}
@@ -2817,9 +2827,9 @@ fixed_point_t CountryInstance::calculate_army_supply_cost_per_day() const {
 fixed_point_t CountryInstance::calculate_navy_supply_cost_per_day() const {
 	fixed_point_t total = fixed_point_t::_0;
 	for (NavyInstance const& navy : navies) {
-		const fixed_point_t multiplier = get_supply_multiplier(navy);
+		const supply_state_t state = get_supply_state(navy);
 		for (ShipInstance const& ship : navy.get_ship_instances()) {
-			for_each_daily_supply(ship.unit_type, false, multiplier, [this, &total](GoodDefinition const& good, const fixed_point_t daily_need) {
+			for_each_daily_supply(ship.unit_type, false, state, fixed_point_t::_1, [this, &total](GoodDefinition const& good, const fixed_point_t daily_need) {
 				total += daily_need * market_instance.get_good_instance(good.index).get_price();
 			});
 		}

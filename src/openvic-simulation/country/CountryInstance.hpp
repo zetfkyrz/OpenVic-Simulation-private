@@ -701,8 +701,20 @@ namespace OpenVic {
 		[[nodiscard]] fixed_point_t get_transport_to_treasury() const {
 			return transport_to_treasury_last;
 		}
-		// How many times more supplies than the standing ones a group uses today: it moves (1.5), it is on the land of an enemy (2)
-		[[nodiscard]] fixed_point_t get_supply_multiplier(UnitInstanceGroup const& group) const;
+		// What decides how many supplies a group uses: the multiplier of the country (research and the like, on enemy land), whether
+		// the group moves, whether it stands in a port (a fleet on land)
+		struct supply_state_t {
+			fixed_point_t multiplier;
+			bool moving;
+			bool in_port;
+		};
+		[[nodiscard]] supply_state_t get_supply_state(UnitInstanceGroup const& group) const;
+		// TODO research: the technologies and inventions change here how many supplies the units use (the shares themselves are
+		// in the defines ARMY_SUPPLY_* and NAVY_SUPPLY_*; the Vic2 modifier supply_consumption is not used because the static
+		// modifier "war" of Vic2 halves it)
+		[[nodiscard]] fixed_point_t get_supply_research_multiplier() const {
+			return fixed_point_t::_1;
+		}
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
 		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;
 		[[nodiscard]] fixed_point_t calculate_navy_supply_cost_per_day() const;
