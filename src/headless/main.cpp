@@ -68,6 +68,7 @@ inline static void print_memory_usage( //
 
 // Days to simulate for the economy report (-e), 0 = no report
 static size_t economy_report_days = 0;
+static bool profile_ticks = false;
 static bool run_army_test = false;
 static bool tariff_test = false;
 static bool recommended_rules = false;
@@ -981,6 +982,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
 	fmt::println(file, "    -C : Print the CHECKSUM of the state after every day (two runs must print the same lines).");
+	fmt::println(file, "    -F : With -e: print the times of the parts of the tick ('PROFILE' lines, the same scopes as the F12 debugger).");
 	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
@@ -1412,6 +1414,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 		print_economy_report(instance_manager);
 		print_population_report(instance_manager);
+		if (profile_ticks) {
+			instance_manager.get_tick_profiler().set_enabled(true);
+			instance_manager.get_tick_profiler().reset();
+		}
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
 			if (checksum_every_day) {
@@ -1442,6 +1448,17 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 					print_tariff_report(instance_manager);
 				}
 			}
+		}
+	}
+
+	if (ret && economy_report_days > 0 && profile_ticks) {
+		// Times of the parts of the tick and of the update of the game state (the same scopes as the F12 debugger of the game)
+		fmt::println("PROFILE {} days: part | average ms | maximum ms | calls | total ms", economy_report_days);
+		for (TickProfiler::Entry const& entry : game_manager.get_instance_manager()->get_tick_profiler().get_entries()) {
+			fmt::println(
+				"PROFILE {:<52} {:>9.3f} {:>9.3f} {:>6} {:>10.1f}", std::string(static_cast<size_t>(entry.depth) * 2, ' ') + entry.name,
+				entry.average_ns / 1.0e6, static_cast<double>(entry.max_ns) / 1.0e6, entry.calls, static_cast<double>(entry.total_ns) / 1.0e6
+			);
 		}
 	}
 
@@ -1557,6 +1574,8 @@ int main(int argc, char const* argv[]) {
 				return -1;
 			}
 			ThreadPool::set_worker_thread_count(static_cast<size_t>(std::max(0, std::atoi(argv[argn]))));
+		} else if (strcmp(arg, "-F") == 0) {
+			profile_ticks = true;
 		} else if (strcmp(arg, "-e") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing number of days after \"-e\".");
