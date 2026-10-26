@@ -741,6 +741,10 @@ namespace {
 		constexpr int FIRST_DAYS = 40;
 		constexpr int MORE_DAYS = 20;
 
+		// Every day of every run the provinces also add up the political support of their pops and compare it with the sums that they kept
+		const std::size_t kept_sums_differences_before = ProvinceInstance::get_political_support_cache_mismatch_count();
+		ProvinceInstance::set_verify_political_support_cache(true);
+
 		// ---- run 1: the game that the others are compared with
 		InstanceManager* im = game.start();
 		r.check(im != nullptr, "game: the first instance starts");
@@ -917,6 +921,14 @@ namespace {
 
 		// ---- the defines hash does not change while playing
 		r.check(defines_hash != 0, "defines: the instance sees the hash of the defines");
+
+		// ---- the sums that the provinces keep from one day to the next
+		ProvinceInstance::set_verify_political_support_cache(false);
+		r.check(
+			ProvinceInstance::get_political_support_cache_mismatch_count() == kept_sums_differences_before,
+			"pops: the political support that a province keeps is always the sum of the political support of its pops",
+			fmt::format("{} differences", ProvinceInstance::get_political_support_cache_mismatch_count() - kept_sums_differences_before)
+		);
 	}
 }
 

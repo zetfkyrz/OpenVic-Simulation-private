@@ -62,7 +62,7 @@ constexpr void bulk_fill_default(Vectors&... vecs) {
     (std::fill(vecs.begin(), vecs.end(), typename Vectors::value_type{}), ...);
 }
 
-void PopsAggregate::clear_pops_aggregate() {
+void PopsAggregate::clear_pops_aggregate(const bool keep_political_support) {
 	total_population = 0;
 	max_supported_regiment_count = 0;
 	_yesterdays_import_value_running_total = fixed_point_t::_0;
@@ -85,15 +85,54 @@ void PopsAggregate::clear_pops_aggregate() {
 		luxury_needs_fulfilled_by_strata,
 		population_by_strata,
 		population_by_type,
-		unemployed_pops_by_type,
-		supporter_equivalents_by_ideology,
-		supporter_equivalents_by_party_policy,
-		supporter_equivalents_by_reform
+		unemployed_pops_by_type
 	);
+	if (!keep_political_support) {
+		bulk_fill_default(
+			supporter_equivalents_by_ideology,
+			supporter_equivalents_by_party_policy,
+			supporter_equivalents_by_reform
+		);
+		vote_equivalents_by_party.clear();
+	}
 
-	vote_equivalents_by_party.clear();
 	population_by_culture.clear();
 	population_by_religion.clear();
+}
+
+PopsAggregate::political_support_copy_t PopsAggregate::copy_political_support() const {
+	political_support_copy_t copy;
+	copy.supporter_equivalents_by_ideology.assign(supporter_equivalents_by_ideology.begin(), supporter_equivalents_by_ideology.end());
+	copy.supporter_equivalents_by_party_policy.assign(
+		supporter_equivalents_by_party_policy.begin(), supporter_equivalents_by_party_policy.end()
+	);
+	copy.supporter_equivalents_by_reform.assign(supporter_equivalents_by_reform.begin(), supporter_equivalents_by_reform.end());
+	for (auto const& [party, votes] : vote_equivalents_by_party) {
+		copy.vote_equivalents_by_party.emplace_back(party, votes);
+	}
+	return copy;
+}
+
+bool PopsAggregate::is_political_support_equal_to(political_support_copy_t const& copy) const {
+	return std::equal(
+			supporter_equivalents_by_ideology.begin(), supporter_equivalents_by_ideology.end(),
+			copy.supporter_equivalents_by_ideology.begin(), copy.supporter_equivalents_by_ideology.end()
+		)
+		&& std::equal(
+			supporter_equivalents_by_party_policy.begin(), supporter_equivalents_by_party_policy.end(),
+			copy.supporter_equivalents_by_party_policy.begin(), copy.supporter_equivalents_by_party_policy.end()
+		)
+		&& std::equal(
+			supporter_equivalents_by_reform.begin(), supporter_equivalents_by_reform.end(),
+			copy.supporter_equivalents_by_reform.begin(), copy.supporter_equivalents_by_reform.end()
+		)
+		&& std::equal(
+			vote_equivalents_by_party.begin(), vote_equivalents_by_party.end(),
+			copy.vote_equivalents_by_party.begin(), copy.vote_equivalents_by_party.end(),
+			[](auto const& entry, std::pair<CountryParty const*, fixed_point_t> const& other) -> bool {
+				return entry.first == other.first && entry.second == other.second;
+			}
+		);
 }
 
 constexpr void update_running_total_raw_128 (
@@ -101,7 +140,16 @@ constexpr void update_running_total_raw_128 (
 	const pop_sum_t part_population,
 	const fixed_point_t average
 ) {
-	running_total_raw += type_safe::get(part_population) * static_cast<boost::int128::int128_t>(average.get_raw_value());
+	const int64_t population = type_safe::get(part_population);
+	const int64_t average_raw = average.get_raw_value();
+	// The product of two numbers below 2^31 fits in 64 bits, which costs far less than the multiplication in 128 bits (it is the same
+	// number, so the sums are the same)
+	constexpr int64_t FACTOR_LIMIT = int64_t { 1 } << 31;
+	if (population > -FACTOR_LIMIT && population < FACTOR_LIMIT && average_raw > -FACTOR_LIMIT && average_raw < FACTOR_LIMIT) {
+		running_total_raw += boost::int128::int128_t { population * average_raw };
+	} else {
+		running_total_raw += population * static_cast<boost::int128::int128_t>(average_raw);
+	}
 };
 
 constexpr void add(std::span<pop_sum_t> total, std::span<const pop_sum_t> part) {
@@ -159,7 +207,7 @@ void PopsAggregate::add_pops_aggregate(PopsAggregate& part) {
 	population_by_religion += part.get_population_by_religion();
 }
 
-void PopsAggregate::add_pops_aggregate(Pop const& pop) {
+void PopsAggregate::add_pops_aggregate(Pop const& pop, const bool add_political_support) {
 	const pop_size_t pop_size = pop.get_size();
 
 	total_population += pop_size;
@@ -195,11 +243,13 @@ void PopsAggregate::add_pops_aggregate(Pop const& pop) {
 
 	population_by_type[pop_type_index] += pop_size;
 	unemployed_pops_by_type[pop_type_index] += pop.get_unemployed();
-	// Pop ideology, issue and vote distributions are scaled to pop size so we can add them directly
-	add(supporter_equivalents_by_ideology, pop.get_supporter_equivalents_by_ideology());
-	add(supporter_equivalents_by_party_policy, pop.get_supporter_equivalents_by_party_policy());
-	add(supporter_equivalents_by_reform, pop.get_supporter_equivalents_by_reform());
-	vote_equivalents_by_party += pop.get_vote_equivalents_by_party();
+	if (add_political_support) {
+		// Pop ideology, issue and vote distributions are scaled to pop size so we can add them directly
+		add(supporter_equivalents_by_ideology, pop.get_supporter_equivalents_by_ideology());
+		add(supporter_equivalents_by_party_policy, pop.get_supporter_equivalents_by_party_policy());
+		add(supporter_equivalents_by_reform, pop.get_supporter_equivalents_by_reform());
+		vote_equivalents_by_party += pop.get_vote_equivalents_by_party();
+	}
 	population_by_culture[&pop.culture] += pop_size;
 	population_by_religion[&pop.religion] += pop_size;
 
@@ -208,19 +258,25 @@ void PopsAggregate::add_pops_aggregate(Pop const& pop) {
 	}
 }
 
+// The average of a running total: a total that fits in 63 bits is divided in 64 bits, the quotient is the same number as in 128 bits
+constexpr fixed_point_t average_of_running_total_raw(const boost::int128::int128_t running_total_raw, const int64_t population) {
+	if (population > 0 && running_total_raw.high == 0 && static_cast<int64_t>(running_total_raw.low) >= 0) {
+		return fixed_point_t::parse_raw(static_cast<int64_t>(running_total_raw.low) / population);
+	}
+	return fixed_point_t::parse_raw(static_cast<int64_t>(running_total_raw / population));
+}
+
 constexpr void normalise(fixed_point_t& value, const boost::int128::int128_t running_total_raw, const pop_sum_t population) {
-	value = fixed_point_t::parse_raw(static_cast<int64_t>(
-		running_total_raw / type_safe::get(population)
-	));
+	value = average_of_running_total_raw(running_total_raw, type_safe::get(population));
 }
 
 void PopsAggregate::normalise_pops_aggregate() {
 	yesterdays_import_value.set(_yesterdays_import_value_running_total);
 	if (total_population > 0) {
 		const int64_t total_population_v = type_safe::get(total_population);
-		average_literacy = fixed_point_t::parse_raw(static_cast<int64_t>(literacy_running_total_raw / total_population_v));
-		average_consciousness = fixed_point_t::parse_raw(static_cast<int64_t>(consciousness_running_total_raw / total_population_v));
-		average_militancy = fixed_point_t::parse_raw(static_cast<int64_t>(militancy_running_total_raw / total_population_v));
+		average_literacy = average_of_running_total_raw(literacy_running_total_raw, total_population_v);
+		average_consciousness = average_of_running_total_raw(consciousness_running_total_raw, total_population_v);
+		average_militancy = average_of_running_total_raw(militancy_running_total_raw, total_population_v);
 
 		strata_index_t strata_index {};
 		for (const pop_sum_t strata_population : population_by_strata) {

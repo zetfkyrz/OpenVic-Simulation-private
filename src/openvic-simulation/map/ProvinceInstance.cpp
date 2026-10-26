@@ -98,6 +98,7 @@ bool ProvinceInstance::set_owner(CountryInstance* new_owner) {
 		owner = new_owner;
 
 		update_parties_for_votes(new_owner);
+		mark_political_support_dirty();
 
 		for (Pop& pop : pops) {
 			pop.update_location_based_attributes();
@@ -182,6 +183,7 @@ bool ProvinceInstance::add_pop_vec(
 	PopDeps const& pop_deps
 ) {
 	if (!province_definition.is_water()) {
+		mark_political_support_dirty();
 		reserve_more(pops, pop_vec.size());
 		for (PopBase const& pop : pop_vec) {
 			pops.emplace(
@@ -202,6 +204,7 @@ Pop* ProvinceInstance::add_pop(PopBase const& pop_base, PopDeps const& pop_deps)
 	if (province_definition.is_water()) {
 		return nullptr;
 	}
+	mark_political_support_dirty();
 	return &*pops.emplace(*this, pop_base, pop_deps, ++last_pop_id);
 }
 
@@ -213,7 +216,16 @@ size_t ProvinceInstance::get_pop_count() const {
  * MAP-65, MAP-68, MAP-70, MAP-234
  */
 void ProvinceInstance::_update_pops(MilitaryDefines const& military_defines) {
-	clear_pops_aggregate();
+	// The political support is only added up again if a pop changed it, while verifying also on the other days
+	const bool verify_kept_sums = !political_support_dirty && verify_political_support_cache;
+	const bool add_political_support = political_support_dirty || verify_kept_sums;
+	political_support_copy_t kept_sums;
+	if (verify_kept_sums) {
+		kept_sums = copy_political_support();
+	}
+	political_support_dirty = false;
+
+	clear_pops_aggregate(!add_political_support);
 
 	has_unaccepted_pops = false;
 
@@ -231,13 +243,18 @@ void ProvinceInstance::_update_pops(MilitaryDefines const& military_defines) {
 	for (Pop& pop : pops) {
 		pops_cache_by_type[pop.get_type().index].push_back(pop);
 		pop.update_gamestate(military_defines, owner, pop_size_per_regiment_multiplier);
-		add_pops_aggregate(pop);
+		add_pops_aggregate(pop, add_political_support);
 		if (pop.get_culture_status() == Pop::culture_status_t::UNACCEPTED) {
 			has_unaccepted_pops = true;
 		}
 	}
 
 	normalise_pops_aggregate();
+
+	if (verify_kept_sums && !is_political_support_equal_to(kept_sums)) {
+		spdlog::error_s("The political support that province {} kept is not the sum of the political support of its pops.", *this);
+		++political_support_cache_mismatch_count;
+	}
 }
 
 void ProvinceInstance::update_modifier_sum(Date today, StaticModifierCache const& static_modifier_cache) {

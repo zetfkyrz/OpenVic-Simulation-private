@@ -978,10 +978,15 @@ static void print_tariff_report(InstanceManager& instance_manager) {
 	}
 }
 
+// -V: every day the sums that the provinces keep from the day before (the political support of the pops) are also worked out again from
+// the pops and compared with the kept ones; a difference is logged and makes the run fail (the result of the run is the same)
+static bool verify_kept_sums = false;
+
 static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "Usage: {} [-h] [-t] [-e <days>] [-b <path>] [path]+", program_name);
 	fmt::println(file, "    -e : Simulate the given number of days and print an economy report ('ECON') every 30 days.");
 	fmt::println(file, "    -C : Print the CHECKSUM of the state after every day (two runs must print the same lines).");
+	fmt::println(file, "    -V : Verify every day that the sums kept by the provinces are the sums of their pops (slower, a difference fails the run).");
 	fmt::println(file, "    -F : With -e: print the times of the parts of the tick ('PROFILE' lines, the same scopes as the F12 debugger).");
 	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
@@ -1464,6 +1469,11 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 
 	if (ret && economy_report_days > 0) {
 		print_state_checksum(*game_manager.get_instance_manager());
+		if (verify_kept_sums) {
+			const size_t differences = ProvinceInstance::get_political_support_cache_mismatch_count();
+			fmt::println("VERIFY the political support that the provinces kept: {} differences", differences);
+			ret &= differences == 0;
+		}
 		if (!replay_save_path.empty()) {
 			std::ofstream file(replay_save_path);
 			file << Replay::serialise(game_manager.get_instance_manager()->get_action_history());
@@ -1548,6 +1558,9 @@ int main(int argc, char const* argv[]) {
 			balance_report = balance_goods = true;
 		} else if (strcmp(arg, "-C") == 0) {
 			checksum_every_day = true;
+		} else if (strcmp(arg, "-V") == 0) {
+			verify_kept_sums = true;
+			ProvinceInstance::set_verify_political_support_cache(true);
 		} else if (strcmp(arg, "--selftest") == 0) {
 			run_selftest = true;
 		} else if (strcmp(arg, "--selftest-pure") == 0) {

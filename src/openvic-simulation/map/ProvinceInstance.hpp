@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <functional>
 
 #include "openvic-simulation/core/memory/Colony.hpp"
@@ -129,6 +131,13 @@ namespace OpenVic {
 	private:
 		pop_id_in_province_t last_pop_id{0};
 		memory::colony<Pop> PROPERTY(pops); // TODO - replace with a more easily vectorisable container?
+		// The sums of the political support of the pops (see PopsAggregate) are only added up again when this is set, which happens
+		// when the political support of a pop changes (politics, once a month) or when a pop is added; on the other days the
+		// province keeps the sums of the day before. Everything that changes the political support of a pop must call
+		// mark_political_support_dirty().
+		bool political_support_dirty = true;
+		inline static std::atomic<bool> verify_political_support_cache = false;
+		inline static std::atomic<std::size_t> political_support_cache_mismatch_count = 0;
 		void _update_pops(MilitaryDefines const& military_defines);
 		bool convert_rgo_worker_pops_to_equivalent(
 			TypedSpan<pop_type_index_t, const PopType> pop_types,
@@ -204,6 +213,17 @@ namespace OpenVic {
 			PopDeps const& pop_deps
 		);
 		size_t get_pop_count() const;
+		void mark_political_support_dirty() {
+			political_support_dirty = true;
+		}
+		// For the self tests and the headless option -V: every day the political support is also added up from the pops and compared
+		// with the sums that the province kept, a difference is logged and counted
+		static void set_verify_political_support_cache(const bool verify) {
+			verify_political_support_cache = verify;
+		}
+		static std::size_t get_political_support_cache_mismatch_count() {
+			return political_support_cache_mismatch_count;
+		}
 
 		void update_modifier_sum(Date today, StaticModifierCache const& static_modifier_cache);
 		void update_country_modifier_sum();

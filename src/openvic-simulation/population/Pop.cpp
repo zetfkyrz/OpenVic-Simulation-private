@@ -102,6 +102,8 @@ fixed_point_t Pop::get_unemployment_fraction() const {
 }
 
 void Pop::setup_pop_test_values(TypedSpan<reform_index_t, const Reform> reforms) {
+	get_location().mark_political_support_dirty();
+
 	/* Returns +/- range% of size. */
 	const auto test_size = [this](int32_t range) -> pop_size_t {
 		return size * ((rand() % (2 * range + 1)) - range) / 100;
@@ -228,6 +230,7 @@ bool Pop::convert_to_equivalent() {
 }
 
 void Pop::update_location_based_attributes() {
+	get_location().mark_political_support_dirty();
 	vote_equivalents_by_party.clear();
 	CountryInstance const* owner = get_location().get_owner();
 	if (owner == nullptr) {
@@ -922,6 +925,7 @@ void Pop::set_political_support(
 	std::span<const fixed_point_t> ideology_support, std::span<const fixed_point_t> party_policy_support,
 	std::span<const fixed_point_t> reform_support
 ) {
+	get_location().mark_political_support_dirty();
 	for (size_t i = 0; i < ideology_support.size() && i < static_cast<size_t>(type_safe::get(supporter_equivalents_by_ideology.size())); ++i) {
 		supporter_equivalents_by_ideology[ideology_index_t(i)] = ideology_support[i];
 	}
@@ -934,6 +938,7 @@ void Pop::set_political_support(
 }
 
 void Pop::set_party_votes(fixed_point_map_t<CountryParty const*> const& votes) {
+	get_location().mark_political_support_dirty();
 	vote_equivalents_by_party.clear();
 	for (auto const& entry : votes) {
 		vote_equivalents_by_party[entry.first] = entry.second;

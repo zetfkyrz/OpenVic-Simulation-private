@@ -1,8 +1,11 @@
 #pragma once
 
+#include <utility>
+
 #include <boost/int128/detail/int128_imp.hpp>
 
 #include "openvic-simulation/core/memory/FixedVector.hpp"
+#include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/population/PopSum.hpp"
 #include "openvic-simulation/types/fixed_point/FixedPointMap.hpp"
@@ -62,10 +65,23 @@ namespace OpenVic {
 	protected:
 		PopsAggregate(PopsAggregateDeps const& deps);
 
-		void clear_pops_aggregate();
+		// The sums of the political support (the supporter equivalents by ideology, party policy and reform and the vote equivalents by
+		// party) only change with the support of the pops, which the politics sets once a month. A province that knows that none of its
+		// pops changed keeps the sums of the day before (keep_political_support when clearing, no add_political_support when adding).
+		void clear_pops_aggregate(const bool keep_political_support = false);
 		void add_pops_aggregate(PopsAggregate& part);
-		void add_pops_aggregate(Pop const& pop);
+		void add_pops_aggregate(Pop const& pop, const bool add_political_support = true);
 		void normalise_pops_aggregate();
+
+		// A copy of the sums of the political support, to check that the kept sums are the sums of the pops
+		struct political_support_copy_t {
+			memory::vector<fixed_point_t> supporter_equivalents_by_ideology;
+			memory::vector<fixed_point_t> supporter_equivalents_by_party_policy;
+			memory::vector<fixed_point_t> supporter_equivalents_by_reform;
+			memory::vector<std::pair<CountryParty const*, fixed_point_t>> vote_equivalents_by_party;
+		};
+		political_support_copy_t copy_political_support() const;
+		bool is_political_support_equal_to(political_support_copy_t const& copy) const;
 		void update_parties_for_votes(CountryDefinition const* country_definition);
 		void update_parties_for_votes(CountryInstance const* country_instance);
 	public:
