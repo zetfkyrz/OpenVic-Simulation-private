@@ -152,6 +152,7 @@ bool MapInstance::apply_history_to_provinces(
 }
 
 void MapInstance::update_modifier_sums(const Date today, StaticModifierCache const& static_modifier_cache) {
+	// One thread: a province makes room in the modifier sum of its controller (a country shared by many provinces)
 	for (ProvinceInstance& province : get_province_instances()) {
 		province.update_modifier_sum(today, static_modifier_cache);
 	}
@@ -165,8 +166,16 @@ void MapInstance::update_gamestate(InstanceManager const& instance_manager) {
 	highest_province_population = 0;
 	total_map_population = 0;
 
+	// Every province works out its own sums (it only reads the neighbours): in parallel; the totals of the map are added in the order of
+	// the provinces
+	if (thread_pool.is_initialised()) {
+		thread_pool.process_province_update_gamestate(instance_manager);
+	}
+
 	for (ProvinceInstance& province : get_province_instances()) {
-		province.update_gamestate(instance_manager);
+		if (!thread_pool.is_initialised()) {
+			province.update_gamestate(instance_manager);
+		}
 
 		// Update population stats
 		const pop_sum_t province_population = province.get_total_population();

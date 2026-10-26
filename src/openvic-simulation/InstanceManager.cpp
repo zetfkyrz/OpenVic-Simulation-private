@@ -489,6 +489,7 @@ bool InstanceManager::start_game_session() {
 	}
 
 	session_start = time(nullptr);
+	trade_network.prepare(*this);
 	simulation_clock.reset();
 	set_gamestate_needs_update();
 

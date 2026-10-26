@@ -25,6 +25,8 @@ namespace OpenVic {
 	struct PopsDefines;
 	struct ProductionTypeManager;
 	struct Strata;
+	struct InstanceManager;
+	struct MapInstance;
 	
 	//bundle work so they always have the same rng regardless of hardware concurrency
 	struct WorkBundle {
@@ -56,7 +58,9 @@ namespace OpenVic {
 			PROVINCE_INITIALISE_FOR_NEW_GAME,
 			PROVINCE_TICK,
 			COUNTRY_TICK_BEFORE_MAP,
-			COUNTRY_TICK_AFTER_MAP
+			COUNTRY_TICK_AFTER_MAP,
+			PROVINCE_UPDATE_GAMESTATE,
+			COUNTRY_UPDATE_GAMESTATE
 		};
 
 		constexpr static std::size_t WORK_BUNDLE_COUNT = 32;
@@ -68,6 +72,9 @@ namespace OpenVic {
 		std::atomic<std::size_t> active_work_count = 0;
 		bool is_cancellation_requested = false;
 		Date const& current_date;
+		// What the work of the update of the game state needs (set by the caller before the work starts, read by the workers)
+		InstanceManager const* update_instance_manager = nullptr;
+		MapInstance* update_map_instance = nullptr;
 
 		inline static std::atomic<std::size_t> worker_thread_count_override = 0;
 
@@ -112,5 +119,13 @@ namespace OpenVic {
 		void process_province_initialise_for_new_game();
 		void process_country_ticks_before_map();
 		void process_country_ticks_after_map();
+		// The provinces are independent in the update of the game state (each writes only itself, they only read the others): the pool
+		// does it in parallel. is_initialised() is false before the pool has started (the caller then does the work itself).
+		bool is_initialised() const {
+			return !threads.empty();
+		}
+		void process_province_update_gamestate(InstanceManager const& instance_manager);
+		// Every country works out its own values (and the flags of its own provinces): in parallel
+		void process_country_update_gamestate(MapInstance& map_instance);
 	};
 }

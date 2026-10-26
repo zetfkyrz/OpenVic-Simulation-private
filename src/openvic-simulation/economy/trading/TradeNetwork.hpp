@@ -85,6 +85,13 @@ namespace OpenVic {
 		bool is_ready() const {
 			return ready;
 		}
+		// Builds the sea zones of the trade (they depend only on the definitions of the map, not on the state of the game), so that the
+		// first day does not have to; called when the game session starts
+		void prepare(InstanceManager& instance_manager) {
+			if (!zones_built) {
+				build_zones(instance_manager);
+			}
+		}
 		// Builds the links and routes from the current state of the map; called once a month and before the first day
 		void update(InstanceManager& instance_manager);
 

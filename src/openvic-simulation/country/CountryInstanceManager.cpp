@@ -300,8 +300,12 @@ void CountryInstanceManager::update_modifier_sums(const Date today, StaticModifi
 }
 
 void CountryInstanceManager::update_gamestate(const Date today, MapInstance& map_instance) {
-	for (CountryInstance& country : country_instances) {
-		country.update_gamestate(today, map_instance);
+	if (thread_pool.is_initialised()) {
+		thread_pool.process_country_update_gamestate(map_instance);
+	} else {
+		for (CountryInstance& country : country_instances) {
+			country.update_gamestate(today, map_instance);
+		}
 	}
 
 	// TODO - work out how to have ranking effects applied (e.g. static modifiers) applied at game start

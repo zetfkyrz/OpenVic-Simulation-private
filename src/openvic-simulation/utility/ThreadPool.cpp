@@ -11,6 +11,7 @@
 #include "openvic-simulation/economy/GoodDefinition.hpp" // IWYU pragma: keep for constructor requirement
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/trading/GoodMarket.hpp"
+#include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
@@ -128,6 +129,20 @@ void ThreadPool::loop_until_cancelled(
 				for (WorkBundle& work_bundle : work_bundles) {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
 						country.country_tick_after_map(current_date);
+					}
+				}
+				break;
+			case work_t::COUNTRY_UPDATE_GAMESTATE:
+				for (WorkBundle& work_bundle : work_bundles) {
+					for (CountryInstance& country : work_bundle.countries_chunk) {
+						country.update_gamestate(current_date, *update_map_instance);
+					}
+				}
+				break;
+			case work_t::PROVINCE_UPDATE_GAMESTATE:
+				for (WorkBundle& work_bundle : work_bundles) {
+					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
+						province.update_gamestate(*update_instance_manager);
 					}
 				}
 				break;
@@ -319,4 +334,14 @@ void ThreadPool::process_country_ticks_before_map() {
 
 void ThreadPool::process_country_ticks_after_map(){
 	process_work(work_t::COUNTRY_TICK_AFTER_MAP);
+}
+
+void ThreadPool::process_province_update_gamestate(InstanceManager const& instance_manager) {
+	update_instance_manager = &instance_manager;
+	process_work(work_t::PROVINCE_UPDATE_GAMESTATE);
+}
+
+void ThreadPool::process_country_update_gamestate(MapInstance& map_instance) {
+	update_map_instance = &map_instance;
+	process_work(work_t::COUNTRY_UPDATE_GAMESTATE);
 }
