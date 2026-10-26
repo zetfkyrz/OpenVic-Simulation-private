@@ -101,6 +101,10 @@ namespace OpenVic {
 		// Used for "minorities = yes/no" condition
 		bool PROPERTY(has_unaccepted_pops, false);
 		bool PROPERTY_RW(connected_to_capital, false);
+		// Set by the trade network every month: the railroad level (0..1) and the share of the price that a seller here loses on the
+		// way to the market of its country (the better the railroad, the smaller)
+		fixed_point_t PROPERTY(infrastructure_fraction);
+		fixed_point_t PROPERTY(freight_rate);
 		bool PROPERTY_RW(is_overseas, false);
 		bool PROPERTY(has_empty_adjacent_province, false);
 		memory::vector<std::reference_wrapper<const ProvinceInstance>> SPAN_PROPERTY(adjacent_nonempty_land_provinces);
@@ -153,6 +157,10 @@ namespace OpenVic {
 		}
 
 		void set_state(State* new_state);
+		void set_trade_data(const fixed_point_t new_infrastructure_fraction, const fixed_point_t new_freight_rate) {
+			infrastructure_fraction = new_infrastructure_fraction;
+			freight_rate = new_freight_rate;
+		}
 
 		GoodDefinition const* get_rgo_good() const;
 		bool set_rgo_production_type_nullable(

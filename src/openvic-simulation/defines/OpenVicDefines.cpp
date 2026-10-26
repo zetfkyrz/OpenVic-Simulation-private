@@ -128,11 +128,11 @@ OpenVicDefines::OpenVicDefines() {
 }
 
 std::vector<OpenVicDefineGroup*> OpenVicDefines::get_groups() {
-	return { &ai, &population, &politics, &colonisation, &war, &peace, &research, &economy, &credit };
+	return { &ai, &population, &politics, &colonisation, &war, &peace, &research, &economy, &credit, &trade };
 }
 
 std::vector<OpenVicDefineGroup const*> OpenVicDefines::get_groups() const {
-	return { &ai, &population, &politics, &colonisation, &war, &peace, &research, &economy, &credit };
+	return { &ai, &population, &politics, &colonisation, &war, &peace, &research, &economy, &credit, &trade };
 }
 
 void OpenVicDefines::update_hash() {

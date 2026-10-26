@@ -24,6 +24,7 @@
 #include "openvic-simulation/economy/production/ArtisanalProducerDeps.hpp"
 #include "openvic-simulation/economy/production/ResourceGatheringOperationDeps.hpp"
 #include "openvic-simulation/economy/trading/MarketInstance.hpp"
+#include "openvic-simulation/economy/trading/TradeNetwork.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/Mapmode.hpp"
 #include "openvic-simulation/map/ProvinceInstanceDeps.hpp"
@@ -67,6 +68,8 @@ namespace OpenVic {
 		FlagStrings PROPERTY_REF(global_flags);
 
 		CountryInstanceManager PROPERTY_REF(country_instance_manager);
+		// The roads of the world trade (borders, ports, routes), updated every month, see TradeNetwork
+		TradeNetwork PROPERTY_REF(trade_network);
 		UnitInstanceManager PROPERTY_REF(unit_instance_manager);
 		WarManager PROPERTY_REF(war_manager);
 		// Debugging tool: follows the money of the economy (off unless switched on, see MoneyLedger.hpp)

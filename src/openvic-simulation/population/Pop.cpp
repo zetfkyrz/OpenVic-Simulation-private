@@ -22,6 +22,7 @@
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/country/CountryParty.hpp"
 #include "openvic-simulation/defines/MilitaryDefines.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/defines/PopsDefines.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
@@ -545,6 +546,11 @@ void Pop::pop_tick_without_cleanup(
 	memory::vector<fixed_point_t>& money_to_spend_per_good = reusable_vectors[3];
 	money_to_spend_per_good.resize(good_count, 0);
 	cash_allocated_for_artisanal_spending = 0;
+	// A day of hunger (the needs of yesterday are still there, the new ones are filled below)
+	if (population_defines != nullptr && size > pop_size_t(0)
+		&& get_life_needs_fulfilled() < population_defines->hunger_life_needs_threshold.fixed()) {
+		hungry_days++;
+	}
 	fill_needs_fulfilled_goods_with_false();
 	
 	fixed_point_map_t<good_index_t> goods_to_sell {};
@@ -595,6 +601,11 @@ void Pop::pop_tick_without_cleanup(
 		fixed_point_t::_1 + 2 * consciousness / defines.get_pdef_base_con()
 	) * size;
 
+	// The goods the pop kept from the output of the RGO it works at (subsistence): eaten before anything is bought
+	ResourceGatheringOperation const& location_rgo = get_location().get_rgo();
+	fixed_point_t subsistence_left = location_rgo.get_subsistence_entitlement(*this);
+	const good_index_t subsistence_good_index = location_rgo.get_subsistence_good_index();
+
 	#define FILL_NEEDS(need_category) \
 		need_category##_needs.clear(); \
 		const fixed_point_t need_category##_needs_scalar = base_needs_scalar * shared_strata_values.get_shared_##need_category##_needs_scalar(); \
@@ -621,6 +632,16 @@ void Pop::pop_tick_without_cleanup(
 					need_category##_needs_acquired_quantity += own_produce_consumed; \
 					if (country_to_report_economy_nullable != nullptr) { \
 						country_to_report_economy_nullable->report_pop_need_consumption(pop_type, good_index, own_produce_consumed); \
+					} \
+				} \
+				if (subsistence_left > 0 && good_index == subsistence_good_index) { \
+					const fixed_point_t subsistence_eaten = std::min(subsistence_left, max_quantity_to_buy); \
+					subsistence_left -= subsistence_eaten; \
+					location_rgo.record_subsistence_eaten(subsistence_eaten); \
+					max_quantity_to_buy -= subsistence_eaten; \
+					need_category##_needs_acquired_quantity += subsistence_eaten; \
+					if (country_to_report_economy_nullable != nullptr) { \
+						country_to_report_economy_nullable->report_pop_need_consumption(pop_type, good_index, subsistence_eaten); \
 					} \
 				} \
 				if (OV_likely(max_quantity_to_buy > 0)) { \
@@ -689,7 +710,8 @@ void Pop::pop_tick_without_cleanup(
 				country_index_optional,
 				quantity_to_sell,
 				this,
-				after_sell
+				after_sell,
+				get_location().get_freight_rate()
 			},
 			reusable_vectors[4]
 		);
@@ -851,6 +873,7 @@ void Pop::clear_dynamics_record() {
 	num_migrated_internal = 0;
 	num_migrated_external = 0;
 	num_migrated_colonial = 0;
+	num_starved = 0;
 }
 
 void Pop::change_size(const std::int32_t delta, const std::int32_t kind) {
@@ -865,6 +888,8 @@ void Pop::change_size(const std::int32_t delta, const std::int32_t kind) {
 	case 1: num_promoted += pop_size_t(applied); break;
 	case 2: num_demoted += pop_size_t(applied); break;
 	case 3: num_migrated_internal += pop_size_t(applied); break;
+	case 4: num_migrated_external += pop_size_t(applied); break;
+	case 5: num_starved += pop_size_t(applied); break;
 	default: break;
 	}
 }

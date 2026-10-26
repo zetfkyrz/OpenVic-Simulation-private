@@ -2,6 +2,7 @@
 #include "GoodMarket.hpp"
 
 #include <algorithm>
+#include "openvic-simulation/utility/Logger.hpp"
 #include <mutex>
 
 #include "openvic-simulation/core/object/FixedPoint.hpp"
@@ -9,6 +10,7 @@
 #include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/trading/BuyUpToOrder.hpp"
 #include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
+#include "openvic-simulation/economy/trading/TradeNetwork.hpp"
 #include "openvic-simulation/misc/GameRulesManager.hpp"
 
 using namespace OpenVic;
@@ -127,11 +129,33 @@ void GoodMarket::execute_orders(
 			}
 		}
 	} else {
-		TypedSpan<country_index_t, fixed_point_t> supply_per_country = reusable_country_map_0;
-		TypedSpan<country_index_t, fixed_point_t> actual_bought_per_country = reusable_country_map_1;
+		// The routed day (see the header): the countries and the "outside" are the nodes of the trade network
+		const bool routed = trade_network != nullptr && trade_network->is_enabled() && trade_network->is_ready();
+		const std::size_t node_count = routed ? trade_network->get_node_count() : 0;
+		const country_index_t outside_node = routed ? trade_network->get_outside_node() : country_index_t(0);
+		const auto node_of = [outside_node](const std::optional<country_index_t> country_index_optional) -> country_index_t {
+			return country_index_optional.has_value() ? country_index_optional.value() : outside_node;
+		};
+		if (routed) {
+			for (std::vector<fixed_point_t>* array : {
+				&node_supply, &node_desire, &node_bought, &node_cap, &node_inflow, &node_dom, &node_exports, &node_export_cost,
+				&node_fee_domestic, &node_fee_export, &node_land_exports, &node_sea_exports, &node_imports, &node_covered
+			}) {
+				array->assign(node_count, fixed_point_t::_0);
+			}
+			route_flows.clear();
+		}
+		TypedSpan<country_index_t, fixed_point_t> supply_per_country = routed
+			? TypedSpan<country_index_t, fixed_point_t> { node_supply }
+			: reusable_country_map_0;
+		TypedSpan<country_index_t, fixed_point_t> actual_bought_per_country = routed
+			? TypedSpan<country_index_t, fixed_point_t> { node_bought }
+			: reusable_country_map_1;
 		for (GoodMarketSellOrder const& market_sell_order : market_sell_orders) {
 			const std::optional<country_index_t> country_index_optional = market_sell_order.country_index_optional;
-			if (country_index_optional.has_value()) {
+			if (routed) {
+				supply_per_country[node_of(country_index_optional)] += market_sell_order.quantity;
+			} else if (country_index_optional.has_value()) {
 				supply_per_country[country_index_optional.value()] += market_sell_order.quantity;
 			}
 			supply_sum += market_sell_order.quantity;
@@ -141,12 +165,46 @@ void GoodMarket::execute_orders(
 		quantity_bought_per_order.resize(buy_up_to_orders.size());
 		purchasing_power_per_order.resize(buy_up_to_orders.size());
 
+		// The most every buyer may buy today. Without the network it is what it asked for. With the network the buyers of a country can
+		// buy at most what its sellers offer plus what the routes bring: the rest of its wishes is cut in proportion.
+		effective_max_quantity.resize(buy_up_to_orders.size());
+		fixed_point_t supply_for_clearing = supply_sum;
+		if (routed) {
+			const auto desire_of = [this](GoodBuyUpToOrder const& buy_up_to_order) -> fixed_point_t {
+				if (buy_up_to_order.money_to_spend <= 0) {
+					return fixed_point_t::_0;
+				}
+				return std::min(buy_up_to_order.max_quantity, buy_up_to_order.money_to_spend / max_next_price);
+			};
+			for (std::size_t i = 0; i < buy_up_to_orders.size(); i++) {
+				node_desire[type_safe::get(node_of(buy_up_to_orders[i].country_index_optional))] += desire_of(buy_up_to_orders[i]);
+			}
+			supply_for_clearing = plan_routes();
+			for (std::size_t i = 0; i < buy_up_to_orders.size(); i++) {
+				GoodBuyUpToOrder const& buy_up_to_order = buy_up_to_orders[i];
+				const std::size_t node = type_safe::get(node_of(buy_up_to_order.country_index_optional));
+				const fixed_point_t desire_of_node = node_desire[node];
+				const fixed_point_t cap = node_cap[node];
+				if (desire_of_node > cap) {
+					const fixed_point_t desire = desire_of(buy_up_to_order);
+					effective_max_quantity[i] = desire > 0 ? fp::mul_div(desire, cap, desire_of_node) : buy_up_to_order.max_quantity;
+				} else {
+					effective_max_quantity[i] = buy_up_to_order.max_quantity;
+				}
+			}
+		} else {
+			for (std::size_t i = 0; i < buy_up_to_orders.size(); i++) {
+				effective_max_quantity[i] = buy_up_to_orders[i].max_quantity;
+			}
+		}
+
 		fixed_point_t money_left_to_spend_sum = 0; //sum of money_to_spend for all buyers that can't afford their max_quantity
 		fixed_point_t max_quantity_to_buy_sum = 0;
 		fixed_point_t purchasing_power_sum = 0;
+		fixed_point_t affordable_wish_sum = 0; // what the buyers can pay for at the highest price, whether the routes can bring it or not
 		for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
 			GoodBuyUpToOrder const& buy_up_to_order = buy_up_to_orders[i];
-			const fixed_point_t max_quantity = buy_up_to_order.max_quantity;
+			const fixed_point_t max_quantity = effective_max_quantity[i];
 			const fixed_point_t money_to_spend = buy_up_to_order.money_to_spend;
 
 			if (game_rules_manager.get_use_optimal_pricing()) {
@@ -157,7 +215,7 @@ void GoodMarket::execute_orders(
 				}
 			}
 
-			demand_sum += max_quantity;
+			demand_sum += buy_up_to_order.max_quantity;
 
 			if (money_to_spend <= 0) {
 				purchasing_power_per_order[i] = 0;
@@ -165,7 +223,12 @@ void GoodMarket::execute_orders(
 			}
 
 			fixed_point_t purchasing_power = purchasing_power_per_order[i] = money_to_spend / max_next_price;
+			affordable_wish_sum += std::min(purchasing_power, buy_up_to_order.max_quantity);
 			if (purchasing_power >= max_quantity) {
+				if (routed) {
+					// The weight of the buyer is what it really wants (its sum is later reduced by the same number)
+					purchasing_power_per_order[i] = max_quantity;
+				}
 				max_quantity_to_buy_sum += max_quantity;
 				money_left_to_spend_sum += max_quantity * max_next_price;
 				purchasing_power_sum += max_quantity;
@@ -176,8 +239,13 @@ void GoodMarket::execute_orders(
 			}
 		}
 
-		fixed_point_t remaining_supply = supply_sum;
-		const bool is_selling_for_max_price = max_quantity_to_buy_sum >= supply_sum;
+		fixed_point_t remaining_supply = supply_for_clearing;
+		// Nothing that is on offer can reach a buyer: nobody trades and the price stays
+		const bool nothing_reachable = routed && supply_for_clearing <= fixed_point_t::_0;
+		// The price rises when the buyers can pay for all that is on offer. The wishes that the routes cannot serve (and the offers that they cannot
+		// carry) are not part of the market of the day, they are taken off both sides. Without the network it is the old rule.
+		const fixed_point_t demand_for_price = routed ? affordable_wish_sum - cut_off_quantity : max_quantity_to_buy_sum;
+		const bool is_selling_for_max_price = !nothing_reachable && demand_for_price >= supply_for_clearing;
 		if (is_selling_for_max_price) {
 			//sell for max_next_price
 			if (game_rules_manager.get_use_optimal_pricing()) {
@@ -187,28 +255,66 @@ void GoodMarket::execute_orders(
 				new_price = max_next_price;
 			}
 
-			bool someone_bought_max_quantity;
-			do {
+			bool someone_bought_max_quantity = false;
+			if (routed) {
+				// The supply is shared in proportion to the purchasing power, a buyer that would get more than it wants gets what it wants and the
+				// rest is shared again (every round of the loop only looks at the buyers once, the buyers of a capped country all reach their
+				// limit at the same time, so the search that starts over after each of them would be far too slow)
+				std::vector<char> is_full(buy_up_to_orders.size(), 0);
+				bool again = true;
+				while (again && purchasing_power_sum > fixed_point_t::_0) {
+					again = false;
+					for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
+						if (is_full[i]) {
+							continue;
+						}
+						if (purchasing_power_sum <= fixed_point_t::_0) {
+							break;
+						}
+						// The most the buyer can take: what it wants or what its money pays for (the weight is the smaller of the two)
+						const fixed_point_t limit = purchasing_power_per_order[i];
+						const fixed_point_t share = fp::mul_div(remaining_supply, limit, purchasing_power_sum);
+						if (share >= limit) {
+							is_full[i] = 1;
+							quantity_bought_per_order[i] = limit;
+							remaining_supply -= limit;
+							purchasing_power_sum -= limit;
+							again = true;
+						}
+					}
+				}
+				for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
+					if (!is_full[i]) {
+						quantity_bought_per_order[i] = purchasing_power_sum > fixed_point_t::_0
+							? fp::mul_div(remaining_supply, purchasing_power_per_order[i], purchasing_power_sum)
+							: fixed_point_t::_0;
+					}
+					actual_bought_per_country[node_of(buy_up_to_orders[i].country_index_optional)] += quantity_bought_per_order[i];
+				}
+			}
+			if (!routed) do {
 				someone_bought_max_quantity = false;
 				for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
 					GoodBuyUpToOrder const& buy_up_to_order = buy_up_to_orders[i];
-					const fixed_point_t max_quantity = buy_up_to_order.max_quantity;
+					const fixed_point_t max_quantity = effective_max_quantity[i];
 					fixed_point_t& distributed_supply = quantity_bought_per_order[i];
 					if (distributed_supply == max_quantity) {
 						continue;
 					}
 
 					const std::optional<country_index_t> country_index_optional = buy_up_to_order.country_index_optional;
-					if (country_index_optional.has_value()) {
+					if (routed || country_index_optional.has_value()) {
 						//subtract as it might be updated below
-						actual_bought_per_country[country_index_optional.value()] -= distributed_supply;
+						actual_bought_per_country[node_of(country_index_optional)] -= distributed_supply;
 					}
 
-					distributed_supply = fp::mul_div(
-						remaining_supply,
-						purchasing_power_per_order[i],
-						purchasing_power_sum
-					);
+					distributed_supply = purchasing_power_sum > fixed_point_t::_0
+						? fp::mul_div(
+							remaining_supply,
+							purchasing_power_per_order[i],
+							purchasing_power_sum
+						)
+						: fixed_point_t::_0;
 
 					if (distributed_supply >= max_quantity) {
 						someone_bought_max_quantity = true;
@@ -217,8 +323,8 @@ void GoodMarket::execute_orders(
 						purchasing_power_sum -= purchasing_power_per_order[i];
 					}
 
-					if (country_index_optional.has_value()) {
-						actual_bought_per_country[country_index_optional.value()] += distributed_supply;
+					if (routed || country_index_optional.has_value()) {
+						actual_bought_per_country[node_of(country_index_optional)] += distributed_supply;
 					}
 
 					if (someone_bought_max_quantity) {
@@ -256,13 +362,13 @@ void GoodMarket::execute_orders(
 
 					for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
 						GoodBuyUpToOrder const& buy_up_to_order = buy_up_to_orders[i];
-						if (quantity_bought_per_order[i] == buy_up_to_order.max_quantity) {
+						if (quantity_bought_per_order[i] == effective_max_quantity[i]) {
 							continue;
 						}
 
-						if (buy_up_to_order.money_to_spend >= new_price * buy_up_to_order.max_quantity) {
-							quantity_bought_per_order[i] = buy_up_to_order.max_quantity;
-							remaining_supply -= buy_up_to_order.max_quantity;
+						if (buy_up_to_order.money_to_spend >= new_price * effective_max_quantity[i]) {
+							quantity_bought_per_order[i] = effective_max_quantity[i];
+							remaining_supply -= effective_max_quantity[i];
 							money_left_to_spend_sum -= buy_up_to_order.money_to_spend;
 						}
 					}
@@ -273,7 +379,7 @@ void GoodMarket::execute_orders(
 				// that was wanted more than offered but could not be paid for kept the same price for ever (stuck prices), and
 				// counting the unpaid demand instead made the prices of everything that is scarce run to the upper bound.
 				//TODO use Victoria 2's square root mechanic for the size of the step, see https://github.com/OpenVicProject/OpenVic/issues/288
-				new_price = min_next_price;
+				new_price = nothing_reachable ? price : min_next_price;
 			}
 
 			//figure out how much every buyer bought
@@ -283,13 +389,28 @@ void GoodMarket::execute_orders(
 				const fixed_point_t quantity_bought
 					= quantity_bought_per_order[i]
 					= std::min(
-					buy_up_to_order.max_quantity,
+					effective_max_quantity[i],
 					buy_up_to_order.money_to_spend / new_price
 				);
 
 				const std::optional<country_index_t> country_index_optional = buy_up_to_order.country_index_optional;
-				if (country_index_optional.has_value()) {
+				if (!routed && country_index_optional.has_value()) {
 					actual_bought_per_country[country_index_optional.value()] += quantity_bought_per_order[i];
+				}
+			}
+
+			if (routed) {
+				// At the lower price the buyers can afford a little more than there is: they get no more than the offers that can reach them
+				fixed_point_t total_bought = fixed_point_t::_0;
+				for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
+					total_bought += quantity_bought_per_order[i];
+				}
+				const bool scale_down = total_bought > supply_for_clearing && total_bought > fixed_point_t::_0;
+				for (size_t i = 0; i < buy_up_to_orders.size(); i++) {
+					if (scale_down) {
+						quantity_bought_per_order[i] = fp::mul_div(quantity_bought_per_order[i], supply_for_clearing, total_bought);
+					}
+					actual_bought_per_country[node_of(buy_up_to_orders[i].country_index_optional)] += quantity_bought_per_order[i];
 				}
 			}
 
@@ -306,7 +427,9 @@ void GoodMarket::execute_orders(
 		}
 
 		//figure out how much of each order was sold
-		if (quantity_traded_yesterday == supply_sum) {
+		if (routed) {
+			attribute_routed_sales(new_price, reusable_vectors[0]);
+		} else if (quantity_traded_yesterday == supply_sum) {
 			//everything was sold
 			for (GoodMarketSellOrder const& market_sell_order : market_sell_orders) {
 				const fixed_point_t quantity_sold = market_sell_order.quantity;
@@ -466,4 +589,231 @@ void GoodMarket::execute_buy_orders(
 
 void GoodMarket::record_price_history() {
 	price_history.push_back(price);
+}
+
+fixed_point_t GoodMarket::plan_routes() {
+	const std::size_t node_count = node_supply.size();
+	struct candidate_t {
+		fixed_point_t cost;
+		fixed_point_t room;
+		std::uint32_t from;
+		std::uint32_t to;
+		std::uint8_t mode;
+	};
+
+	// What a node cannot use itself is offered abroad, what its sellers cannot fill is wished from abroad
+	std::vector<fixed_point_t> export_left(node_count, fixed_point_t::_0), import_left(node_count, fixed_point_t::_0);
+	fixed_point_t sold_at_home = fixed_point_t::_0, total_supply = fixed_point_t::_0, total_desire = fixed_point_t::_0;
+	for (std::size_t node = 0; node < node_count; ++node) {
+		const fixed_point_t supply = node_supply[node];
+		const fixed_point_t desire = node_desire[node];
+		total_supply += supply;
+		total_desire += desire;
+		sold_at_home += std::min(supply, desire);
+		if (supply > desire) {
+			export_left[node] = supply - desire;
+		} else if (desire > supply) {
+			import_left[node] = desire - supply;
+		}
+	}
+
+	std::vector<candidate_t> candidates;
+	for (std::size_t from = 0; from < node_count; ++from) {
+		if (export_left[from] <= fixed_point_t::_0) {
+			continue;
+		}
+		for (std::size_t to = 0; to < node_count; ++to) {
+			if (to == from || import_left[to] <= fixed_point_t::_0) {
+				continue;
+			}
+			TradeNetwork::route_t const& route = trade_network->get_route(country_index_t(from), country_index_t(to));
+			if (route.mode == TradeNetwork::mode_t::NONE) {
+				continue;
+			}
+			// The capacity is in pounds of cargo value, the quantity is what that buys at the price of today
+			const fixed_point_t room = route.capacity_value < fixed_point_t::_0 ? fixed_point_t::usable_max : route.capacity_value * price_inverse;
+			if (room <= fixed_point_t::_0) {
+				continue;
+			}
+			candidates.push_back({
+				route.cost, room, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to), static_cast<std::uint8_t>(route.mode)
+			});
+		}
+	}
+
+	// The cheapest routes first (ties by the countries, so that the order of the orders and of the threads does not matter)
+	std::sort(candidates.begin(), candidates.end(), [](candidate_t const& lhs, candidate_t const& rhs) -> bool {
+		if (lhs.cost != rhs.cost) {
+			return lhs.cost < rhs.cost;
+		}
+		if (lhs.from != rhs.from) {
+			return lhs.from < rhs.from;
+		}
+		return lhs.to < rhs.to;
+	});
+
+	fixed_point_t planned = fixed_point_t::_0;
+	for (candidate_t const& candidate : candidates) {
+		const fixed_point_t quantity = std::min({ export_left[candidate.from], import_left[candidate.to], candidate.room });
+		if (quantity <= fixed_point_t::_0) {
+			continue;
+		}
+		export_left[candidate.from] -= quantity;
+		import_left[candidate.to] -= quantity;
+		node_inflow[candidate.to] += quantity;
+		planned += quantity;
+		route_flows.push_back({ candidate.from, candidate.to, quantity, candidate.cost, candidate.mode });
+	}
+
+	for (std::size_t node = 0; node < node_count; ++node) {
+		node_cap[node] = node_supply[node] + node_inflow[node];
+	}
+	// What is left on offer in one country and wanted in another (min of the two sums, as every pair of them had no route or no room left)
+	// is cut off from the market: it does not count for the price. What is left on offer when nobody wants it is a glut, it does count.
+	cut_off_quantity = std::max(std::min(total_supply, total_desire) - sold_at_home - planned, fixed_point_t::_0);
+	if (cut_off_quantity > fixed_point_t::_0) {
+		trade_network->add_stat(trade_network->get_outside_node(), 4, cut_off_quantity * price);
+	}
+	return total_supply - cut_off_quantity;
+}
+
+void GoodMarket::attribute_routed_sales(const fixed_point_t new_price, memory::vector<fixed_point_t>& reusable_vector) {
+	const std::size_t node_count = node_supply.size();
+	const std::size_t outside = type_safe::get(trade_network->get_outside_node());
+
+	// What every node sold at home and what it bought from abroad
+	for (std::size_t node = 0; node < node_count; ++node) {
+		node_dom[node] = node == outside ? fixed_point_t::_0 : std::min(node_supply[node], node_bought[node]);
+		node_imports[node] = node_bought[node] - node_dom[node];
+	}
+
+	// The planned flows, cut down to what the importers really bought
+	for (route_flow_t const& flow : route_flows) {
+		const fixed_point_t planned_inflow = node_inflow[flow.to];
+		const fixed_point_t bought = node_imports[flow.to];
+		// (rounded up by the smallest amount: the sellers must get at least what the buyers pay)
+		fixed_point_t quantity = flow.quantity;
+		if (bought < planned_inflow) {
+			quantity = fp::mul_div(flow.quantity, bought, planned_inflow);
+			if (quantity > fixed_point_t::_0) {
+				quantity = std::min(flow.quantity, quantity + fixed_point_t::epsilon);
+			}
+		}
+		if (quantity <= fixed_point_t::_0) {
+			continue;
+		}
+		trade_network->add_pair_flow(country_index_t(flow.from), country_index_t(flow.to), quantity * new_price);
+		node_exports[flow.from] += quantity;
+		node_export_cost[flow.from] += quantity * flow.cost;
+		node_covered[flow.to] += quantity;
+		if (flow.mode == static_cast<std::uint8_t>(TradeNetwork::mode_t::LAND)) {
+			node_land_exports[flow.from] += quantity;
+		} else {
+			node_sea_exports[flow.from] += quantity;
+		}
+	}
+
+	// Imports that the plan did not foresee (buyers that bought more when the price fell) come from what the exporters have left, at the spot freight
+	fixed_point_t unplanned = fixed_point_t::_0, room = fixed_point_t::_0;
+	for (std::size_t node = 0; node < node_count; ++node) {
+		if (node_imports[node] > node_covered[node]) {
+			unplanned += node_imports[node] - node_covered[node];
+		}
+		const fixed_point_t left = node_supply[node] - node_dom[node] - node_exports[node];
+		if (left > fixed_point_t::_0) {
+			room += left;
+		}
+	}
+	if (unplanned > fixed_point_t::_0 && room > fixed_point_t::_0) {
+		const fixed_point_t take = std::min(unplanned, room);
+		const fixed_point_t spot_cost = trade_network->get_spot_cost();
+		for (std::size_t node = 0; node < node_count; ++node) {
+			const fixed_point_t left = node_supply[node] - node_dom[node] - node_exports[node];
+			if (left <= fixed_point_t::_0) {
+				continue;
+			}
+			fixed_point_t extra = fp::mul_div(take, left, room);
+			if (extra > fixed_point_t::_0) {
+				extra = std::min(left, extra + fixed_point_t::epsilon);
+			}
+			node_exports[node] += extra;
+			node_export_cost[node] += extra * spot_cost;
+			node_sea_exports[node] += extra;
+		}
+	}
+
+	// From the sum of the freight to its average share of the price
+	for (std::size_t node = 0; node < node_count; ++node) {
+		node_export_cost[node] = node_exports[node] > fixed_point_t::_0 ? node_export_cost[node] / node_exports[node] : fixed_point_t::_0;
+	}
+
+	for (GoodMarketSellOrder const& market_sell_order : market_sell_orders) {
+		const std::size_t node = type_safe::get(
+			market_sell_order.country_index_optional.has_value() ? market_sell_order.country_index_optional.value() : trade_network->get_outside_node()
+		);
+		const bool is_country = node != outside;
+		const fixed_point_t quantity_offered = market_sell_order.quantity;
+		const fixed_point_t supply = node_supply[node]; //> 0 as we're selling
+
+		// A share of the order: rounded up (by the smallest amount), so that what the sellers get is never less than what the buyers pay
+		const auto share_of_order = [quantity_offered, supply](const fixed_point_t part) -> fixed_point_t {
+			if (part >= supply) {
+				return quantity_offered;
+			}
+			const fixed_point_t share = fp::mul_div(quantity_offered, part, supply);
+			return share > fixed_point_t::_0 ? std::min(quantity_offered, share + fixed_point_t::epsilon) : share;
+		};
+		const fixed_point_t sold_at_home = share_of_order(node_dom[node]);
+		fixed_point_t sold_abroad = share_of_order(node_exports[node]);
+		if (sold_at_home + sold_abroad > quantity_offered) {
+			sold_abroad = quantity_offered - sold_at_home;
+		}
+
+		const fixed_point_t quantity_sold = sold_at_home + sold_abroad;
+		fixed_point_t money_gained;
+		if (quantity_sold == 0) {
+			money_gained = 0;
+		} else {
+			const fixed_point_t gross = std::max(
+				quantity_sold * new_price,
+				fixed_point_t::epsilon //round up
+			);
+			// The freight: at home the share of the seller's province, abroad that plus the share of the route
+			const fixed_point_t rate_home = is_country ? market_sell_order.freight_rate : fixed_point_t::_0;
+			const fixed_point_t rate_route = is_country ? node_export_cost[node] : fixed_point_t::_0;
+			fixed_point_t fee_home = sold_at_home * new_price * rate_home;
+			fixed_point_t fee_abroad = sold_abroad * new_price * (rate_home + rate_route - rate_home * rate_route);
+			if (fee_home + fee_abroad >= gross) {
+				// Rounding: the seller keeps at least the smallest amount
+				fee_home = fixed_point_t::_0;
+				fee_abroad = fixed_point_t::_0;
+			}
+			money_gained = gross - fee_home - fee_abroad;
+			node_fee_domestic[node] += fee_home;
+			node_fee_export[node] += fee_abroad;
+		}
+		MoneyLedger::record(MoneyLedger::label_t::market_sellers_get, money_gained);
+		market_sell_order.call_after_trade(
+			{
+				good_definition.index,
+				quantity_sold,
+				money_gained
+			},
+			reusable_vector
+		);
+	}
+
+	// The freight goes to the treasuries, and the statistics of the day
+	for (std::size_t node = 0; node < node_count; ++node) {
+		const country_index_t country_index(node);
+		if (node != outside) {
+			trade_network->add_fee(country_index, node_fee_domestic[node] + node_fee_export[node]);
+			trade_network->add_stat(country_index, 2, node_fee_domestic[node]);
+			trade_network->add_stat(country_index, 3, node_fee_export[node]);
+		}
+		trade_network->add_stat(country_index, 0, node_exports[node] * new_price);
+		trade_network->add_stat(country_index, 1, node_imports[node] * new_price);
+		trade_network->add_stat(country_index, 5, node_land_exports[node] * new_price);
+		trade_network->add_stat(country_index, 6, node_sea_exports[node] * new_price);
+	}
 }

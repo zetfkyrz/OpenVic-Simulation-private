@@ -26,7 +26,9 @@ namespace OpenVic {
 		// 7: the credit system is new (offers, delays, schedule), the old credit actions are skipped when a save is loaded
 		// 13: the simulation no longer depends on the threads: a profitable artisan keeps its type (it was decided by an unset flag), the gold
 		//     is paid after the market has run, see docs/BUGS_FIXED.md
-		inline constexpr int SIMULATION_VERSION = 13;
+		// 14: world trade (routes by land and sea with freight and capacity, the workers keep part of the output), the unemployed who are hungry
+		//     for a month emigrate or die, see docs/TRADE.md
+		inline constexpr int SIMULATION_VERSION = 14;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -14,6 +14,7 @@
 namespace OpenVic {
 	struct MarketInstance;
 	struct ModifierEffectCache;
+	struct OpenVicTradeDefines;
 	struct Pop;
 	struct PopType;
 	struct ProductionType;
@@ -31,6 +32,11 @@ namespace OpenVic {
 		memory::vector<std::reference_wrapper<Pop>> const* owner_pops_cache_nullable = nullptr;
 
 		ProductionType const* PROPERTY_RW(production_type_nullable);
+		// The part of yesterday's output that the workers keep for themselves (subsistence, see the trade defines): they eat it today
+		// without the market. Set by the tick of the RGO, read by the pops of the province, which tick before the RGO.
+		fixed_point_t PROPERTY(subsistence_pool);
+		// How much of the pool the pops of the province ate today (what was not eaten is sold with the output of the next day)
+		mutable fixed_point_t subsistence_eaten_today;
 		fixed_point_t PROPERTY(revenue_yesterday);
 		fixed_point_t PROPERTY(output_quantity_yesterday);
 		fixed_point_t PROPERTY(unsold_quantity_yesterday);
@@ -45,6 +51,10 @@ namespace OpenVic {
 			pop_size_t,
 			pop_type_index_t
 		> SPAN_PROPERTY(employee_count_per_type_cache);
+
+		static inline OpenVicTradeDefines const* trade_defines = nullptr;
+		// The part of the output that the workers keep
+		fixed_point_t calculate_subsistence(const fixed_point_t output) const;
 
 		fixed_point_t calculate_size_modifier() const;
 		void hire();
@@ -64,6 +74,17 @@ namespace OpenVic {
 		);
 
 		ResourceGatheringOperation(ResourceGatheringOperationDeps const& rgo_deps);
+
+		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
+			trade_defines = &defines;
+		}
+		// How much of the subsistence pool the pop may eat today (its share of the employees of yesterday)
+		fixed_point_t get_subsistence_entitlement(Pop const& pop) const;
+		// The good of the pool (the output of the RGO)
+		good_index_t get_subsistence_good_index() const;
+		void record_subsistence_eaten(const fixed_point_t quantity) const {
+			subsistence_eaten_today += quantity;
+		}
 
 		constexpr bool is_valid() const {
 			return production_type_nullable != nullptr;

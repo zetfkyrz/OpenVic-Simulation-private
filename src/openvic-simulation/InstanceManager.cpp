@@ -126,6 +126,10 @@ InstanceManager::InstanceManager(
 		new_definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types(),
 		thread_pool
 	},
+	trade_network {
+		new_definition_manager.get_define_manager().get_openvic_defines().trade,
+		country_instance_manager.get_country_instances().size()
+	},
 	unit_instance_manager {
 		new_definition_manager.get_pop_manager().get_culture_manager(),
 		new_definition_manager.get_military_manager().get_leader_trait_manager(),
@@ -151,12 +155,17 @@ InstanceManager::InstanceManager(
 	},
 	console_instance { *this },
 	gamestate_updated { gamestate_updated_callback ? std::move(gamestate_updated_callback) : []() {} } {
+	trade_network.set_countries(country_instance_manager.get_country_instances());
+	good_instance_manager.set_trade_network(&trade_network);
 	war_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines());
 	UnitInstanceGroup::set_war_defines(definition_manager.get_define_manager().get_openvic_defines().war);
 	ArtisanalProducer::set_openvic_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
+	Pop::set_openvic_population_defines(definition_manager.get_define_manager().get_openvic_defines().population);
+	ResourceGatheringOperation::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 }
 
 void InstanceManager::set_gamestate_needs_update() {
@@ -231,6 +240,14 @@ void InstanceManager::tick() {
 	{
 		OV_PROFILE_SCOPE(tick_profiler, "tick");
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger begin"); money_ledger.begin_day(*this); }
+		{
+			// The roads of the trade: built before the first day and rebuilt at the start of every month (derived from the state of the game)
+			OV_PROFILE_SCOPE(tick_profiler, "trade network");
+			if (trade_network.is_enabled() && (!trade_network.is_ready() || today.is_month_start())) {
+				trade_network.update(*this);
+			}
+			trade_network.begin_day();
+		}
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "countries before the map");
 			country_instance_manager.country_manager_tick_before_map();

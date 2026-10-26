@@ -2147,6 +2147,7 @@ void CountryInstance::country_tick_before_map(
 		= actual_unemployment_subsidies_spending
 		= actual_import_subsidies_spending
 		= actual_tariff_income
+		= actual_transport_income
 		= actual_national_stockpile_spending
 		= actual_national_stockpile_income
 		= actual_tax_income
@@ -2310,6 +2311,7 @@ void CountryInstance::manage_national_stockpile(
 					quantity_to_sell,
 					this,
 					after_sell,
+					capital != nullptr ? capital->get_freight_rate() : fixed_point_t::_0,
 				},
 				reusable_vectors[3] //temporarily used here and later used as money_to_spend_per_good
 			);
@@ -2510,6 +2512,13 @@ void CountryInstance::country_tick_after_map(const Date today) {
 
 	cash_stockpile += actual_tariff_income;
 	MoneyLedger::record(MoneyLedger::label_t::tariff_income, actual_tariff_income.load());
+	// The freight of the sellers: a share goes to the investment fund (the state builds railroads and ports from it), the rest to the treasury
+	const fixed_point_t transport_total = actual_transport_income.load();
+	const fixed_point_t transport_to_fund = openvic_trade_defines->freight_fund_share.of(transport_total);
+	const fixed_point_t transport_to_treasury = transport_total - transport_to_fund;
+	cash_stockpile += transport_to_treasury;
+	investment_fund += transport_to_fund;
+	MoneyLedger::record(MoneyLedger::label_t::transport_fee_income, transport_total);
 
 	const fixed_point_t gold_income_value = country_defines.get_gold_to_cash_rate() * total_gold_production;;
 	gold_income.set(gold_income_value);
@@ -2517,7 +2526,7 @@ void CountryInstance::country_tick_after_map(const Date today) {
 	MoneyLedger::record(MoneyLedger::label_t::gold_income, gold_income_value);
 
 	// The budget of the day, and the part of it that the construction slider sets aside for the investment fund
-	income_yesterday = actual_tax_income.load() + actual_tariff_income.load() + gold_income_value + actual_national_stockpile_income.load();
+	income_yesterday = actual_tax_income.load() + actual_tariff_income.load() + transport_to_treasury + gold_income_value + actual_national_stockpile_income.load();
 	investment_deposit_yesterday = fixed_point_t::_0;
 	const fixed_point_t allocation = get_investment_allocation();
 	// An AI country starts to set money aside once it knows its own balance (it sets its allocation from it)

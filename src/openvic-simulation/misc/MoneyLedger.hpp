@@ -32,6 +32,8 @@ namespace OpenVic {
 	X(country_stockpile_sells, "trade") \
 	/* tariffs and gold */ \
 	X(tariff_income, "tariff") \
+	/* the freight that the sellers of a country pay on the way to the buyers goes to its treasury */ \
+	X(transport_fee_income, "tariff") \
 	X(gold_income, "gold") \
 	/* money created when gold is mined: the workers are paid GOLD_TO_WORKER_PAY_RATE * price per unit (the rules of Victoria 2) */ \
 	X(gold_worker_pay, "gold") \

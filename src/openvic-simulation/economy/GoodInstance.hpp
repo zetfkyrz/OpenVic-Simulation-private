@@ -10,6 +10,7 @@ namespace OpenVic {
 	struct GoodDefinition;
 	struct GoodDefinitionManager;
 	struct GoodInstanceManager;
+	struct TradeNetwork;
 
 	struct GoodInstance : HasIdentifierAndColour, HasIndex<GoodInstance, good_index_t>, GoodMarket {
 		friend struct GoodInstanceManager;
@@ -55,5 +56,11 @@ namespace OpenVic {
 		GoodInstance& get_good_instance_by_definition(GoodDefinition const& good_definition);
 
 		void enable_good(GoodDefinition const& good);
+		// The roads of the world trade, used by the markets of all goods
+		void set_trade_network(TradeNetwork* trade_network) {
+			for (GoodInstance& good_instance : good_instance_by_definition.get_values()) {
+				good_instance.set_trade_network(trade_network);
+			}
+		}
 	};
 }

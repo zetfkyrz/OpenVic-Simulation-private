@@ -17,6 +17,9 @@
 #include <openvic-simulation/economy/BuildingType.hpp>
 #include <openvic-simulation/economy/credit/Credit.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
+#include <openvic-simulation/economy/production/ResourceGatheringOperation.hpp>
+#include <openvic-simulation/economy/trading/TradeNetwork.hpp>
+#include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
@@ -560,6 +563,75 @@ namespace {
 		play(im, 5);
 	}
 
+	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
+	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
+	void test_trade_and_hunger(Results& r, InstanceManager& im) {
+		MoneyLedger& ledger = im.get_money_ledger();
+		ledger.enable(im);
+
+		std::int64_t starved = 0;
+		for (int day = 0; day < 130; ++day) {
+			im.force_tick_and_update();
+			if (im.get_today().is_month_start()) {
+				for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+					for (Pop& pop : province.get_mutable_pops()) {
+						starved += type_safe::get(pop.get_num_starved());
+					}
+				}
+			}
+		}
+
+		TradeNetwork const& network = im.get_trade_network();
+		r.check(network.is_ready(), "trade: the network of the routes is built");
+		const std::size_t countries = network.get_node_count() - 1;
+		std::size_t routes = 0, land = 0, sea = 0, asymmetric = 0, bad_cost = 0;
+		for (std::size_t from = 0; from < countries; ++from) {
+			for (std::size_t to = 0; to < countries; ++to) {
+				TradeNetwork::route_t const& route = network.get_route(country_index_t(from), country_index_t(to));
+				TradeNetwork::route_t const& back = network.get_route(country_index_t(to), country_index_t(from));
+				if (from == to) {
+					bad_cost += route.mode != TradeNetwork::mode_t::NONE;
+					continue;
+				}
+				if ((route.mode == TradeNetwork::mode_t::NONE) != (back.mode == TradeNetwork::mode_t::NONE)) {
+					asymmetric++;
+				}
+				if (route.mode == TradeNetwork::mode_t::NONE) {
+					continue;
+				}
+				routes++;
+				land += route.mode == TradeNetwork::mode_t::LAND;
+				sea += route.mode == TradeNetwork::mode_t::SEA;
+				bad_cost += route.cost < fixed_point_t::_0 || route.cost > fixed_point_t::_1;
+			}
+		}
+		r.check(routes > 0 && land > 0 && sea > 0, "trade: there are routes by land and by sea", fmt::format("{} routes, {} land, {} sea", routes, land, sea));
+		r.check(asymmetric == 0, "trade: a route exists both ways", fmt::format("{} pairs", asymmetric));
+		r.check(bad_cost == 0, "trade: the cost of a route is a share of the price, a country has no route to itself", fmt::format("{}", bad_cost));
+
+		// The freight went to the treasuries (the ledger, which is closed in the other runs, counts it with a hook of its own)
+		fixed_point_t fee_sum;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			fee_sum += country.get_transport_income();
+		}
+		r.check(fee_sum > fixed_point_t::_0, "trade: the freight of the sellers reaches the treasuries", fmt::format("{}", fee_sum));
+
+		// Subsistence: the pool never is more than the output
+		std::int32_t pools = 0, pools_too_big = 0;
+		for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
+			const fixed_point_t pool = province.get_rgo().get_subsistence_pool();
+			if (pool > fixed_point_t::_0) {
+				pools++;
+				pools_too_big += pool > province.get_rgo().get_output_quantity_yesterday();
+			}
+		}
+		r.check(pools > 0, "trade: the workers keep part of the output of their RGO");
+		r.check(pools_too_big == 0, "trade: the workers never keep more than the RGO made", fmt::format("{} of {}", pools_too_big, pools));
+
+		fmt::println("TEST INFO trade: {} routes ({} land, {} sea), {} people died of hunger in the first months, {} RGOs kept part of their output", routes, land, sea, starved, pools);
+		ledger.disable();
+	}
+
 	// The investment fund: the construction slider sets money aside, the AI keeps its budget out of a loss, the money of the
 	// fund pays the construction of profitable enterprises, and no money appears or disappears without a hook of the ledger
 	void test_investment_fund(Results& r, InstanceManager& im) {
@@ -788,7 +860,8 @@ namespace {
 		// the money of slaves and the cost of the expansions of the factories leave the economy.)
 		const std::int64_t created = flow(MoneyLedger::label_t::gold_worker_pay) + flow(MoneyLedger::label_t::gold_income)
 			+ flow(MoneyLedger::label_t::factory_starting_budget) + flow(MoneyLedger::label_t::market_sellers_get)
-			+ flow(MoneyLedger::label_t::market_buyers_pay) + flow(MoneyLedger::label_t::factory_budget_floor);
+			+ flow(MoneyLedger::label_t::market_buyers_pay) + flow(MoneyLedger::label_t::transport_fee_income)
+			+ flow(MoneyLedger::label_t::factory_budget_floor);
 		r.check(
 			measured <= created + (1 << fixed_point_t::PRECISION),
 			"money: the total grows only by the gold, the starting budgets of new factories and the rounding of the market",
@@ -797,9 +870,10 @@ namespace {
 		fmt::println("TEST INFO money: the total changed by {:.1f}, created by the allowed sources {:.1f} (gold {:.1f}, starting budgets {:.1f})",
 			pounds(measured), pounds(created), pounds(flow(MoneyLedger::label_t::gold_worker_pay) + flow(MoneyLedger::label_t::gold_income)),
 			pounds(flow(MoneyLedger::label_t::factory_starting_budget)));
-		const double rounding = pounds(flow(MoneyLedger::label_t::market_sellers_get) + flow(MoneyLedger::label_t::market_buyers_pay));
+		const double rounding = pounds(flow(MoneyLedger::label_t::market_sellers_get) + flow(MoneyLedger::label_t::market_buyers_pay) + flow(MoneyLedger::label_t::transport_fee_income));
 		const double volume = -pounds(flow(MoneyLedger::label_t::market_buyers_pay));
-		r.check(rounding >= -1.0 && rounding <= volume * 0.001 + 1.0, "money: the rounding of the market is below 0.1% of the trade",
+		// (the shares of the orders are rounded, either way, by the smallest amount per order)
+		r.check(rounding >= -volume * 0.0001 - 1.0 && rounding <= volume * 0.001 + 1.0, "money: the rounding of the market is below 0.1% of the trade",
 			fmt::format("rounding {:.3f} of {:.3f}", rounding, volume));
 		ledger.disable();
 		game.end();
@@ -830,6 +904,15 @@ namespace {
 			return;
 		}
 		test_investment_fund(r, *im);
+		game.end();
+
+		// ---- run 8: the world trade and the hunger of the unemployed
+		im = game.start();
+		r.check(im != nullptr, "trade: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_trade_and_hunger(r, *im);
 		game.end();
 
 		// ---- the defines hash does not change while playing

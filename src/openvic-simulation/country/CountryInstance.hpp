@@ -114,6 +114,10 @@ namespace OpenVic {
 		static void set_openvic_economy_defines(OpenVicEconomyDefines const& defines) {
 			openvic_economy_defines = &defines;
 		}
+		static inline OpenVicTradeDefines const* openvic_trade_defines = nullptr;
+		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
+			openvic_trade_defines = &defines;
+		}
 
 		// Thresholds for different uncivilised country statuses
 		static constexpr fixed_point_t PRIMITIVE_CIVILISATION_PROGRESS = fixed_point_t(15) / 100;
@@ -274,6 +278,8 @@ namespace OpenVic {
 		bool PROPERTY(was_import_subsidies_budget_cut_yesterday, false);
 		atomic_fixed_point_t actual_import_subsidies_spending;
 		atomic_fixed_point_t actual_tariff_income;
+		// The freight the sellers of the country paid yesterday (inside the country and on the way abroad), see TradeNetwork
+		atomic_fixed_point_t actual_transport_income;
 		fixed_point_t get_actual_net_tariffs_balance() const {
 			return actual_tariff_income.load() - actual_import_subsidies_spending.load();
 		}
@@ -395,6 +401,13 @@ namespace OpenVic {
 		// Tariffs collected / import subsidies paid yesterday
 		fixed_point_t get_tariff_income() const {
 			return actual_tariff_income.load();
+		}
+		// Thread safe: the market adds the freight of the sellers of the country
+		void add_transport_fee(const fixed_point_t amount) {
+			actual_transport_income += amount;
+		}
+		fixed_point_t get_transport_income() const {
+			return actual_transport_income.load();
 		}
 		fixed_point_t get_import_subsidies_spending() const {
 			return actual_import_subsidies_spending.load();

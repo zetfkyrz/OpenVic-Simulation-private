@@ -23,6 +23,7 @@ namespace OpenVic {
 	struct Culture;
 	struct MarketInstance;
 	struct MilitaryDefines;
+	struct OpenVicPopulationDefines;
 	struct PopDeps;
 	struct PopManager;
 	struct PopType;
@@ -99,6 +100,7 @@ namespace OpenVic {
 		std::optional<ArtisanalProducer> artisanal_producer_optional;
 		fixed_point_t cash_allocated_for_artisanal_spending = 0;
 		pop_size_t employed = 0;
+		static inline OpenVicPopulationDefines const* population_defines = nullptr;
 
 		const std::reference_wrapper<ProvinceInstance> PROPERTY(location);
 
@@ -116,6 +118,7 @@ namespace OpenVic {
 		pop_size_t PROPERTY(num_demoted, 0);
 		pop_size_t PROPERTY(num_migrated_internal, 0); // TODO - detailed migration info (where to)
 		pop_size_t PROPERTY(num_migrated_external, 0);
+		pop_size_t PROPERTY(num_starved, 0);
 		pop_size_t PROPERTY(num_migrated_colonial, 0);
 
 		culture_status_t PROPERTY(culture_status, culture_status_t::UNACCEPTED);
@@ -138,6 +141,9 @@ namespace OpenVic {
 
 		static constexpr pop_size_t size_denominator = 200000;
 		static constexpr size_t VECTORS_FOR_POP_TICK = 5;
+		static void set_openvic_population_defines(OpenVicPopulationDefines const& defines) {
+			population_defines = &defines;
+		}
 
 		constexpr pop_size_t get_unemployed() const {
 			return size - employed;
@@ -264,7 +270,10 @@ namespace OpenVic {
 
 		// Population dynamics (monthly): people join or leave the pop, the change is recorded for the interface.
 		// The size never goes below zero. kind: 0 growth, 1 promotion (arrived by promotion), 2 demotion, 3 internal migration
+		// kind 4: migration to another country, kind 5: died of hunger (the surplus of the pop)
 		void change_size(std::int32_t delta, std::int32_t kind);
+		// The number of days of this month that the pop had less than HUNGER_LIFE_NEEDS_THRESHOLD of its life needs (reset every month)
+		std::int32_t hungry_days = 0;
 		// Fraction of a person that growth could not add yet
 		fixed_point_t growth_remainder;
 		fixed_point_t assimilation_remainder;

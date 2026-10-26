@@ -18,14 +18,18 @@ namespace OpenVic {
 	public:
 		const std::optional<country_index_t> country_index_optional;
 		const fixed_point_t quantity;
+		// The share of the money of the sale that the seller loses on the way to the buyers of its own country (see TradeNetwork)
+		const fixed_point_t freight_rate;
 
 		constexpr GoodMarketSellOrder(
 			const std::optional<country_index_t> new_country_index_optional,
 			const fixed_point_t new_quantity,
 			const actor_t new_actor,
-			const callback_t new_after_trade
+			const callback_t new_after_trade,
+			const fixed_point_t new_freight_rate = fixed_point_t::_0
 		) : country_index_optional { new_country_index_optional },
 			quantity { new_quantity },
+			freight_rate { new_freight_rate },
 			actor { new_actor },
 			after_trade { new_after_trade }
 			{}
@@ -44,12 +48,14 @@ namespace OpenVic {
 			const std::optional<country_index_t> new_country_index_optional,
 			const fixed_point_t new_quantity,
 			const actor_t new_actor,
-			const callback_t new_after_trade
+			const callback_t new_after_trade,
+			const fixed_point_t new_freight_rate = fixed_point_t::_0
 		) : GoodMarketSellOrder {
 				new_country_index_optional,
 				new_quantity,
 				new_actor,
-				new_after_trade
+				new_after_trade,
+				new_freight_rate
 			},
 			good_index { new_good_index }
 			{}

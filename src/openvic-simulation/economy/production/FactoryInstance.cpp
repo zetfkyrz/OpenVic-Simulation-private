@@ -13,6 +13,7 @@
 #include "openvic-simulation/economy/trading/MarketInstance.hpp"
 #include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
 #include "openvic-simulation/economy/trading/SellResult.hpp"
+#include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/population/Pop.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
@@ -712,7 +713,10 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		// The callback is not called with a vector of its own as it does not need one
 		memory::vector<fixed_point_t> reusable_vector;
 		market_instance.place_market_sell_order(
-			{ production_type.output_good.index, country_index, output, this, after_sell }, reusable_vector
+			{
+				production_type.output_good.index, country_index, output, this, after_sell,
+				state.get_capital() != nullptr ? state.get_capital()->get_freight_rate() : fixed_point_t::_0
+			}, reusable_vector
 		);
 	}
 

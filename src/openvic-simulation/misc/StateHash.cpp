@@ -47,7 +47,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(pop.get_militancy());
 			hasher.add(pop.get_consciousness());
 			hasher.add(pop.get_literacy());
+			hasher.add_signed(pop.hungry_days);
 		}
+		hasher.add(province.get_rgo().get_subsistence_pool());
 		for (ArmyInstance const& army : province.get_armies()) {
 			hasher.add(army.unique_id);
 			hasher.add(army.get_unit_count());

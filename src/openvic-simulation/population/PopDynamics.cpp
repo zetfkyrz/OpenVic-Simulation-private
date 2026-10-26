@@ -8,6 +8,8 @@
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
+#include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/economy/production/ResourceGatheringOperation.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
@@ -113,6 +115,76 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		vacancies[state] = free_jobs;
 	}
 
+	// Free jobs of the resource gathering operations by country and pop type: where the surplus people can go
+	struct Vacancy {
+		ProvinceInstance* province;
+		std::int32_t free_jobs;
+	};
+	const std::size_t country_count = instance_manager.get_country_instance_manager().get_country_instances().size();
+	const std::size_t type_count = static_cast<std::size_t>(pop_manager.get_pop_type_count());
+	std::vector<std::vector<Vacancy>> job_vacancies(country_count * type_count);
+	std::vector<std::int64_t> free_jobs_total(country_count * type_count, 0);
+	for (ProvinceInstance& province : map_instance.get_province_instances()) {
+		CountryInstance const* const rgo_owner = province.get_owner();
+		if (rgo_owner == nullptr || province.province_definition.is_water()) {
+			continue;
+		}
+		ProductionType const* const production_type = province.get_rgo().get_production_type_nullable();
+		if (production_type == nullptr) {
+			continue;
+		}
+		const std::int32_t free_jobs = type_safe::get(province.get_rgo().get_max_employee_count_cache())
+			- type_safe::get(province.get_rgo().get_total_employees_count_cache());
+		if (free_jobs <= 0) {
+			continue;
+		}
+		for (Job const& job : production_type->get_jobs()) {
+			const std::size_t slot = type_safe::get(rgo_owner->index) * type_count + type_safe::get(job.pop_type_index);
+			job_vacancies[slot].push_back({ &province, free_jobs });
+			free_jobs_total[slot] += free_jobs;
+		}
+	}
+	for (std::vector<Vacancy>& list : job_vacancies) {
+		std::sort(list.begin(), list.end(), [](Vacancy const& lhs, Vacancy const& rhs) -> bool {
+			if (lhs.free_jobs != rhs.free_jobs) {
+				return lhs.free_jobs > rhs.free_jobs;
+			}
+			return type_safe::get(lhs.province->province_definition.index) < type_safe::get(rhs.province->province_definition.index);
+		});
+	}
+
+	// Moves people of a pop to the free jobs of a country (best places first), returns how many moved
+	const auto move_to_vacancies = [&](
+		Pop& source, ProvinceInstance& source_province, const std::size_t slot, std::int32_t count, const std::int32_t kind
+	) -> std::int32_t {
+		std::int32_t moved = 0;
+		for (Vacancy& vacancy : job_vacancies[slot]) {
+			if (count <= 0) {
+				break;
+			}
+			if (vacancy.free_jobs <= 0 || vacancy.province == &source_province) {
+				continue;
+			}
+			// Not more than a share of the free jobs of a place in a month
+			const std::int32_t room = std::max<std::int32_t>(1, static_cast<std::int32_t>(defines.immigration_fill_share.of_int(vacancy.free_jobs)));
+			const std::int32_t take = std::min({ count, room, vacancy.free_jobs });
+			Pop* const target = find_or_create_pop(*vacancy.province, source.get_type(), source.culture, source, pop_deps);
+			if (target == nullptr) {
+				continue;
+			}
+			source.change_size(-take, kind);
+			target->change_size(take, kind);
+			vacancy.free_jobs -= take;
+			free_jobs_total[slot] -= take;
+			count -= take;
+			moved += take;
+		}
+		return moved;
+	};
+
+	std::int32_t starved_total = 0;
+	std::int32_t emigrated_internal_total = 0;
+	std::int32_t emigrated_external_total = 0;
 	std::int32_t grown_total = 0;
 	std::int32_t migrated_total = 0;
 	std::int32_t assimilated_total = 0;
@@ -199,6 +271,47 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 
 			const PopType& type = pop->get_type();
 
+			// ---- The surplus: the unemployed of a pop that was hungry for a month. A small share of them emigrates (first inside the country
+			// to the places with free jobs, abroad only when the whole country has none), the rest dies
+			if (pop->hungry_days >= defines.hunger_days_before_death && type.can_be_unemployed && !type.is_slave && owner != nullptr) {
+				const std::int32_t surplus = type_safe::get(pop->get_unemployed());
+				if (surplus > 0 && surplus >= defines.starvation_min_surplus) {
+					const std::size_t own_slot = type_safe::get(owner->index) * type_count + type_safe::get(type.index);
+					// TODO the technologies raise the share of the emigrants (the research system adds a bonus here)
+					const std::int32_t emigrants = static_cast<std::int32_t>(defines.emigration_share.of_int(surplus));
+					std::int32_t placed = 0;
+					if (emigrants > 0) {
+						if (free_jobs_total[own_slot] > 0) {
+							placed = move_to_vacancies(*pop, province, own_slot, emigrants, 3);
+							emigrated_internal_total += placed;
+						} else {
+							// Abroad: the country with the most free jobs for this kind of people
+							std::size_t best_slot = own_slot;
+							std::int64_t best_free = 0;
+							for (std::size_t country = 0; country < country_count; ++country) {
+								const std::size_t slot = country * type_count + type_safe::get(type.index);
+								if (slot != own_slot && free_jobs_total[slot] > best_free) {
+									best_free = free_jobs_total[slot];
+									best_slot = slot;
+								}
+							}
+							if (best_slot != own_slot) {
+								placed = move_to_vacancies(*pop, province, best_slot, emigrants, 4);
+								emigrated_external_total += placed;
+							}
+						}
+					}
+					// The rest of the surplus dies (the emigrants that found no place stay and are counted with the rest)
+					const std::int32_t staying = std::min(surplus - placed, type_safe::get(pop->get_size()));
+					const std::int32_t dying = static_cast<std::int32_t>(defines.surplus_death_share.of_int(std::max(0, staying - (emigrants - placed))));
+					if (dying > 0) {
+						pop->change_size(-dying, 5);
+						starved_total += dying;
+					}
+				}
+			}
+			pop->hungry_days = 0;
+
 			// ---- Assimilation of unaccepted cultures into the primary culture
 			if (owner != nullptr && owner->get_primary_culture() != nullptr
 				&& pop->get_culture_status() == Pop::culture_status_t::UNACCEPTED && !type.is_slave) {
@@ -278,7 +391,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	}
 
 	SPDLOG_INFO(
-		"Population changes: grown {}, migrated {}, assimilated {}, promoted to craftsmen {}",
-		grown_total, migrated_total, assimilated_total, promoted_total
+		"Population changes: grown {}, migrated {}, assimilated {}, promoted to craftsmen {}, died of hunger {}, emigrated inside the country {} and abroad {}",
+		grown_total, migrated_total, assimilated_total, promoted_total, starved_total, emigrated_internal_total, emigrated_external_total
 	);
 }

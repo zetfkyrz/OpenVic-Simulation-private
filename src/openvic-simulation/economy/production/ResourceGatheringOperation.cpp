@@ -6,6 +6,7 @@
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/object/FixedPoint/Math.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
 #include "openvic-simulation/economy/trading/MarketInstance.hpp"
@@ -127,11 +128,60 @@ fixed_point_t ResourceGatheringOperation::calculate_size_modifier() const {
 	return size_modifier > 0 ? size_modifier : fixed_point_t::_0;
 }
 
+fixed_point_t ResourceGatheringOperation::get_subsistence_entitlement(Pop const& pop) const {
+	if (subsistence_pool <= fixed_point_t::_0 || total_employees_count_cache <= 0) {
+		return fixed_point_t::_0;
+	}
+	for (Employee const& employee : employees) {
+		if (&employee.get_pop() == &pop) {
+			return fp::mul_div(subsistence_pool, employee.get_size(), total_employees_count_cache);
+		}
+	}
+	return fixed_point_t::_0;
+}
+
+good_index_t ResourceGatheringOperation::get_subsistence_good_index() const {
+	return production_type_nullable != nullptr ? production_type_nullable->output_good.index : good_index_t {};
+}
+
+fixed_point_t ResourceGatheringOperation::calculate_subsistence(const fixed_point_t output) const {
+	if (trade_defines == nullptr || trade_defines->enabled == 0 || trade_defines->subsistence_share.numerator <= 0
+		|| production_type_nullable == nullptr || total_employees_count_cache <= 0) {
+		return fixed_point_t::_0;
+	}
+	ProvinceInstance const& location = *location_ptr;
+
+	// The share the workers keep: the less the better the railroad of the province (it turns the farms to the market)
+	const fixed_point_t share = trade_defines->subsistence_share.fixed()
+		* (fixed_point_t::_1 - trade_defines->subsistence_rail_relief.fixed() * location.get_infrastructure_fraction());
+
+	// The most that the workers need of the good (the life and everyday needs of the pops that were hired)
+	const good_index_t good_index = production_type_nullable->output_good.index;
+	fixed_point_t needed = fixed_point_t::_0;
+	for (Employee const& employee : employees) {
+		PopType const& pop_type = employee.get_pop().get_type();
+		fixed_point_t per_pop = fixed_point_t::_0;
+		const auto life_it = pop_type.get_life_needs().find(good_index);
+		if (life_it != pop_type.get_life_needs().end()) {
+			per_pop += life_it.value();
+		}
+		const auto everyday_it = pop_type.get_everyday_needs().find(good_index);
+		if (everyday_it != pop_type.get_everyday_needs().end()) {
+			per_pop += everyday_it.value();
+		}
+		needed += fp::mul_div(per_pop, employee.get_size(), Pop::size_denominator);
+	}
+	needed = needed * trade_defines->subsistence_need_multiplier;
+
+	return std::min(output * share, needed);
+}
+
 void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusable_vector) {
 	ProvinceInstance& location = *location_ptr;
 	if (production_type_nullable == nullptr || location.get_owner() == nullptr) {
 		output_quantity_yesterday = 0;
 		revenue_yesterday = 0;
+		subsistence_pool = fixed_point_t::_0;
 		return;
 	}
 
@@ -155,11 +205,25 @@ void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusabl
 	}
 
 	output_quantity_yesterday = produce();
+	// The workers keep a part of the output; they eat it tomorrow (their pops tick before the RGO), at no market and no freight
+	const fixed_point_t subsistence_left_over = subsistence_pool > subsistence_eaten_today
+		? subsistence_pool - subsistence_eaten_today
+		: fixed_point_t::_0;
+	subsistence_eaten_today = fixed_point_t::_0;
+	subsistence_pool = calculate_subsistence(output_quantity_yesterday);
+	// What the workers did not eat of the pool is sold now, with the rest of the output
+	const fixed_point_t quantity_to_sell = output_quantity_yesterday - subsistence_pool + subsistence_left_over;
+	if (quantity_to_sell <= 0) {
+		revenue_yesterday = 0;
+	}
 	if (output_quantity_yesterday > 0) {
 		CountryInstance* const country_to_report_economy_nullable = location.get_country_to_report_economy();
 		if (country_to_report_economy_nullable != nullptr) {
 			country_to_report_economy_nullable->report_output(production_type, output_quantity_yesterday);
 		}
+	}
+	if (quantity_to_sell > 0) {
+		CountryInstance* const country_to_report_economy_nullable = location.get_country_to_report_economy();
 
 		market_instance.place_market_sell_order(
 			{
@@ -167,9 +231,10 @@ void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusabl
 				country_to_report_economy_nullable == nullptr
 					? std::nullopt
 					: std::optional<country_index_t>{country_to_report_economy_nullable->index},
-				output_quantity_yesterday,
+				quantity_to_sell,
 				this,
 				after_sell,
+				location.get_freight_rate(),
 			},
 			reusable_vector
 		);

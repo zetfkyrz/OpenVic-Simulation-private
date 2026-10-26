@@ -137,7 +137,18 @@ namespace OpenVic {
 	RATE(MIGRATION_UNEMPLOYMENT_THRESHOLD, migration_unemployment_threshold, Rate(1, 5), 0, 1) \
 	RATE(MIGRATION_LIFE_NEEDS_THRESHOLD, migration_life_needs_threshold, Rate(1, 2), 0, 1) \
 	RATE(SCORE_UNEMPLOYMENT_WEIGHT, score_unemployment_weight, Rate(1, 2), 0, 1) \
-	RATE(SCORE_LIFE_NEEDS_WEIGHT, score_life_needs_weight, Rate(1, 2), 0, 1)
+	RATE(SCORE_LIFE_NEEDS_WEIGHT, score_life_needs_weight, Rate(1, 2), 0, 1) \
+	/* Surplus people: the unemployed of a pop type that can be unemployed. A pop is hungry when it has less than this share of its life */ \
+	/* needs; the surplus of a pop that was hungry for HUNGER_DAYS_BEFORE_DEATH days of the month emigrates (EMIGRATION_SHARE of it, */ \
+	/* the technologies raise it later) and the rest dies (SURPLUS_DEATH_SHARE of the rest, per month) */ \
+	RATE(HUNGER_LIFE_NEEDS_THRESHOLD, hunger_life_needs_threshold, Rate(50, 100), 0, 1) \
+	INT(HUNGER_DAYS_BEFORE_DEATH, hunger_days_before_death, 28, 1, 31) \
+	RATE(EMIGRATION_SHARE, emigration_share, Rate(1, 100), 0, 1) \
+	RATE(SURPLUS_DEATH_SHARE, surplus_death_share, Rate(99, 100), 0, 1) \
+	/* The surplus moves inside the country to provinces with free jobs of the same pop type, and abroad only when the whole country */ \
+	/* has no free jobs; at most this share of the free jobs of a destination is filled per month */ \
+	RATE(IMMIGRATION_FILL_SHARE, immigration_fill_share, Rate(50, 100), 0, 1) \
+	INT(STARVATION_MIN_SURPLUS, starvation_min_surplus, 1, 0, 1000000)
 #define OV_POLITICS_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	DOUBLE(LEANING_ARISTOCRATS_REACTIONARY, leaning_aristocrats_reactionary, 0.45, 0, 1) \
 	DOUBLE(LEANING_ARISTOCRATS_CONSERVATIVE, leaning_aristocrats_conservative, 0.45, 0, 1) \
@@ -396,6 +407,49 @@ namespace OpenVic {
 	INT(INVESTMENT_MAX_PAYBACK_YEARS, investment_max_payback_years, 12, 1, 1000) \
 	INT(INVESTMENT_MIN_MONEY, investment_min_money, 500, 0, 100000000)
 
+	// Trade (docs/TRADE.md). Freight is the share of the price that the seller loses on the way to the buyer; the money goes to the
+	// treasury of the seller's country (the state keeps the railroads and the ports). Capacities are in pounds of cargo value per day,
+	// for every good separately (the quantity is the value divided by the price of the good).
+#define OV_TRADE_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	/* 0: the old market (everything is sold at one price, exports are shared evenly, nothing is lost on the way) */ \
+	INT(ENABLED, enabled, 1, 0, 1) \
+	/* Inside a country: the freight of a seller without any railroad (maximum) and of one in a province with the best railroad (minimum) */ \
+	RATE(INTERNAL_FREIGHT_MAX, internal_freight_max, Rate(15, 1000), 0, 1) \
+	RATE(INTERNAL_FREIGHT_MIN, internal_freight_min, Rate(3, 1000), 0, 1) \
+	/* Land borders: the freight of one crossing, the part of it that the best railroads on both sides of the border remove, */ \
+	/* and the capacity of a crossing (a pair of neighbouring provinces of two countries) without and with railroads */ \
+	RATE(LAND_COST_BASE, land_cost_base, Rate(1, 100), 0, 1) \
+	RATE(LAND_RAIL_COST_RELIEF, land_rail_cost_relief, Rate(60, 100), 0, 1) \
+	INT(LAND_CAPACITY_BASE, land_capacity_base, 400, 0, 100000000) \
+	INT(LAND_CAPACITY_PER_RAIL_LEVEL, land_capacity_per_rail_level, 200, 0, 100000000) \
+	/* Sea: every country with a port can trade by sea with every other one. The freight is the base plus this share for a distance */ \
+	/* of the width of the map, naval bases remove up to SEA_NAVAL_BASE_COST_RELIEF of it (full at the average level of */ \
+	/* SEA_NAVAL_BASE_RELIEF_LEVELS). The capacity of a country is the sum over its ports; a pair of countries uses SEA_PAIR_SHARE of the smaller one */ \
+	RATE(SEA_COST_BASE, sea_cost_base, Rate(1, 100), 0, 1) \
+	RATE(SEA_COST_PER_MAP_WIDTH, sea_cost_per_map_width, Rate(6, 100), 0, 10) \
+	RATE(SEA_NAVAL_BASE_COST_RELIEF, sea_naval_base_cost_relief, Rate(40, 100), 0, 1) \
+	INT(SEA_NAVAL_BASE_RELIEF_LEVELS, sea_naval_base_relief_levels, 4, 1, 100) \
+	INT(SEA_PORT_BASE_CAPACITY, sea_port_base_capacity, 400, 0, 100000000) \
+	INT(SEA_CAPACITY_PER_NAVAL_BASE_LEVEL, sea_capacity_per_naval_base_level, 400, 0, 100000000) \
+	RATE(SEA_PAIR_SHARE, sea_pair_share, Rate(50, 100), 0, 1) \
+	/* Routes through other countries: at most this many borders/seas, with this extra freight for every country passed */ \
+	INT(MAX_ROUTE_HOPS, max_route_hops, 3, 1, 10) \
+	RATE(TRANSIT_COST_PER_HOP, transit_cost_per_hop, Rate(5, 1000), 0, 1) \
+	/* A route that costs more than this share of the price is not used */ \
+	RATE(MAX_ROUTE_COST, max_route_cost, Rate(25, 100), 0, 1) \
+	/* Trade with and from provinces nobody owns (not a country) and trade that the plan of the day did not foresee: freight */ \
+	RATE(OUTSIDE_COST, outside_cost, Rate(4, 100), 0, 1) \
+	RATE(SPOT_COST, spot_cost, Rate(5, 100), 0, 1) \
+	/* The share of the freight that goes to the investment fund of the country (the rest goes to the treasury) */ \
+	RATE(FREIGHT_FUND_SHARE, freight_fund_share, Rate(70, 100), 0, 1) \
+	/* Subsistence: the workers of a resource gathering operation keep this share of its output for themselves (only goods that they */ \
+	/* need), without a market, at no freight; railroads in the province turn the farms to the market: at the best railroad the share */ \
+	/* is reduced by SUBSISTENCE_RAIL_RELIEF */ \
+	RATE(SUBSISTENCE_SHARE, subsistence_share, Rate(35, 100), 0, 1) \
+	RATE(SUBSISTENCE_RAIL_RELIEF, subsistence_rail_relief, Rate(70, 100), 0, 1) \
+	/* The workers eat the goods they keep from the quantity that they need at most: the base need of the goods they eat times this */ \
+	INT(SUBSISTENCE_NEED_MULTIPLIER, subsistence_need_multiplier, 2, 1, 100)
+
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPoliticsDefines, "ov_politics", OV_POLITICS_DEFINES)
@@ -405,6 +459,7 @@ namespace OpenVic {
 	OV_DEFINE_GROUP(OpenVicResearchDefines, "ov_research", OV_RESEARCH_DEFINES)
 	OV_DEFINE_GROUP(OpenVicEconomyDefines, "ov_economy", OV_ECONOMY_DEFINES)
 	OV_DEFINE_GROUP(OpenVicCreditDefines, "ov_credit", OV_CREDIT_DEFINES)
+	OV_DEFINE_GROUP(OpenVicTradeDefines, "ov_trade", OV_TRADE_DEFINES)
 
 	struct OpenVicDefines {
 	private:
@@ -424,6 +479,7 @@ namespace OpenVic {
 		OpenVicResearchDefines research;
 		OpenVicEconomyDefines economy;
 		OpenVicCreditDefines credit;
+		OpenVicTradeDefines trade;
 
 		OpenVicDefines();
 

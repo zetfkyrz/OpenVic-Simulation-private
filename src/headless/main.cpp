@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <sstream>
@@ -171,6 +172,72 @@ static void print_economy_report(InstanceManager& instance_manager) {
 		static_cast<double>(country_cash), static_cast<double>(pop_cash), static_cast<double>(budgets),
 		static_cast<double>(country_cash + pop_cash + budgets)
 	);
+
+	// The world trade of yesterday (docs/TRADE.md)
+	TradeNetwork const& trade_network = instance_manager.get_trade_network();
+	if (trade_network.is_ready()) {
+		fixed_point_t exports = 0, land = 0, sea = 0, internal_fees = 0, export_fees = 0, unmet = 0;
+		size_t routes = 0, land_routes = 0, sea_routes = 0, mixed_routes = 0;
+		double route_cost_sum = 0;
+		const size_t country_count = trade_network.get_node_count() - 1;
+		for (size_t from = 0; from < country_count; ++from) {
+			TradeNetwork::country_stats_t const& stats = trade_network.get_stats_yesterday(country_index_t(from));
+			exports += stats.export_value;
+			land += stats.land_export_value;
+			sea += stats.sea_export_value;
+			internal_fees += stats.internal_fees;
+			export_fees += stats.export_fees;
+			unmet += stats.unmet_import_value;
+			for (size_t to = 0; to < country_count; ++to) {
+				TradeNetwork::route_t const& route = trade_network.get_route(country_index_t(from), country_index_t(to));
+				if (route.mode == TradeNetwork::mode_t::NONE) {
+					continue;
+				}
+				routes++;
+				route_cost_sum += static_cast<double>(route.cost);
+				land_routes += route.mode == TradeNetwork::mode_t::LAND;
+				sea_routes += route.mode == TradeNetwork::mode_t::SEA;
+				mixed_routes += route.mode == TradeNetwork::mode_t::MIXED;
+			}
+		}
+		fmt::println(
+			"TRADE {} exports/day={:.0f} (land {:.0f} sea {:.0f}) fees/day: internal={:.0f} export={:.0f} cut off by the routes/day={:.0f} | routes={} (land {} sea {} mixed {}) average cost={:.3f}",
+			instance_manager.get_today(), static_cast<double>(exports), static_cast<double>(land), static_cast<double>(sea),
+			static_cast<double>(internal_fees), static_cast<double>(export_fees), static_cast<double>(unmet),
+			routes, land_routes, sea_routes, mixed_routes, routes > 0 ? route_cost_sum / routes : 0.0
+		);
+		// The flows between the countries (cargo value of yesterday): how big they are, to set the capacities of the routes
+		// The goods that were on offer in one country and wanted in another, but the routes had no room (kept at the outside node)
+		unmet += trade_network.get_stats_yesterday(trade_network.get_outside_node()).unmet_import_value;
+		std::vector<std::pair<double, std::pair<size_t, size_t>>> flows;
+		for (size_t from = 0; from < country_count; ++from) {
+			for (size_t to = 0; to < country_count; ++to) {
+				const double value = static_cast<double>(trade_network.get_pair_flow_yesterday(country_index_t(from), country_index_t(to)));
+				if (value > 0) {
+					flows.push_back({ value, { from, to } });
+				}
+			}
+		}
+		std::sort(flows.begin(), flows.end(), [](auto const& lhs, auto const& rhs) { return lhs.first > rhs.first; });
+		if (!flows.empty()) {
+			const auto quantile = [&flows](const double share) -> double {
+				return flows[static_cast<size_t>(static_cast<double>(flows.size() - 1) * (1.0 - share))].first;
+			};
+			fmt::print(
+				"TRADEFLOWS pairs={} median={:.1f} p90={:.1f} p99={:.1f} max={:.1f} | top:",
+				flows.size(), quantile(0.5), quantile(0.9), quantile(0.99), flows.front().first
+			);
+			for (size_t i = 0; i < flows.size() && i < 8; ++i) {
+				fmt::print(
+					" {}>{} {:.0f}",
+					instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index_t(flows[i].second.first)).country_definition.get_identifier(),
+					instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index_t(flows[i].second.second)).country_definition.get_identifier(),
+					flows[i].first
+				);
+			}
+			fmt::println("");
+		}
+	}
 }
 
 // Exercises the army actions (split, merge, dig in, recruitment, disband) and prints the results with the "ARMY" prefix
