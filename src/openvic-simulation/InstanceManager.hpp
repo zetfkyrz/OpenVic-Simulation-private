@@ -130,6 +130,12 @@ namespace OpenVic {
 		bool load_bookmark(Bookmark const& new_bookmark);
 		bool start_game_session();
 		bool update_clock();
+		// update_clock would do something now: a tick is due, there are actions to execute or the game state has to be updated.
+		// (Used by the game to hand the work to a thread of its own only when there is work; the thread must not run at the same
+		// time as anything that reads or writes the simulation.)
+		bool is_advance_due() const {
+			return is_game_session_started() && (simulation_clock.is_tick_due() || !game_action_queue.empty() || gamestate_needs_update);
+		}
 		void force_tick_and_update();
 
 		bool set_today_and_update(Date new_today);

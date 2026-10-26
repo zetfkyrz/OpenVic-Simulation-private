@@ -2,6 +2,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdint>
+#include <set>
+#include <utility>
+#include <vector>
 #include <chrono>
 #include <cstddef>
 #include <span>
@@ -17,6 +22,12 @@
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 using namespace OpenVic;
 
 void ThreadPool::loop_until_cancelled(
@@ -31,6 +42,16 @@ void ThreadPool::loop_until_cancelled(
 	const strata_index_t strata_count,
 	[[maybe_unused]] forwardable_span<WorkBundle> work_bundles
 ) {
+#if defined(_WIN32)
+	{
+		using SetThreadDescriptionFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+		static const SetThreadDescriptionFn set_description =
+			reinterpret_cast<SetThreadDescriptionFn>(GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription"));
+		if (set_description != nullptr) {
+			set_description(GetCurrentThread(), L"OpenVic pool");
+		}
+	}
+#endif
 	memory::FixedVector<char, good_index_t> reusable_goods_mask { good_count, {} };
 
 	memory::FixedVector<fixed_point_t, country_index_t> reusable_country_map_0 { country_index_t(country_keys.size()), fixed_point_t::_0 };
@@ -227,6 +248,58 @@ void ThreadPool::await_completion() {
 ThreadPool::ThreadPool(Date const& new_current_date)
 	: current_date {new_current_date} {}
 
+namespace {
+	// The number of physical cores (the logical processors of a core share its execution units, so more workers than cores hardly help
+	// and take the time from the other threads of the game: the main thread of the interface and the simulation thread)
+	std::size_t get_physical_core_count() {
+		const std::size_t logical = std::max<std::size_t>(std::thread::hardware_concurrency(), 1);
+#if defined(_WIN32)
+		DWORD length = 0;
+		GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &length);
+		if (length > 0) {
+			std::vector<std::uint8_t> buffer(length);
+			if (GetLogicalProcessorInformationEx(
+				RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &length
+			)) {
+				std::size_t cores = 0;
+				for (std::size_t offset = 0; offset < length;) {
+					auto const* info = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX const*>(buffer.data() + offset);
+					if (info->Size == 0) {
+						break;
+					}
+					if (info->Relationship == RelationProcessorCore) {
+						cores++;
+					}
+					offset += info->Size;
+				}
+				if (cores > 0) {
+					return std::min(cores, logical);
+				}
+			}
+		}
+#elif defined(__linux__)
+		if (std::FILE* file = std::fopen("/proc/cpuinfo", "r")) {
+			char line[256];
+			int physical = -1;
+			std::set<std::pair<int, int>> cores;
+			while (std::fgets(line, sizeof(line), file)) {
+				int value = 0;
+				if (std::sscanf(line, "physical id : %d", &value) == 1) {
+					physical = value;
+				} else if (std::sscanf(line, "core id : %d", &value) == 1) {
+					cores.insert({ physical, value });
+				}
+			}
+			std::fclose(file);
+			if (!cores.empty()) {
+				return std::min(cores.size(), logical);
+			}
+		}
+#endif
+		return logical;
+	}
+}
+
 void ThreadPool::set_worker_thread_count(const std::size_t count) {
 	worker_thread_count_override = count;
 }
@@ -303,7 +376,7 @@ void ThreadPool::initialise_threadpool(
 	const std::size_t max_worker_threads = std::min(
 		thread_count_override > 0
 			? thread_count_override
-			: std::max<std::size_t>(std::thread::hardware_concurrency(), 1),
+			: get_physical_core_count(),
 		WORK_BUNDLE_COUNT
 	);
 	threads.reserve(max_worker_threads);

@@ -68,6 +68,9 @@ namespace OpenVic {
 		bool is_game_session_active() const;
 
 		bool update_clock();
+		bool is_advance_due() const {
+			return instance_manager && instance_manager->is_advance_due();
+		}
 
 		static constexpr std::string_view get_commit_hash() {
 			return SIM_COMMIT_HASH;

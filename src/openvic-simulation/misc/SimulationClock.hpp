@@ -58,6 +58,11 @@ namespace OpenVic {
 		bool can_increase_simulation_speed() const;
 		bool can_decrease_simulation_speed() const;
 
+		// A tick is due: the game runs and the time of the next tick has come (conditionally_advance_game would tick now)
+		bool is_tick_due() const {
+			return !paused && next_tick_time <= get_now();
+		}
+
 		void conditionally_advance_game();
 		void force_advance_game(); //for debug only
 		void reset();
