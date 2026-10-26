@@ -180,6 +180,36 @@ memory::string ColonisationManager::get_block_reason(
 	return {};
 }
 
+memory::vector<ProvinceInstance*> ColonisationManager::get_startable_candidates(
+	InstanceManager& instance_manager, CountryInstance& country
+) const {
+	memory::vector<ProvinceInstance*> result;
+	// get_block_reason: only countries of a high enough place in the ranking colonise
+	if (country.get_total_rank() == 0 || country.get_total_rank() > get_max_colonial_rank(instance_manager)) {
+		return result;
+	}
+	const fixed_point_t free_points = get_total_points(instance_manager, country) - get_used_points(instance_manager, country);
+	const auto seas = reachable_seas(instance_manager, country);
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (province.province_definition.is_water() || province.get_owner() != nullptr) {
+			continue;
+		}
+		// Reach: a border by land or a port that reaches the seas next to the province (as in get_candidates)
+		if (!(touches_country_by_land(country, province, instance_manager.get_map_instance())
+			|| (province.province_definition.is_coastal() && touches_seas(province, seas)))) {
+			continue;
+		}
+		if (find_project(country, province) != nullptr) {
+			continue;
+		}
+		if (free_points < get_project_cost(instance_manager, country, province)) {
+			continue;
+		}
+		result.push_back(&province);
+	}
+	return result;
+}
+
 fixed_point_t ColonisationManager::get_project_cost(
 	InstanceManager& instance_manager, CountryInstance& country, ProvinceInstance& province
 ) const {

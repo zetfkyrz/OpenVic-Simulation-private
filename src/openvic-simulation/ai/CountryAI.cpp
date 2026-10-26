@@ -108,10 +108,7 @@ namespace {
 		ProvinceInstance const* capital = country.get_capital();
 		ProvinceInstance* best = nullptr;
 		fixed_point_t best_distance = fixed_point_t::_0;
-		for (ProvinceInstance* candidate : colonisation.get_candidates(instance_manager, country)) {
-			if (!colonisation.get_block_reason(instance_manager, country, *candidate).empty()) {
-				continue;
-			}
+		for (ProvinceInstance* candidate : colonisation.get_startable_candidates(instance_manager, country)) {
 			// How far in map units, a rough measure
 			fixed_point_t distance = fixed_point_t::_0;
 			if (capital != nullptr) {

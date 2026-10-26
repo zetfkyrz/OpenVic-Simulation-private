@@ -50,6 +50,10 @@ namespace OpenVic {
 		// The unowned land provinces the country could colonise (reach only, points are not checked)
 		memory::vector<ProvinceInstance*> get_candidates(InstanceManager& instance_manager, CountryInstance& country) const;
 
+		// The same provinces as get_candidates minus those get_block_reason refuses (for the AI, which needs no reasons): the reachable
+		// seas are worked out once instead of once for every province
+		memory::vector<ProvinceInstance*> get_startable_candidates(InstanceManager& instance_manager, CountryInstance& country) const;
+
 		void tick(InstanceManager& instance_manager);
 	};
 }
