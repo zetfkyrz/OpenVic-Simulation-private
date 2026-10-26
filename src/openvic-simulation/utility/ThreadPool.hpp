@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -65,6 +66,13 @@ namespace OpenVic {
 
 		constexpr static std::size_t WORK_BUNDLE_COUNT = 32;
 		std::array<WorkBundle, WORK_BUNDLE_COUNT> all_work_bundles;
+		// The bundles are not fixed to a thread: every thread takes the next free bundle (the heaviest ones of the last time first), so
+		// that a heavy bundle does not hold the others. The result does not depend on which thread works a bundle: the random numbers
+		// and the data belong to the bundle.
+		constexpr static std::size_t WORK_TYPE_COUNT = 8;
+		std::atomic<std::size_t> next_claim = 0;
+		std::array<std::size_t, WORK_BUNDLE_COUNT> claim_order {};
+		std::array<std::array<std::uint64_t, WORK_BUNDLE_COUNT>, WORK_TYPE_COUNT> bundle_cost_ns {};
 		memory::vector<std::thread> threads;
 		memory::vector<work_t> work_per_thread;
 		std::mutex thread_mutex, completed_mutex;

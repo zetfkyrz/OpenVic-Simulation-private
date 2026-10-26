@@ -1,6 +1,8 @@
 #include "ThreadPool.hpp"
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <span>
 #include <thread>
@@ -27,7 +29,7 @@ void ThreadPool::loop_until_cancelled(
 	forwardable_span<const CountryInstance> country_keys,
 	const good_index_t good_count,
 	const strata_index_t strata_count,
-	forwardable_span<WorkBundle> work_bundles
+	[[maybe_unused]] forwardable_span<WorkBundle> work_bundles
 ) {
 	memory::FixedVector<char, good_index_t> reusable_goods_mask { good_count, {} };
 
@@ -53,6 +55,22 @@ void ThreadPool::loop_until_cancelled(
 		strata_count
 	};
 
+	// Takes the free bundles one after another (see claim_order) and works them; the time of each is kept for the next order
+	const auto for_each_claimed_bundle = [this](const work_t type, auto&& function) -> void {
+		for (;;) {
+			const std::size_t claim = next_claim.fetch_add(1, std::memory_order_relaxed);
+			if (claim >= WORK_BUNDLE_COUNT) {
+				return;
+			}
+			const std::size_t bundle_index = claim_order[claim];
+			const auto start = std::chrono::steady_clock::now();
+			function(all_work_bundles[bundle_index]);
+			bundle_cost_ns[static_cast<std::size_t>(type)][bundle_index] = static_cast<std::uint64_t>(
+				std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()
+			);
+		}
+	};
+
 	while (!is_cancellation_requested) {
 		work_t work_type_copy;
 		{
@@ -75,7 +93,7 @@ void ThreadPool::loop_until_cancelled(
 			case work_t::NONE:
 				break;
 			case work_t::GOOD_EXECUTE_ORDERS:
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (GoodMarket& good : work_bundle.goods_chunk) {
 						good.execute_orders(
 							reusable_country_map_0,
@@ -83,11 +101,11 @@ void ThreadPool::loop_until_cancelled(
 							reusable_vectors_span.first<GoodMarket::VECTORS_FOR_EXECUTE_ORDERS>()
 						);
 					}
-				}
+				});
 				break;
 			case work_t::PROVINCE_TICK:
 				reusable_pop_values.clear_ranking_cache();
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
 						province.province_tick(
 							current_date,
@@ -97,11 +115,11 @@ void ThreadPool::loop_until_cancelled(
 							reusable_vectors_span.first<ProvinceInstance::VECTORS_FOR_PROVINCE_TICK>()
 						);
 					}
-				}
+				});
 				break;
 			case work_t::PROVINCE_INITIALISE_FOR_NEW_GAME:
 				reusable_pop_values.clear_ranking_cache();
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
 						province.initialise_for_new_game(
 							current_date,
@@ -111,10 +129,10 @@ void ThreadPool::loop_until_cancelled(
 							reusable_vectors_span.first<ProvinceInstance::VECTORS_FOR_PROVINCE_TICK>()
 						);
 					}
-				}
+				});
 				break;
 			case work_t::COUNTRY_TICK_BEFORE_MAP:
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
 						country.country_tick_before_map(
 							current_date,
@@ -123,28 +141,28 @@ void ThreadPool::loop_until_cancelled(
 							reusable_good_index_vector
 						);
 					}
-				}
+				});
 				break;
 			case work_t::COUNTRY_TICK_AFTER_MAP:
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
 						country.country_tick_after_map(current_date);
 					}
-				}
+				});
 				break;
 			case work_t::COUNTRY_UPDATE_GAMESTATE:
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
 						country.update_gamestate(current_date, *update_map_instance);
 					}
-				}
+				});
 				break;
 			case work_t::PROVINCE_UPDATE_GAMESTATE:
-				for (WorkBundle& work_bundle : work_bundles) {
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
 						province.update_gamestate(*update_instance_manager);
 					}
-				}
+				});
 				break;
 		}
 
@@ -163,6 +181,16 @@ void ThreadPool::process_work(const work_t work_type) {
 		if (is_cancellation_requested) {
 			return;
 		}
+
+		// The bundles that took longest the last time are taken first
+		const auto& costs = bundle_cost_ns[static_cast<std::size_t>(work_type)];
+		for (std::size_t i = 0; i < WORK_BUNDLE_COUNT; ++i) {
+			claim_order[i] = i;
+		}
+		std::stable_sort(claim_order.begin(), claim_order.end(), [&costs](const std::size_t lhs, const std::size_t rhs) -> bool {
+			return costs[lhs] > costs[rhs];
+		});
+		next_claim = 0;
 
 		{
 			std::lock_guard<std::mutex> completed_lock { completed_mutex };
