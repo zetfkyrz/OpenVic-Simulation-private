@@ -473,7 +473,8 @@ void Pop::allocate_for_needs(
 	// reusable_vector: [0, count) the money planned for every good, [count, 2 count) the most money the good can use,
 	// [2 count, 3 count) its weight (the inverse of its price)
 	const std::size_t count = scaled_needs.size();
-	reusable_vector.assign(3 * count, fixed_point_t::_0);
+	reusable_vector.clear();
+	reusable_vector.resize(3 * count);
 	fixed_point_t* const money_to_spend_per_good_draft = reusable_vector.data();
 	fixed_point_t* const max_money_to_spend_per_good = money_to_spend_per_good_draft + count;
 	fixed_point_t* const weight_per_good = max_money_to_spend_per_good + count;
@@ -559,10 +560,13 @@ void Pop::pop_tick_without_cleanup(
 	const std::size_t good_count = type_safe::get(reusable_goods_mask.size());
 	memory::vector<fixed_point_t>& reusable_vector_0 = reusable_vectors[0];
 	memory::vector<fixed_point_t>& reusable_vector_1 = reusable_vectors[1];
+	// The vectors are empty when a pop starts (see pop_tick). resize() without a value fills the new elements with zeros in a loop that
+	// becomes a memset, resize(n, 0) copied the value into every element in a function of the library (a fifth of the instructions of
+	// a pop tick)
 	memory::vector<fixed_point_t>& max_quantity_to_buy_per_good = reusable_vectors[2];
-	max_quantity_to_buy_per_good.resize(good_count, 0);
+	max_quantity_to_buy_per_good.resize(good_count);
 	memory::vector<fixed_point_t>& money_to_spend_per_good = reusable_vectors[3];
-	money_to_spend_per_good.resize(good_count, 0);
+	money_to_spend_per_good.resize(good_count);
 	cash_allocated_for_artisanal_spending = 0;
 	// A day of hunger (the needs of yesterday are still there, the new ones are filled below)
 	if (population_defines != nullptr && size > pop_size_t(0)

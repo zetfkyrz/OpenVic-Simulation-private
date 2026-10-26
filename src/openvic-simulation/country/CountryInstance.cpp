@@ -2443,7 +2443,47 @@ void CountryInstance::manage_national_stockpile(
 	reusable_good_index_vector.clear();
 }
 
+void CountryInstance::publish_need_consumption() {
+	// While verifying, the map was filled by the reports (the old way) and is only compared with the flat sums
+	const bool verify = verify_need_consumption;
+	auto const& pop_types = shared_country_values.get_shared_pop_type_values().get_keys();
+	for (auto [good_instance, good_data] : goods_data) {
+		if (!good_data.has_need_consumption_reports) {
+			continue;
+		}
+		std::size_t pop_types_with_consumption = 0;
+		bool is_different = false;
+		for (std::size_t i = 0; i < good_data.need_consumption_by_pop_type_index.size(); ++i) {
+			const fixed_point_t quantity = good_data.need_consumption_by_pop_type_index[i];
+			// Every report was more than zero
+			if (quantity == fixed_point_t::_0) {
+				continue;
+			}
+			pop_types_with_consumption++;
+			if (verify) {
+				const auto it = good_data.need_consumption_per_pop_type.find(&pop_types[i]);
+				is_different |= it == good_data.need_consumption_per_pop_type.end() || it->second != quantity;
+			} else {
+				good_data.need_consumption_per_pop_type[&pop_types[i]] = quantity;
+			}
+		}
+		if (verify) {
+			is_different |= good_data.need_consumption_per_pop_type.size() != pop_types_with_consumption;
+			if (is_different) {
+				spdlog::error_s(
+					"The consumption of the pops that country {} recorded for good {} is not the sum of its reports.", *this,
+					good_instance.get_identifier()
+				);
+				++need_consumption_mismatch_count;
+			}
+		}
+	}
+}
+
 void CountryInstance::country_tick_after_map(const Date today) {
+	// The consumption of the pops of the day is complete: the market is over
+	publish_need_consumption();
+
 	// Gain daily research points
 	research_point_stockpile += daily_research_points.get_untracked();
 
@@ -2649,6 +2689,7 @@ void CountryInstance::good_data_t::clear_daily_recorded_data() {
 		= available_amount
 		= 0;
 	need_consumption_per_pop_type.clear();
+	has_need_consumption_reports = false;
 	input_consumption_per_production_type.clear();
 	production_per_production_type.clear();
 }
@@ -2664,7 +2705,16 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 void CountryInstance::report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
 	good_data_t& good_data = goods_data.at_index(good_index);
 	const std::lock_guard<spin_mutex> lock_guard { *good_data.mutex };
-	good_data.need_consumption_per_pop_type[&pop_type] += quantity;
+	if (OV_unlikely(!good_data.has_need_consumption_reports)) {
+		good_data.has_need_consumption_reports = true;
+		good_data.need_consumption_by_pop_type_index.assign(
+			shared_country_values.get_shared_pop_type_values().get_keys().size(), fixed_point_t::_0
+		);
+	}
+	good_data.need_consumption_by_pop_type_index[static_cast<std::size_t>(type_safe::get(pop_type.index))] += quantity;
+	if (OV_unlikely(verify_need_consumption)) {
+		good_data.need_consumption_per_pop_type[&pop_type] += quantity;
+	}
 }
 void CountryInstance::report_pop_need_demand(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
 	good_data_t& good_data = goods_data.at_index(good_index);

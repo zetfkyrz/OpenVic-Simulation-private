@@ -72,6 +72,17 @@ void PopValuesFromProvince::update_pop_values_from_province(ProvinceInstance& pr
 		}
 	}
 	
+	const bool may_use_coastal_production_types = game_rules_manager.may_use_coastal_artisanal_production_types(province);
+	for (ranking_cache_entry_t const& entry : ranking_cache) {
+		if (
+			entry.max_cost_multiplier == max_cost_multiplier
+			&& entry.may_use_coastal_production_types == may_use_coastal_production_types
+		) {
+			ranked_artisanal_production_types = entry.ranked_artisanal_production_types;
+			return;
+		}
+	}
+
 	ranked_artisanal_production_types.clear();
 	ranked_artisanal_production_types.reserve(production_type_manager.get_production_type_count());
 	for (auto const& production_type : production_type_manager.get_production_types()) {
@@ -93,5 +104,9 @@ void PopValuesFromProvince::update_pop_values_from_province(ProvinceInstance& pr
 				return a.second > b.second;
 			}
 		);
+	}
+
+	if (ranking_cache.size() < MAX_RANKING_CACHE_ENTRIES) {
+		ranking_cache.push_back({ max_cost_multiplier, may_use_coastal_production_types, ranked_artisanal_production_types });
 	}
 }

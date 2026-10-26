@@ -85,6 +85,7 @@ void ThreadPool::loop_until_cancelled(
 				}
 				break;
 			case work_t::PROVINCE_TICK:
+				reusable_pop_values.clear_ranking_cache();
 				for (WorkBundle& work_bundle : work_bundles) {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
 						province.province_tick(
@@ -98,6 +99,7 @@ void ThreadPool::loop_until_cancelled(
 				}
 				break;
 			case work_t::PROVINCE_INITIALISE_FOR_NEW_GAME:
+				reusable_pop_values.clear_ranking_cache();
 				for (WorkBundle& work_bundle : work_bundles) {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
 						province.initialise_for_new_game(

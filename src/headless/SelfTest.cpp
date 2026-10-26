@@ -744,6 +744,9 @@ namespace {
 		// Every day of every run the provinces also add up the political support of their pops and compare it with the sums that they kept
 		const std::size_t kept_sums_differences_before = ProvinceInstance::get_political_support_cache_mismatch_count();
 		ProvinceInstance::set_verify_political_support_cache(true);
+		// The same for the consumption of the pops that the countries record: the flat sums against the map of the old way
+		const std::size_t consumption_differences_before = CountryInstance::get_need_consumption_mismatch_count();
+		CountryInstance::set_verify_need_consumption(true);
 
 		// ---- run 1: the game that the others are compared with
 		InstanceManager* im = game.start();
@@ -928,6 +931,12 @@ namespace {
 			ProvinceInstance::get_political_support_cache_mismatch_count() == kept_sums_differences_before,
 			"pops: the political support that a province keeps is always the sum of the political support of its pops",
 			fmt::format("{} differences", ProvinceInstance::get_political_support_cache_mismatch_count() - kept_sums_differences_before)
+		);
+		CountryInstance::set_verify_need_consumption(false);
+		r.check(
+			CountryInstance::get_need_consumption_mismatch_count() == consumption_differences_before,
+			"pops: the consumption that a country records by type of pop is the sum of the reports",
+			fmt::format("{} differences", CountryInstance::get_need_consumption_mismatch_count() - consumption_differences_before)
 		);
 	}
 }

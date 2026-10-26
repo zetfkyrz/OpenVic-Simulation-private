@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstddef>
 #include <functional>
 #include <utility>
 
@@ -390,6 +392,11 @@ namespace OpenVic {
 			fixed_point_t available_amount;
 
 			ordered_map<PopType const*, fixed_point_t> need_consumption_per_pop_type;
+			// The consumption of the pops is added up by the index of the type of pop while the day is played (millions of reports a day are
+			// too many for a map) and copied into need_consumption_per_pop_type when the day is over (publish_need_consumption); the vector
+			// only has numbers if there was a report today
+			memory::vector<fixed_point_t> need_consumption_by_pop_type_index;
+			bool has_need_consumption_reports = false;
 			ordered_map<ProductionType const*, fixed_point_t> input_consumption_per_production_type;
 			ordered_map<ProductionType const*, fixed_point_t> production_per_production_type;
 
@@ -920,6 +927,21 @@ namespace OpenVic {
 		//thread safe
 		void report_pop_income_tax(PopType const& pop_type, const fixed_point_t gross_income, const fixed_point_t paid_as_tax);
 		void report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
+		// Copies the consumption that was reported during the day into good_data_t::need_consumption_per_pop_type (done by country_tick_after_map)
+		void publish_need_consumption();
+		// For the self tests and the headless option -V: the consumption is also added up in need_consumption_per_pop_type while the day is
+		// played (the way it was done before the flat sums) and compared with the flat sums when the day is over; a difference is logged and
+		// counted
+		static void set_verify_need_consumption(const bool verify) {
+			verify_need_consumption = verify;
+		}
+		static std::size_t get_need_consumption_mismatch_count() {
+			return need_consumption_mismatch_count;
+		}
+	private:
+		inline static std::atomic<bool> verify_need_consumption = false;
+		inline static std::atomic<std::size_t> need_consumption_mismatch_count = 0;
+	public:
 		void report_pop_need_demand(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
 		// The same for the demand of many pops added up (the pop type does not matter for the demand)
 		void report_pop_need_demand_total(const good_index_t good_index, const fixed_point_t quantity);

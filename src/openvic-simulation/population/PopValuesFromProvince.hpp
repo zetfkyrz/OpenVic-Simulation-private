@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <utility>
+
 #include "openvic-simulation/core/memory/FixedVector.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
@@ -43,6 +46,16 @@ namespace OpenVic {
 		memory::FixedVector<PopStrataValuesFromProvince, strata_index_t> PROPERTY(effects_by_strata);
 		//excludes availability of goods on market
 		memory::vector<std::pair<ProductionType const*, fixed_point_t>> SPAN_PROPERTY(ranked_artisanal_production_types);
+
+		// The ranking above only depends on whether the province may use the coastal production types and on max_cost_multiplier (the
+		// prices do not change while the provinces are ticked), so a ranking that was worked out is kept until clear_ranking_cache()
+		struct ranking_cache_entry_t {
+			fixed_point_t max_cost_multiplier;
+			bool may_use_coastal_production_types;
+			memory::vector<std::pair<ProductionType const*, fixed_point_t>> ranked_artisanal_production_types;
+		};
+		static constexpr std::size_t MAX_RANKING_CACHE_ENTRIES = 64;
+		memory::vector<ranking_cache_entry_t> ranking_cache;
 	public:
 		PopsDefines const& defines;
 		GameRulesManager const& game_rules_manager;
@@ -61,5 +74,10 @@ namespace OpenVic {
 		mutable memory::vector<fixed_point_t> pop_need_demand_per_good;
 
 		void update_pop_values_from_province(ProvinceInstance& province);
+
+		// To be called before the provinces are ticked: the prices of the goods may have changed since the rankings were worked out
+		void clear_ranking_cache() {
+			ranking_cache.clear();
+		}
 	};
 }
