@@ -40,6 +40,28 @@ UnitType::UnitType(
 
 	using enum Modifier::modifier_type_t;
 
+	// The goods that the unit uses every month and how many of them its construction needed (ammunition is not in the
+	// construction cost: it takes the amount of the small arms, or of the artillery of a ship)
+	for (auto const& [good, quantity] : supply_cost) {
+		fixed_point_t construction_amount = fixed_point_t::_0;
+		if (auto const it = build_cost.find(good); it != build_cost.end()) {
+			construction_amount = it->second;
+		} else {
+			for (std::string_view const fallback : { "small_arms", "artillery" }) {
+				for (auto const& [cost_good, cost_quantity] : build_cost) {
+					if (cost_good->get_identifier() == fallback) {
+						construction_amount = cost_quantity;
+					}
+				}
+				if (construction_amount > fixed_point_t::_0) {
+					break;
+				}
+			}
+		}
+		const std::string_view identifier = good->get_identifier();
+		supply_items.push_back({ good, construction_amount, identifier == "canned_food" || identifier == "fuel" || identifier == "coal" });
+	}
+
 	for (auto [terrain, modifier_value] : mutable_iterator(unit_args.terrain_modifier_values)) {
 		terrain_modifiers.emplace(terrain, Modifier {
 			memory::fmt::format("{} {}", new_identifier, *terrain), std::move(modifier_value),

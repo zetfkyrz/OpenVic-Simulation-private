@@ -286,7 +286,7 @@ namespace OpenVic {
 		bool generate_deployment(MapInstance& map_instance, CountryInstance& country, Deployment const& deployment);
 
 		void update_gamestate();
-		void tick();
+		void tick(const Date today);
 
 		// Finds the shortest path (by land for armies, by sea between ports for navies) and starts moving the group,
 		// false if the destination is unreachable. With append = true the route starts at the end of the current route

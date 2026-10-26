@@ -108,6 +108,8 @@ namespace {
 			const fixed_point_t attack_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.attack / wd.leader_point_divisor);
 			const fixed_point_t defence_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
 			const fixed_point_t morale_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.morale);
+			// The units that are not fully supplied fight worse: attack and defence are proportional to the supply level
+			const fixed_point_t supply_level = army->get_country().get_army_supply_level();
 
 			if (fixed_point_t(static_cast<int32_t>(army->get_dig_in_level())) > dig_in_best) {
 				dig_in_best = fixed_point_t(static_cast<int32_t>(army->get_dig_in_level()));
@@ -129,8 +131,8 @@ namespace {
 				}
 
 				side.power += (regiment.get_regiment_type().attack + fixed_point_t::_1) * strength_factor * organisation_factor
-					* attack_multiplier;
-				defence_sum += (regiment.get_regiment_type().defence + fixed_point_t::_1) * defence_multiplier;
+					* attack_multiplier * supply_level;
+				defence_sum += (regiment.get_regiment_type().defence + fixed_point_t::_1) * defence_multiplier * supply_level;
 				morale_sum += morale_multiplier;
 				side.organisation += regiment.get_organisation();
 				side.max_organisation += max_organisation;
@@ -902,6 +904,8 @@ namespace {
 		side.ship_count = 0;
 
 		for (NavyInstance* navy : side.navies) {
+			// The ships that are not fully supplied shoot worse
+			const fixed_point_t supply_level = navy->get_country().get_navy_supply_level();
 			for (ShipInstance& ship : navy->get_ship_instances()) {
 				if (ship.get_max_strength() <= fixed_point_t::_0 || ship.get_strength() <= fixed_point_t::_0) {
 					continue;
@@ -912,7 +916,8 @@ namespace {
 				if (organisation_factor < min_org_factor) {
 					organisation_factor = min_org_factor;
 				}
-				side.power += (ship.get_ship_type().gun_power + ship.get_ship_type().torpedo_attack) * strength_factor * organisation_factor;
+				side.power += (ship.get_ship_type().gun_power + ship.get_ship_type().torpedo_attack) * strength_factor * organisation_factor
+					* supply_level;
 				side.organisation += ship.get_organisation();
 				side.max_organisation += ship.get_max_organisation();
 				side.ship_count++;

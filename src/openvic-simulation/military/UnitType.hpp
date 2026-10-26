@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string_view>
+#include <vector>
 
 #include <openvic-dataloader/v2script/Parser.hpp>
 
@@ -56,6 +57,18 @@ namespace OpenVic {
 
 		fixed_point_map_t<GoodDefinition const*> PROPERTY(build_cost);
 		fixed_point_map_t<GoodDefinition const*> PROPERTY(supply_cost);
+
+	public:
+		// What the unit uses of a supply good each month: the part of its construction cost (the share is set by the defines of the
+		// army and the navy: durable goods and consumable ones), see OpenVicEconomyDefines
+		struct supply_item_t {
+			GoodDefinition const* good;
+			fixed_point_t construction_amount; // The amount of the good in the construction cost of the unit
+			bool consumable; // A good that is used up (food, fuel, coal) rather than worn out
+		};
+
+	private:
+		std::vector<supply_item_t> PROPERTY(supply_items);
 
 		terrain_modifiers_t PROPERTY(terrain_modifiers);
 

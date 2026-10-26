@@ -372,8 +372,12 @@ namespace OpenVic {
 
 			fixed_point_t max_government_consumption; //for automated BuyUpToOrder
 			fixed_point_t government_needs; //quantity to allocate for while automated
+			// The average supplies of the units per day (what the stockpile is kept ready for) ...
 			fixed_point_t army_needs;
 			fixed_point_t navy_needs;
+			// ... and what the units whose supply day is today really use
+			fixed_point_t army_due;
+			fixed_point_t navy_due;
 			fixed_point_t overseas_maintenance;
 			fixed_point_t factory_demand;
 			fixed_point_t pop_demand;
@@ -461,6 +465,11 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(war_exhaustion);
 		// Share of the supplies the armies needed yesterday that the national stockpile could give (1 = fully supplied)
 		fixed_point_t PROPERTY(army_supply_ratio, fixed_point_t::_1);
+		fixed_point_t PROPERTY(navy_supply_ratio, fixed_point_t::_1);
+		// How well equipped the army and the navy are (1 = fully): it goes to (the budget slider times the supply ratio) by a share a day
+		// (ov_economy SUPPLY_LEVEL_CHANGE_PER_DAY); the attack, the defence and the gun power in battles are multiplied by it
+		fixed_point_t PROPERTY(army_supply_level, fixed_point_t::_1);
+		fixed_point_t PROPERTY(navy_supply_level, fixed_point_t::_1);
 		fixed_point_t PROPERTY(war_exhaustion_max);
 		bool PROPERTY_RW_CUSTOM_NAME(mobilised, is_mobilised, set_mobilised, false);
 		bool PROPERTY_CUSTOM_PREFIX(disarmed, is, false);
@@ -692,6 +701,8 @@ namespace OpenVic {
 		[[nodiscard]] fixed_point_t get_transport_to_treasury() const {
 			return transport_to_treasury_last;
 		}
+		// How many times more supplies than the standing ones a group uses today: it moves (1.5), it is on the land of an enemy (2)
+		[[nodiscard]] fixed_point_t get_supply_multiplier(UnitInstanceGroup const& group) const;
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
 		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;
 		[[nodiscard]] fixed_point_t calculate_navy_supply_cost_per_day() const;
@@ -831,7 +842,7 @@ namespace OpenVic {
 		//matching GoodMarketSellOrder::callback_t
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 
-		void calculate_government_good_needs();
+		void calculate_government_good_needs(const Date today);
 
 		void manage_national_stockpile(
 			TypedSpan<good_index_t, char> reusable_goods_mask,
@@ -873,6 +884,7 @@ namespace OpenVic {
 
 		void update_gamestate(const Date today, MapInstance& map_instance);
 		void country_tick_before_map(
+			const Date today,
 			TypedSpan<good_index_t, char> reusable_goods_mask,
 			forwardable_span<
 				memory::vector<fixed_point_t>,

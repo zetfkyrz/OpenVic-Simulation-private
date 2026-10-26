@@ -114,6 +114,7 @@ void ThreadPool::loop_until_cancelled(
 				for (WorkBundle& work_bundle : work_bundles) {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
 						country.country_tick_before_map(
+							current_date,
 							reusable_goods_mask,
 							reusable_vectors_span.first<CountryInstance::VECTORS_FOR_COUNTRY_TICK>(),
 							reusable_good_index_vector

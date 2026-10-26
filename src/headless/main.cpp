@@ -179,10 +179,11 @@ static void print_economy_report(InstanceManager& instance_manager) {
 			needs_value += (good_data.army_needs + good_data.navy_needs) * good_instance.get_price();
 		}
 		fmt::println(
-			"ARMYCOST {} ENG army supply/day={:.1f} navy={:.1f} | needs of the day at prices={:.1f} | actual stockpile spending={:.1f} regiments={}",
+			"ARMYCOST {} ENG army supply/day={:.1f} navy={:.1f} | needs of the day at prices={:.1f} | actual stockpile spending={:.1f} regiments={} | level army={:.2f} navy={:.2f}",
 			instance_manager.get_today(), static_cast<double>(eng->calculate_army_supply_cost_per_day()),
 			static_cast<double>(eng->calculate_navy_supply_cost_per_day()), static_cast<double>(needs_value),
-			static_cast<double>(eng->get_actual_national_stockpile_spending().load()), eng->get_regiment_count()
+			static_cast<double>(eng->get_actual_national_stockpile_spending().load()), eng->get_regiment_count(),
+			static_cast<double>(eng->get_army_supply_level()), static_cast<double>(eng->get_navy_supply_level())
 		);
 	}
 	{

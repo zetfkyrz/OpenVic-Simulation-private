@@ -2,7 +2,9 @@
 
 #include <string_view>
 
+#include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/core/object/Timespan.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/types/UnitBranchType.hpp"
 #include "openvic-simulation/types/UniqueId.hpp"
@@ -16,6 +18,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(organisation);
 		fixed_point_t PROPERTY(max_organisation);
 		fixed_point_t PROPERTY(strength);
+		// The day of the month the unit was created on: once a month on this day it uses its supplies
+		int32_t PROPERTY_RW(supply_day, 1);
 
 	protected:
 		UnitInstance(
@@ -39,6 +43,12 @@ namespace OpenVic {
 		}
 
 		void set_name(std::string_view new_name);
+
+		// The supplies are used once a month, on the day of the month the unit was created on (on the last day of a shorter month)
+		bool is_supply_day(const Date today) const {
+			const int32_t day = static_cast<int32_t>(today.get_day());
+			return day == supply_day || (supply_day > day && (today + Timespan::from_days(1)).is_month_start());
+		}
 
 		// Combat helpers, values are clamped to [0, max]
 		void take_damage(fixed_point_t organisation_loss, fixed_point_t strength_loss);

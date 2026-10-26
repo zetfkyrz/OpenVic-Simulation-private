@@ -601,6 +601,8 @@ UnitInstanceBranched<Branch>& UnitInstanceManager::generate_unit_instance(
 		}()
 	);
 
+	// The units of the start of the game have no date of creation: their supply days are spread over the month
+	unit_instance.set_supply_day(1 + static_cast<int32_t>(unit_instance.unique_id % 28));
 	unit_instance_map.emplace(unit_instance.unique_id, unit_instance);
 
 	return unit_instance;
@@ -712,7 +714,7 @@ void UnitInstanceManager::update_gamestate() {
 	}
 }
 
-void UnitInstanceManager::tick() {
+void UnitInstanceManager::tick(const Date today) {
 	for (ArmyInstance& army : armies) {
 		army.tick();
 		army.advance_dig_in(
@@ -742,6 +744,7 @@ void UnitInstanceManager::tick() {
 			ShipInstance& ship = *ships.insert(ShipInstance {
 				ship_id, fmt::format("{} {}", ship_type->get_identifier(), ship_id), *ship_type
 			});
+			ship.set_supply_day(static_cast<int32_t>(today.get_day()));
 			unit_instance_map.emplace(ship.unique_id, ship);
 
 			NavyInstance* fleet = nullptr;
@@ -765,6 +768,7 @@ void UnitInstanceManager::tick() {
 		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
 			regiment_id, fmt::format("{} {}", regiment_type->get_identifier(), regiment_id), *regiment_type, pop, false
 		});
+		regiment.set_supply_day(static_cast<int32_t>(today.get_day()));
 		unit_instance_map.emplace(regiment.unique_id, regiment);
 
 		// Joins a standing army of the country in the province or forms a new one

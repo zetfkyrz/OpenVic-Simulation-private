@@ -275,7 +275,7 @@ void InstanceManager::tick() {
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "after_map"); }
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "units");
-			unit_instance_manager.tick();
+			unit_instance_manager.tick(today);
 		}
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "wars");
