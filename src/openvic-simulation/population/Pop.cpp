@@ -94,7 +94,7 @@ Pop::Pop(
 	}
 
 fixed_point_t Pop::get_unemployment_fraction() const {
-	if (!get_type().can_be_unemployed) {
+	if (!get_type().can_be_unemployed || size <= pop_size_t(0)) {
 		return 0;
 	}
 	return fp::from_fraction(get_unemployed(), size);

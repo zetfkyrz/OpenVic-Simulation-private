@@ -641,28 +641,87 @@ fixed_point_t GoodMarket::plan_routes() {
 		}
 	}
 
-	// The cheapest routes first (ties by the countries, so that the order of the orders and of the threads does not matter)
-	std::sort(candidates.begin(), candidates.end(), [](candidate_t const& lhs, candidate_t const& rhs) -> bool {
-		if (lhs.cost != rhs.cost) {
-			return lhs.cost < rhs.cost;
+	// The offers are shared among the countries that want them in proportion to what they want, the cheaper the route the more (a share of
+	// the price lost on the way of less than that is taken to the power of four as the weight). In a shortage every country gets a part,
+	// the near and the cheap ones more; a first-come order by the price of the route left the far ones with nothing. A few rounds, as
+	// a country may be offered more than it wants by several exporters at once (the offers are cut in proportion then).
+	std::vector<fixed_point_t> weight_sum(node_count), inflow_round(node_count);
+	std::vector<fixed_point_t> room_left(candidates.size()), taken(candidates.size(), fixed_point_t::_0), tentative(candidates.size());
+	std::vector<fixed_point_t> factor(candidates.size());
+	for (std::size_t i = 0; i < candidates.size(); ++i) {
+		room_left[i] = candidates[i].room;
+		const fixed_point_t keep = fixed_point_t::_1 - candidates[i].cost;
+		const fixed_point_t keep_squared = keep * keep;
+		factor[i] = keep_squared * keep_squared;
+	}
+	constexpr int ROUNDS = 4;
+	for (int round = 0; round < ROUNDS; ++round) {
+		std::fill(weight_sum.begin(), weight_sum.end(), fixed_point_t::_0);
+		std::fill(inflow_round.begin(), inflow_round.end(), fixed_point_t::_0);
+		bool any = false;
+		for (std::size_t i = 0; i < candidates.size(); ++i) {
+			candidate_t const& candidate = candidates[i];
+			tentative[i] = fixed_point_t::_0;
+			if (export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0 || room_left[i] <= fixed_point_t::_0) {
+				continue;
+			}
+			weight_sum[candidate.from] += std::min(import_left[candidate.to], room_left[i]) * factor[i];
 		}
-		if (lhs.from != rhs.from) {
-			return lhs.from < rhs.from;
+		for (std::size_t i = 0; i < candidates.size(); ++i) {
+			candidate_t const& candidate = candidates[i];
+			if (export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0 || room_left[i] <= fixed_point_t::_0
+				|| weight_sum[candidate.from] <= fixed_point_t::_0) {
+				continue;
+			}
+			const fixed_point_t weight = std::min(import_left[candidate.to], room_left[i]) * factor[i];
+			tentative[i] = std::min(
+				{ fp::mul_div(export_left[candidate.from], weight, weight_sum[candidate.from]), import_left[candidate.to], room_left[i] }
+			);
+			inflow_round[candidate.to] += tentative[i];
 		}
-		return lhs.to < rhs.to;
-	});
+		for (std::size_t i = 0; i < candidates.size(); ++i) {
+			candidate_t const& candidate = candidates[i];
+			fixed_point_t quantity = tentative[i];
+			if (quantity <= fixed_point_t::_0) {
+				continue;
+			}
+			if (inflow_round[candidate.to] > import_left[candidate.to]) {
+				quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
+			}
+			if (quantity <= fixed_point_t::_0) {
+				continue;
+			}
+			any = true;
+			taken[i] += quantity;
+			room_left[i] -= quantity;
+			export_left[candidate.from] -= quantity;
+		}
+		// The importers are charged after all of their flows are scaled with the same totals
+		for (std::size_t i = 0; i < candidates.size(); ++i) {
+			candidate_t const& candidate = candidates[i];
+			fixed_point_t quantity = tentative[i];
+			if (quantity <= fixed_point_t::_0) {
+				continue;
+			}
+			if (inflow_round[candidate.to] > import_left[candidate.to]) {
+				quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
+			}
+			import_left[candidate.to] -= std::min(quantity, import_left[candidate.to]);
+		}
+		if (!any) {
+			break;
+		}
+	}
 
 	fixed_point_t planned = fixed_point_t::_0;
-	for (candidate_t const& candidate : candidates) {
-		const fixed_point_t quantity = std::min({ export_left[candidate.from], import_left[candidate.to], candidate.room });
-		if (quantity <= fixed_point_t::_0) {
+	for (std::size_t i = 0; i < candidates.size(); ++i) {
+		if (taken[i] <= fixed_point_t::_0) {
 			continue;
 		}
-		export_left[candidate.from] -= quantity;
-		import_left[candidate.to] -= quantity;
-		node_inflow[candidate.to] += quantity;
-		planned += quantity;
-		route_flows.push_back({ candidate.from, candidate.to, quantity, candidate.cost, candidate.mode });
+		candidate_t const& candidate = candidates[i];
+		node_inflow[candidate.to] += taken[i];
+		planned += taken[i];
+		route_flows.push_back({ candidate.from, candidate.to, taken[i], candidate.cost, candidate.mode });
 	}
 
 	for (std::size_t node = 0; node < node_count; ++node) {

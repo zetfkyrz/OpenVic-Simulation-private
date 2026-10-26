@@ -265,8 +265,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				fixed_point_t positive = -pop->growth_remainder;
 				const std::int32_t whole = take_whole(positive);
 				pop->growth_remainder = -positive;
-				pop->change_size(-whole, 0);
-				grown_total -= whole;
+				// Hunger never empties a pop (code that divides by the size of a pop would break on an empty one)
+				const std::int32_t can_go = std::max(0, type_safe::get(pop->get_size()) - 1);
+				pop->change_size(-std::min(whole, can_go), 0);
+				grown_total -= std::min(whole, can_go);
 			}
 
 			const PopType& type = pop->get_type();
@@ -278,7 +280,11 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				if (surplus > 0 && surplus >= defines.starvation_min_surplus) {
 					const std::size_t own_slot = type_safe::get(owner->index) * type_count + type_safe::get(type.index);
 					// TODO the technologies raise the share of the emigrants (the research system adds a bonus here)
-					const std::int32_t emigrants = static_cast<std::int32_t>(defines.emigration_share.of_int(surplus));
+					// A pop never disappears from hunger or emigration: at least one person stays
+					const std::int32_t people_that_may_go = std::max(0, type_safe::get(pop->get_size()) - 1);
+					const std::int32_t emigrants = std::min(
+						static_cast<std::int32_t>(defines.emigration_share.of_int(surplus)), people_that_may_go
+					);
 					std::int32_t placed = 0;
 					if (emigrants > 0) {
 						if (free_jobs_total[own_slot] > 0) {
@@ -302,8 +308,11 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 						}
 					}
 					// The rest of the surplus dies (the emigrants that found no place stay and are counted with the rest)
-					const std::int32_t staying = std::min(surplus - placed, type_safe::get(pop->get_size()));
-					const std::int32_t dying = static_cast<std::int32_t>(defines.surplus_death_share.of_int(std::max(0, staying - (emigrants - placed))));
+					const std::int32_t staying = surplus - placed;
+					const std::int32_t dying = std::min(
+						static_cast<std::int32_t>(defines.surplus_death_share.of_int(std::max(0, staying - (emigrants - placed)))),
+						std::max(0, people_that_may_go - placed)
+					);
 					if (dying > 0) {
 						pop->change_size(-dying, 5);
 						starved_total += dying;
