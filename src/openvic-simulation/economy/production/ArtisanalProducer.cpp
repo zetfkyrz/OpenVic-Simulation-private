@@ -564,6 +564,10 @@ ProductionType const* ArtisanalProducer::pick_production_type(
 					relative_score = fixed_point_t::_1;
 				} else {
 					const fixed_point_t previous_score_estimate = ranked_artisanal_production_types[i-1].second;
+					if (previous_score_estimate == score_estimate) {
+						relative_score = fixed_point_t::_1;
+						break;
+					}
 					relative_score = (
 						(current_score - score_estimate)
 						/ (previous_score_estimate - score_estimate)
@@ -615,12 +619,19 @@ ProductionType const* ArtisanalProducer::pick_production_type(
 		weights_sum += weight;
 	}
 
+	// No type is worth anything (all the scores are zero, which happens with the exponential prices): keep the current one
+	if (weights.empty() || weights_sum <= fixed_point_t::_0) {
+		return production_type_nullable;
+	}
+
 	const size_t sample_index = sample_weighted_index(
 		random_number_generator(),
 		weights,
 		weights_sum
 	);
 
-	assert(sample_index >= 0 && sample_index < ranked_artisanal_production_types.size());
+	if (sample_index >= ranked_artisanal_production_types.size()) {
+		return production_type_nullable;
+	}
 	return ranked_artisanal_production_types[sample_index].first;
 }
