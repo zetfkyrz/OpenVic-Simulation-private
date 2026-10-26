@@ -70,11 +70,39 @@ namespace {
 	}
 }
 
+namespace {
+	// The ideologies the monthly update treats in its own way, found once from the identifiers (not for every pop)
+	enum struct IdeologyKind : std::uint8_t {
+		OTHER, REACTIONARY, CONSERVATIVE, LIBERAL, SOCIALIST, COMMUNIST, ANARCHO_LIBERAL, FASCIST
+	};
+
+	IdeologyKind ideology_kind(std::string_view identifier) {
+		if (identifier == "reactionary") return IdeologyKind::REACTIONARY;
+		if (identifier == "conservative") return IdeologyKind::CONSERVATIVE;
+		if (identifier == "liberal") return IdeologyKind::LIBERAL;
+		if (identifier == "socialist") return IdeologyKind::SOCIALIST;
+		if (identifier == "communist") return IdeologyKind::COMMUNIST;
+		if (identifier == "anarcho_liberal") return IdeologyKind::ANARCHO_LIBERAL;
+		if (identifier == "fascist") return IdeologyKind::FASCIST;
+		return IdeologyKind::OTHER;
+	}
+
+	// A group of options (the policies of a party policy group or the reforms of a reform group) the support of a pop is spread over.
+	// closeness holds the closeness of every ideology to every option (option-major), it depends only on the numbers of the options.
+	struct OptionGroup {
+		size_t option_count = 0;
+		bool is_policy = false;
+		std::vector<size_t> targets;
+		std::vector<double> closeness;
+	};
+}
+
 void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 	DefinitionManager const& definitions = instance_manager.definition_manager;
 	OpenVicPoliticsDefines const& defines = definitions.get_define_manager().get_openvic_defines().politics;
 	PoliticsManager const& politics = definitions.get_politics_manager();
 	IssueManager const& issues = politics.get_issue_manager();
+	PopManager const& pop_manager = definitions.get_pop_manager();
 	ModifierEffectCache const& cache = definitions.get_modifier_manager().get_modifier_effect_cache();
 	const Date today = instance_manager.get_today();
 
@@ -84,8 +112,10 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 	const size_t reform_count = issues.get_reforms().size();
 
 	std::vector<double> positions;
+	std::vector<IdeologyKind> kinds(ideology_count, IdeologyKind::OTHER);
 	for (Ideology const& ideology : ideologies) {
 		positions.push_back(ideology_position(defines, ideology.get_identifier()));
+		kinds[static_cast<size_t>(type_safe::get(ideology.index))] = ideology_kind(ideology.get_identifier());
 	}
 
 	// Groups that take part in the distribution of the support of a pop
@@ -97,7 +127,60 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 	}
 	counted_groups = std::max<size_t>(counted_groups, 1);
 
+	// Tables that only depend on the definitions: the leanings of every pop type and the closeness of the ideologies to the options
+	const size_t pop_type_count = pop_manager.get_pop_type_count();
+	std::vector<std::vector<std::pair<size_t, double>>> leanings_by_type(pop_type_count);
+	std::vector<char> type_is_rich(pop_type_count, 0);
+	for (size_t t = 0; t < pop_type_count; ++t) {
+		PopType const* const type = pop_manager.get_pop_type_by_index(static_cast<pop_type_index_t>(static_cast<uint32_t>(t)));
+		if (type == nullptr) {
+			continue;
+		}
+		for (IdeologyWeight const& leaning : base_leaning(defines, type->get_identifier(), type->strata.get_identifier())) {
+			for (Ideology const& ideology : ideologies) {
+				if (ideology.get_identifier() == leaning.ideology) {
+					leanings_by_type[t].emplace_back(static_cast<size_t>(type_safe::get(ideology.index)), leaning.weight);
+				}
+			}
+		}
+		type_is_rich[t] = type->strata.get_identifier() == "rich";
+	}
+
+	std::vector<OptionGroup> option_groups;
+	const auto add_group = [&](const bool is_policy, const size_t option_count, auto&& option_index_at) -> void {
+		OptionGroup group;
+		group.option_count = option_count;
+		group.is_policy = is_policy;
+		group.targets.reserve(option_count);
+		group.closeness.reserve(option_count * ideology_count);
+		for (size_t option = 0; option < option_count; ++option) {
+			group.targets.push_back(option_index_at(option));
+			const double position = option_count > 1 ? static_cast<double>(option) / static_cast<double>(option_count - 1) : 0.5;
+			for (size_t i = 0; i < ideology_count; ++i) {
+				group.closeness.push_back(closeness(defines, positions[i], position));
+			}
+		}
+		option_groups.push_back(std::move(group));
+	};
+	for (PartyPolicyGroup const& group : issues.get_party_policy_groups()) {
+		auto const& options = group.get_party_policies();
+		add_group(true, options.size(), [&](size_t k) { return static_cast<size_t>(type_safe::get(options[k].get().index)); });
+	}
+	for (ReformGroup const& group : issues.get_reform_groups()) {
+		if (group.is_civilizing()) {
+			continue;
+		}
+		auto const& options = group.get_reforms();
+		add_group(false, options.size(), [&](size_t k) { return static_cast<size_t>(type_safe::get(options[k].get().index)); });
+	}
+
 	std::vector<fixed_point_t> ideology_support(ideology_count), policy_support(policy_count), reform_support(reform_count);
+	// Reused for every pop and every group instead of being made again each time
+	std::vector<double> shares(ideology_count, 0.0);
+	std::vector<double> weights;
+	fixed_point_map_t<CountryParty const*> votes;
+	const size_t strata_count = pop_manager.get_strata_count();
+	std::vector<double> eligible_by_strata(strata_count, 0.0);
 
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists() || country.is_rebel_country() || country.get_owned_provinces().empty()) {
@@ -126,6 +209,21 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				++parties_per_ideology[static_cast<size_t>(type_safe::get(party.ideology->index))];
 			}
 		}
+		// The ideologies without a party (their voters spread over all parties), in the order of the ideologies
+		std::vector<size_t> ideologies_without_party;
+		for (size_t i = 0; i < ideology_count; ++i) {
+			if (parties_per_ideology[i] == 0) {
+				ideologies_without_party.push_back(i);
+			}
+		}
+
+		// The share of each strata that may vote by the reforms (the same for all its pops of the country)
+		for (size_t s = 0; s < strata_count; ++s) {
+			Strata const* const strata = pop_manager.get_strata_by_index(static_cast<strata_index_t>(static_cast<uint32_t>(s)));
+			eligible_by_strata[s] = strata == nullptr ? 0.0 : std::clamp(
+				to_double(country.get_modifier_effect_value(*cache.get_strata_effects(*strata).get_vote())), 0.0, 1.0
+			);
+		}
 
 		// Who may vote: a share of each strata by the reforms, and the cultures the voting rules allow
 		RuleSet const& rules = country.get_rule_set();
@@ -147,31 +245,30 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				}
 
 				PopType const& type = pop.get_type();
+				const size_t type_index = static_cast<size_t>(type_safe::get(type.index));
 				const double consciousness = std::clamp(to_double(pop.get_consciousness()) / 10.0, 0.0, 1.0);
 				const double militancy = std::clamp(to_double(pop.get_militancy()) / 10.0, 0.0, 1.0);
 				const double literacy = std::clamp(to_double(pop.get_literacy()), 0.0, 1.0);
 
 				// ---- ideologies of the pop
-				std::vector<double> shares(ideology_count, 0.0);
+				std::fill(shares.begin(), shares.end(), 0.0);
 				double share_total = 0.0;
-				for (IdeologyWeight const& leaning : base_leaning(defines, type.get_identifier(), type.strata.get_identifier())) {
-					for (Ideology const& ideology : ideologies) {
-						if (ideology.get_identifier() == leaning.ideology) {
-							shares[static_cast<size_t>(type_safe::get(ideology.index))] += leaning.weight;
-						}
-					}
+				for (auto const& [ideology_index, weight] : leanings_by_type[type_index]) {
+					shares[ideology_index] += weight;
 				}
 				for (Ideology const& ideology : ideologies) {
 					const size_t i = static_cast<size_t>(type_safe::get(ideology.index));
-					const std::string_view name = ideology.get_identifier();
 					double w = shares[i] + defines.ideology_base_weight;
-					if (name == "reactionary") w *= 1.0 - defines.reactionary_consciousness_penalty * consciousness;
-					else if (name == "conservative") w *= 1.0 - defines.conservative_consciousness_penalty * consciousness;
-					else if (name == "liberal") w *= 1.0 + defines.liberal_consciousness_bonus * consciousness + defines.liberal_literacy_bonus * literacy;
-					else if (name == "socialist") w *= defines.socialist_base + defines.socialist_consciousness_bonus * consciousness + defines.socialist_militancy_bonus * militancy;
-					else if (name == "communist") w *= defines.communist_base + defines.communist_consciousness_militancy_bonus * consciousness * militancy;
-					else if (name == "anarcho_liberal") w *= defines.anarcho_liberal_base + defines.anarcho_liberal_militancy_bonus * militancy;
-					else if (name == "fascist") w *= defines.fascist_base + defines.fascist_militancy_bonus * militancy * (1.0 - consciousness);
+					switch (kinds[i]) {
+					case IdeologyKind::REACTIONARY: w *= 1.0 - defines.reactionary_consciousness_penalty * consciousness; break;
+					case IdeologyKind::CONSERVATIVE: w *= 1.0 - defines.conservative_consciousness_penalty * consciousness; break;
+					case IdeologyKind::LIBERAL: w *= 1.0 + defines.liberal_consciousness_bonus * consciousness + defines.liberal_literacy_bonus * literacy; break;
+					case IdeologyKind::SOCIALIST: w *= defines.socialist_base + defines.socialist_consciousness_bonus * consciousness + defines.socialist_militancy_bonus * militancy; break;
+					case IdeologyKind::COMMUNIST: w *= defines.communist_base + defines.communist_consciousness_militancy_bonus * consciousness * militancy; break;
+					case IdeologyKind::ANARCHO_LIBERAL: w *= defines.anarcho_liberal_base + defines.anarcho_liberal_militancy_bonus * militancy; break;
+					case IdeologyKind::FASCIST: w *= defines.fascist_base + defines.fascist_militancy_bonus * militancy * (1.0 - consciousness); break;
+					case IdeologyKind::OTHER: break;
+					}
 					if (!ideology_active[i]) w = 0.0;
 					shares[i] = w;
 					share_total += w;
@@ -189,41 +286,30 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				// ---- support of the options of the reforms and of the party policies
 				std::fill(policy_support.begin(), policy_support.end(), fixed_point_t::_0);
 				std::fill(reform_support.begin(), reform_support.end(), fixed_point_t::_0);
-				const auto spread = [&](const size_t option_count, auto&& option_index_at, std::vector<fixed_point_t>& target) -> void {
-					std::vector<double> weights(option_count, 0.0);
+				for (OptionGroup const& group : option_groups) {
+					weights.assign(group.option_count, 0.0);
 					double weight_total = 0.0;
-					for (size_t option = 0; option < option_count; ++option) {
-						const double position = option_count > 1 ? static_cast<double>(option) / static_cast<double>(option_count - 1) : 0.5;
+					for (size_t option = 0; option < group.option_count; ++option) {
+						double const* const row = group.closeness.data() + option * ideology_count;
 						for (size_t i = 0; i < ideology_count; ++i) {
-							weights[option] += shares[i] * closeness(defines, positions[i], position);
+							weights[option] += shares[i] * row[i];
 						}
 						weight_total += weights[option];
 					}
 					if (weight_total <= 0.0) {
-						return;
+						continue;
 					}
-					for (size_t option = 0; option < option_count; ++option) {
-						target[option_index_at(option)] = fixed_point_t::parse_unsafe(
+					std::vector<fixed_point_t>& target = group.is_policy ? policy_support : reform_support;
+					for (size_t option = 0; option < group.option_count; ++option) {
+						target[group.targets[option]] = fixed_point_t::parse_unsafe(
 							static_cast<float>(weights[option] / weight_total * size / static_cast<double>(counted_groups))
 						);
 					}
-				};
-				for (PartyPolicyGroup const& group : issues.get_party_policy_groups()) {
-					auto const& options = group.get_party_policies();
-					spread(options.size(), [&](size_t k) { return static_cast<size_t>(type_safe::get(options[k].get().index)); }, policy_support);
-				}
-				for (ReformGroup const& group : issues.get_reform_groups()) {
-					if (group.is_civilizing()) {
-						continue;
-					}
-					auto const& options = group.get_reforms();
-					spread(options.size(), [&](size_t k) { return static_cast<size_t>(type_safe::get(options[k].get().index)); }, reform_support);
 				}
 				pop.set_political_support(ideology_support, policy_support, reform_support);
 
 				// ---- votes
-				double eligible = to_double(country.get_modifier_effect_value(*cache.get_strata_effects(type.strata).get_vote()));
-				eligible = std::clamp(eligible, 0.0, 1.0);
+				double eligible = eligible_by_strata[static_cast<size_t>(type_safe::get(type.strata.index))];
 				const auto status = pop.get_culture_status();
 				if (primary_only && status != Pop::culture_status_t::PRIMARY) {
 					eligible = 0.0;
@@ -233,13 +319,11 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 					eligible = 0.0;
 				}
 
-				fixed_point_map_t<CountryParty const*> votes;
+				votes.clear();
 				if (!active_parties.empty() && eligible > 0.0) {
 					double no_party_share = 0.0;
-					for (size_t i = 0; i < ideology_count; ++i) {
-						if (parties_per_ideology[i] == 0) {
-							no_party_share += shares[i];
-						}
+					for (const size_t i : ideologies_without_party) {
+						no_party_share += shares[i];
 					}
 					for (CountryParty const* party : active_parties) {
 						const size_t i = static_cast<size_t>(type_safe::get(party->ideology->index));
@@ -253,10 +337,10 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				}
 				pop.set_party_votes(votes);
 
-				// ---- upper house
-				if (!rich_only || type.strata.get_identifier() == "rich") {
+				// ---- upper house (the same amounts as the ideology support above)
+				if (!rich_only || type_is_rich[type_index]) {
 					for (size_t i = 0; i < ideology_count; ++i) {
-						const fixed_point_t part = fixed_point_t::parse_unsafe(static_cast<float>(shares[i] * size));
+						const fixed_point_t part = ideology_support[i];
 						upper_house[i] += part;
 						upper_house_total += part;
 					}
