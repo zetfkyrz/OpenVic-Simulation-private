@@ -150,6 +150,15 @@ void ThreadPool::loop_until_cancelled(
 					}
 				});
 				break;
+			case work_t::COUNTRY_CALLBACK:
+				for (;;) {
+					const std::size_t claim = next_country_claim.fetch_add(1, std::memory_order_relaxed);
+					if (claim >= country_claim_order.size()) {
+						break;
+					}
+					(*country_callback)(*country_claim_order[claim]);
+				}
+				break;
 			case work_t::COUNTRY_UPDATE_GAMESTATE:
 				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (CountryInstance& country : work_bundle.countries_chunk) {
@@ -249,6 +258,7 @@ void ThreadPool::initialise_threadpool(
 		return;
 	}
 
+	all_countries = countries;
 	RandomU32 master_rng { }; //TODO seed?
 
 
@@ -372,4 +382,17 @@ void ThreadPool::process_province_update_gamestate(InstanceManager const& instan
 void ThreadPool::process_country_update_gamestate(MapInstance& map_instance) {
 	update_map_instance = &map_instance;
 	process_work(work_t::COUNTRY_UPDATE_GAMESTATE);
+}
+
+void ThreadPool::process_country_callback(std::function<void(CountryInstance&)> const& function) {
+	country_callback = &function;
+	country_claim_order.clear();
+	for (CountryInstance& country : all_countries) {
+		country_claim_order.push_back(&country);
+	}
+	std::stable_sort(country_claim_order.begin(), country_claim_order.end(), [](CountryInstance const* lhs, CountryInstance const* rhs) -> bool {
+		return lhs->get_owned_provinces().size() > rhs->get_owned_provinces().size();
+	});
+	next_country_claim = 0;
+	process_work(work_t::COUNTRY_CALLBACK);
 }

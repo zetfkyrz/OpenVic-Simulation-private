@@ -73,6 +73,8 @@ namespace OpenVic {
 
 		void update_modifier_sums(const Date today, StaticModifierCache const& static_modifier_cache);
 		void update_gamestate(const Date today, MapInstance& map_instance);
+		// Calls the function for every country, in parallel (the function must only write what belongs to its own country)
+		void for_each_country_parallel(std::function<void(CountryInstance&)> const& function);
 		void country_manager_tick_before_map();
 		void country_manager_tick_after_map();
 	};

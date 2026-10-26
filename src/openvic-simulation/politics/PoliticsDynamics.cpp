@@ -174,18 +174,22 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 		add_group(false, options.size(), [&](size_t k) { return static_cast<size_t>(type_safe::get(options[k].get().index)); });
 	}
 
-	std::vector<fixed_point_t> ideology_support(ideology_count), policy_support(policy_count), reform_support(reform_count);
-	// Reused for every pop and every group instead of being made again each time
-	std::vector<double> shares(ideology_count, 0.0);
-	std::vector<double> weights;
-	fixed_point_map_t<CountryParty const*> votes;
 	const size_t strata_count = pop_manager.get_strata_count();
-	std::vector<double> eligible_by_strata(strata_count, 0.0);
 
-	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+	// The countries are independent (each one only writes its own pops, provinces and values), so they are worked out in parallel;
+	// what is shared (the winners of the elections, then the notifications) is applied afterwards in the order of the countries
+	std::vector<CountryParty const*> election_winners(instance_manager.get_country_instance_manager().get_country_instances().size(), nullptr);
+
+	const auto update_country = [&](CountryInstance& country) -> void {
 		if (!country.exists() || country.is_rebel_country() || country.get_owned_provinces().empty()) {
-			continue;
+			return;
 		}
+		// Reused for every pop and every group of this country instead of being made again each time
+		std::vector<fixed_point_t> ideology_support(ideology_count), policy_support(policy_count), reform_support(reform_count);
+		std::vector<double> shares(ideology_count, 0.0);
+		std::vector<double> weights;
+		fixed_point_map_t<CountryParty const*> votes;
+		std::vector<double> eligible_by_strata(strata_count, 0.0);
 		const bool civilised = country.is_civilised();
 
 		// Ideologies that exist for the country now
@@ -380,11 +384,20 @@ void PoliticsDynamics::monthly_update(InstanceManager& instance_manager) {
 				}
 				country.set_last_election(today);
 				if (winner != nullptr && country.get_ruling_party_untracked() != winner) {
-					SPDLOG_INFO("Election in {}: {} comes to power", country.get_identifier(), winner->get_identifier());
-					instance_manager.get_notification_log().add(today, &country, "election", winner->get_identifier());
-					country.set_ruling_party(*winner);
+					election_winners[static_cast<size_t>(type_safe::get(country.index))] = winner;
 				}
 			}
+		}
+	};
+
+	instance_manager.get_country_instance_manager().for_each_country_parallel(update_country);
+
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		CountryParty const* const winner = election_winners[static_cast<size_t>(type_safe::get(country.index))];
+		if (winner != nullptr) {
+			SPDLOG_INFO("Election in {}: {} comes to power", country.get_identifier(), winner->get_identifier());
+			instance_manager.get_notification_log().add(today, &country, "election", winner->get_identifier());
+			country.set_ruling_party(*winner);
 		}
 	}
 }

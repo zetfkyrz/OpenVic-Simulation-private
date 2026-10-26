@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -61,7 +62,8 @@ namespace OpenVic {
 			COUNTRY_TICK_BEFORE_MAP,
 			COUNTRY_TICK_AFTER_MAP,
 			PROVINCE_UPDATE_GAMESTATE,
-			COUNTRY_UPDATE_GAMESTATE
+			COUNTRY_UPDATE_GAMESTATE,
+			COUNTRY_CALLBACK
 		};
 
 		constexpr static std::size_t WORK_BUNDLE_COUNT = 32;
@@ -69,7 +71,7 @@ namespace OpenVic {
 		// The bundles are not fixed to a thread: every thread takes the next free bundle (the heaviest ones of the last time first), so
 		// that a heavy bundle does not hold the others. The result does not depend on which thread works a bundle: the random numbers
 		// and the data belong to the bundle.
-		constexpr static std::size_t WORK_TYPE_COUNT = 8;
+		constexpr static std::size_t WORK_TYPE_COUNT = 16;
 		std::atomic<std::size_t> next_claim = 0;
 		std::array<std::size_t, WORK_BUNDLE_COUNT> claim_order {};
 		std::array<std::array<std::uint64_t, WORK_BUNDLE_COUNT>, WORK_TYPE_COUNT> bundle_cost_ns {};
@@ -83,6 +85,11 @@ namespace OpenVic {
 		// What the work of the update of the game state needs (set by the caller before the work starts, read by the workers)
 		InstanceManager const* update_instance_manager = nullptr;
 		MapInstance* update_map_instance = nullptr;
+		std::function<void(CountryInstance&)> const* country_callback = nullptr;
+		// The callback over the countries takes the countries one by one, the biggest ones (by the provinces they own) first
+		forwardable_span<CountryInstance> all_countries;
+		memory::vector<CountryInstance*> country_claim_order;
+		std::atomic<std::size_t> next_country_claim = 0;
 
 		inline static std::atomic<std::size_t> worker_thread_count_override = 0;
 
@@ -135,5 +142,8 @@ namespace OpenVic {
 		void process_province_update_gamestate(InstanceManager const& instance_manager);
 		// Every country works out its own values (and the flags of its own provinces): in parallel
 		void process_country_update_gamestate(MapInstance& map_instance);
+		// Calls the function for every country, the countries are shared among the threads (the function must only write what belongs to
+		// its own country and must not depend on the order of the countries)
+		void process_country_callback(std::function<void(CountryInstance&)> const& function);
 	};
 }

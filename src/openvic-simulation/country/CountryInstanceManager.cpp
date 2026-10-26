@@ -315,6 +315,16 @@ void CountryInstanceManager::update_gamestate(const Date today, MapInstance& map
 	update_rankings(today);
 }
 
+void CountryInstanceManager::for_each_country_parallel(std::function<void(CountryInstance&)> const& function) {
+	if (thread_pool.is_initialised()) {
+		thread_pool.process_country_callback(function);
+	} else {
+		for (CountryInstance& country : country_instances) {
+			function(country);
+		}
+	}
+}
+
 void CountryInstanceManager::country_manager_tick_before_map() {
 	thread_pool.process_country_ticks_before_map();
 }
