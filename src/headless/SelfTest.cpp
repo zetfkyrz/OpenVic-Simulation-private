@@ -22,6 +22,7 @@
 #include <openvic-simulation/economy/trading/TradeNetwork.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
 #include <openvic-simulation/military/UnitInstance.hpp>
@@ -1007,6 +1008,209 @@ namespace {
 		}
 	}
 
+	// Divisions and templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 4): the civilised countries have armies of divisions (the regiments of the start
+	// are out of the template), the others have groups of regiments only and no generals; templates and reforming
+	void test_divisions(Results& r, InstanceManager& im) {
+		std::size_t civilised_armies = 0, regiments_without_division = 0, bad_division = 0, templated_at_start = 0, plain_with_division = 0, plain_leaders = 0;
+		std::size_t civilised_without_template = 0, plain_with_template = 0, plain_armies = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || !country.has_armies()) {
+				continue;
+			}
+			if (country.has_army_organisation()) {
+				civilised_without_template += country.get_division_templates().empty();
+			} else {
+				plain_with_template += !country.get_division_templates().empty();
+			}
+			for (ArmyInstance const& army : country.get_armies()) {
+				if (country.has_army_organisation()) {
+					civilised_armies++;
+					for (DivisionInstance const& division : army.get_divisions()) {
+						templated_at_start += division.template_id != 0;
+					}
+					for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+						bool found = false;
+						for (DivisionInstance const& division : army.get_divisions()) {
+							found |= division.id == regiment.get_division_id();
+						}
+						regiments_without_division += regiment.get_division_id() == 0;
+						bad_division += !found;
+					}
+				} else {
+					plain_armies++;
+					plain_with_division += !army.get_divisions().empty();
+					plain_leaders += army.get_leader() != nullptr;
+					for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+						plain_with_division += regiment.get_division_id() != 0;
+					}
+				}
+			}
+		}
+		r.check(civilised_armies > 50 && plain_armies > 0, "divisions: there are armies of civilised and of other countries", fmt::format("{} {}", civilised_armies, plain_armies));
+		r.check(regiments_without_division == 0 && bad_division == 0, "divisions: every regiment of a civilised country is in a division of its army",
+			fmt::format("{} {}", regiments_without_division, bad_division));
+		r.check(templated_at_start == 0, "divisions: the regiments of the start are out of the template (they are not touched)", fmt::format("{}", templated_at_start));
+		r.check(civilised_without_template == 0, "divisions: a civilised country has the standard template");
+		r.check(plain_with_division == 0 && plain_with_template == 0, "divisions: a country without the technology has no divisions and no templates");
+		r.check(plain_leaders == 0, "divisions: the armies of a country without the technology have no general");
+
+		// The standard template: three regiments of infantry and one of cavalry
+		CountryInstance* country = nullptr;
+		ArmyInstance* army = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || !candidate.has_army_organisation() || candidate.is_at_war()) {
+				continue;
+			}
+			for (ArmyInstance& candidate_army : candidate.get_armies()) {
+				std::size_t infantry = 0, cavalry = 0;
+				for (RegimentInstance const& regiment : candidate_army.get_regiment_instances()) {
+					infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
+					cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+				}
+				if (infantry >= 2 && cavalry >= 2 && !candidate_army.is_in_combat()) {
+					country = &candidate;
+					army = &candidate_army;
+					break;
+				}
+			}
+			if (army != nullptr) {
+				break;
+			}
+		}
+		r.check(army != nullptr, "divisions: an army with two regiments of infantry and two of cavalry exists");
+		if (army == nullptr) {
+			return;
+		}
+		DivisionTemplate const* const standard = country->find_division_template(1);
+		r.check(standard != nullptr && standard->slots[0] == 3 && standard->slots[1] == 1 && standard->slots[2] == 0 && standard->slots[3] == 0,
+			"divisions: the standard template has three regiments of infantry and one of cavalry");
+
+		const auto count_templated = [&army](const std::uint32_t template_id) -> std::size_t {
+			std::size_t count = 0;
+			for (DivisionInstance const& division : army->get_divisions()) {
+				count += division.template_id == template_id;
+			}
+			return count;
+		};
+		const auto count_in_templates = [&army](const std::size_t kind) -> std::size_t {
+			std::size_t count = 0;
+			for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+				for (DivisionInstance const& division : army->get_divisions()) {
+					if (division.id == regiment.get_division_id() && division.template_id != 0
+						&& get_division_slot_kind(regiment.get_regiment_type()) == kind) {
+						count++;
+					}
+				}
+			}
+			return count;
+		};
+
+		// The standard template: one whole division for every three regiments of infantry (with a regiment of cavalry for each)
+		std::size_t standard_infantry = 0, standard_cavalry = 0;
+		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+			standard_infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
+			standard_cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+		}
+		const std::size_t standard_expected = std::min(standard_infantry / 3, standard_cavalry);
+		const std::size_t standard_regiments = army->get_unit_count();
+		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), std::uint32_t(1));
+		im.force_tick_and_update();
+		r.check(count_templated(1) == standard_expected && army->get_unit_count() == standard_regiments,
+			"divisions: the regiments make whole divisions of the standard template (the others stay as they were)",
+			fmt::format("{} of {}", count_templated(1), standard_expected));
+		// The template is deleted: its divisions stay, out of the template (the regiments are free for the next template)
+		im.queue_game_action<delete_division_template_argument_t>(country->index, std::uint32_t(1));
+		im.force_tick_and_update();
+		r.check(country->find_division_template(1) == nullptr && count_templated(1) == 0 && army->get_unit_count() == standard_regiments,
+			"divisions: deleting a template leaves its divisions out of the template");
+
+		// A new template: one regiment of infantry and one of cavalry
+		const std::size_t templates_before = country->get_division_templates().size();
+		im.queue_game_action<create_division_template_argument_t>(
+			country->index, std::uint32_t(1), std::uint32_t(1), std::uint32_t(0), std::uint32_t(0)
+		);
+		im.force_tick_and_update();
+		r.check(country->get_division_templates().size() == templates_before + 1, "divisions: a template can be made");
+		const std::uint32_t pair_id = country->get_division_templates().back().id;
+		im.queue_game_action<create_division_template_argument_t>(
+			country->index, std::uint32_t(0), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
+		);
+		im.force_tick_and_update();
+		r.check(country->get_division_templates().size() == templates_before + 1, "divisions: a template without slots is refused");
+
+		std::size_t infantry = 0, cavalry = 0;
+		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+			infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
+			cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+		}
+		const std::size_t expected_divisions = std::min(infantry, cavalry);
+		const std::size_t regiments = army->get_unit_count();
+		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), pair_id);
+		im.force_tick_and_update();
+		r.check(count_templated(pair_id) == expected_divisions && expected_divisions >= 2, "divisions: the regiments make as many whole divisions as they can",
+			fmt::format("{} of {}", count_templated(pair_id), expected_divisions));
+		r.check(count_in_templates(0) == expected_divisions && count_in_templates(1) == expected_divisions,
+			"divisions: every division of the template has one regiment of infantry and one of cavalry");
+		r.check(army->get_unit_count() == regiments, "divisions: reforming does not lose regiments");
+
+		// Changing the template changes the divisions: two regiments of infantry and none of cavalry (the cavalry goes to the reserve)
+		im.queue_game_action<update_division_template_argument_t>(
+			country->index, pair_id, std::uint32_t(2), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
+		);
+		im.force_tick_and_update();
+		r.check(count_in_templates(1) == 0, "divisions: when the template changes the regiments that do not fit leave the divisions");
+		std::size_t out_of_template = 0, in_divisions = 0;
+		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+			bool templated = false;
+			for (DivisionInstance const& division : army->get_divisions()) {
+				templated |= division.id == regiment.get_division_id() && division.template_id != 0;
+			}
+			out_of_template += !templated;
+			in_divisions += templated;
+		}
+		r.check(in_divisions + out_of_template == regiments && out_of_template >= expected_divisions,
+			"divisions: the regiments that left wait in the reserve of the army", fmt::format("{} {}", in_divisions, out_of_template));
+		bad_division = 0;
+		for (DivisionInstance const& division : army->get_divisions()) {
+			if (division.template_id == pair_id) {
+				std::size_t members = 0;
+				for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+					members += regiment.get_division_id() == division.id;
+				}
+				bad_division += members > 2;
+			}
+		}
+		r.check(bad_division == 0, "divisions: a division never has more regiments than its template");
+
+		// The template is deleted: its divisions stay, out of the template
+		im.queue_game_action<delete_division_template_argument_t>(country->index, pair_id);
+		im.force_tick_and_update();
+		r.check(country->find_division_template(pair_id) == nullptr && count_templated(pair_id) == 0 && army->get_unit_count() == regiments,
+			"divisions: the divisions of a deleted template do not belong to any template");
+
+		// Without the technology there are no templates, and generals command armies only with it
+		CountryInstance* plain = nullptr;
+		ArmyInstance* plain_army = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.has_army_organisation() && candidate.has_armies() && !candidate.get_leaders<unit_branch_t::LAND>().empty()) {
+				plain = &candidate;
+				plain_army = &candidate.get_armies().front().get();
+				break;
+			}
+		}
+		if (plain != nullptr) {
+			im.queue_game_action<create_division_template_argument_t>(
+				plain->index, std::uint32_t(1), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
+			);
+			im.force_tick_and_update();
+			r.check(plain->get_division_templates().empty(), "divisions: a country without the technology cannot make templates");
+			LeaderInstance const& general = plain->get_leaders<unit_branch_t::LAND>().front();
+			im.queue_game_action<set_army_leader_argument_t>(plain_army->unique_id, general.unique_id);
+			im.force_tick_and_update();
+			r.check(plain_army->get_leader() == nullptr, "divisions: a general cannot command the army of a country without the technology");
+		}
+	}
+
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
 	void test_trade_and_hunger(Results& r, InstanceManager& im) {
@@ -1364,6 +1568,7 @@ namespace {
 			return;
 		}
 		test_supply_limit(r, *im);
+		test_divisions(r, *im);
 		test_supply_delivery(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

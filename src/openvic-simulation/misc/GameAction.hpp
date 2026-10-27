@@ -125,6 +125,10 @@ X(split_regiment, unique_id_t) \
 X(merge_armies, unique_id_t, unique_id_t) \
 X(set_army_leader, unique_id_t, unique_id_t) \
 X(set_army_supply_priority, unique_id_t, std::uint32_t) \
+X(create_division_template, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) \
+X(update_division_template, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) \
+X(delete_division_template, country_index_t, std::uint32_t) \
+X(reform_army_to_template, unique_id_t, std::uint32_t, std::uint32_t) \
 X(set_global_supply_priority, country_index_t, std::uint32_t) \
 X(disband_regiment, unique_id_t) \
 X(disband_army, unique_id_t) \

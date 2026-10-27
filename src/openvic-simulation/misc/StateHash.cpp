@@ -76,6 +76,13 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army.get_supply_reserve_average());
 			hasher.add(static_cast<std::uint64_t>(army.get_supply_priority()));
 			hasher.add(army.is_supply_priority_custom() ? 1 : 0);
+			for (DivisionInstance const& division : army.get_divisions()) {
+				hasher.add(static_cast<std::uint64_t>(division.id));
+				hasher.add(static_cast<std::uint64_t>(division.template_id));
+			}
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				hasher.add(static_cast<std::uint64_t>(regiment.get_division_id()));
+			}
 		}
 	}
 
@@ -86,6 +93,12 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_balance_before_investment_average());
 		hasher.add(country.get_prestige_untracked());
 		hasher.add(country.get_army_supply_level());
+		for (DivisionTemplate const& division_template : country.get_division_templates()) {
+			hasher.add(static_cast<std::uint64_t>(division_template.id));
+			for (const std::uint32_t slot : division_template.slots) {
+				hasher.add(static_cast<std::uint64_t>(slot));
+			}
+		}
 		hasher.add(country.get_navy_supply_level());
 		hasher.add(country.is_at_war() ? 1 : 0);
 		if (CountryParty const* const ruling_party = country.get_ruling_party_untracked(); ruling_party != nullptr) {

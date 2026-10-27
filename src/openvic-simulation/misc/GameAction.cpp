@@ -6,6 +6,7 @@
 #include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/economy/credit/Credit.hpp"
@@ -914,6 +915,10 @@ bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t c
 	if (leader == nullptr || leader->branch != group->branch || &leader->country != &group->get_country() || !leader->get_can_be_used()) {
 		return false;
 	}
+	// Generals command the armies of the countries with the technology of the organisation of the army only
+	if (group->branch == unit_branch_t::LAND && !group->get_country().has_army_organisation()) {
+		return false;
+	}
 	return group->set_leader(leader);
 }
 
@@ -940,6 +945,32 @@ bool GameActionManager::VariantVisitor::operator() (set_army_supply_priority_arg
 }
 
 // The priority of the armies of a country that have no priority of their own
+// Templates of the divisions: the number of regiments of the kinds infantry, cavalry, support, special
+bool GameActionManager::VariantVisitor::operator() (create_division_template_argument_t const& argument) const {
+	const auto [country_index, infantry, cavalry, support, special] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return create_division_template(country, { infantry, cavalry, support, special });
+}
+
+bool GameActionManager::VariantVisitor::operator() (update_division_template_argument_t const& argument) const {
+	const auto [country_index, template_id, infantry, cavalry, support, special] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return update_division_template(instance_manager, country, template_id, { infantry, cavalry, support, special });
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_division_template_argument_t const& argument) const {
+	const auto [country_index, template_id] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return delete_division_template(country, template_id);
+}
+
+// The regiments of the army that are out of the template (of one division, if its id is not 0) make divisions of the template
+bool GameActionManager::VariantVisitor::operator() (reform_army_to_template_argument_t const& argument) const {
+	const auto [army_id, division_id, template_id] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	return army != nullptr && reform_army_to_template(instance_manager, *army, division_id, template_id);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_global_supply_priority_argument_t const& argument) const {
 	const auto [country_index, value] = argument;
 	if (value > 2) {

@@ -3,6 +3,7 @@
 #include <functional>
 #include <string_view>
 
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/SupplyPriority.hpp"
 #include "openvic-simulation/core/memory/Colony.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
@@ -157,6 +158,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY_RW(supply_reserve_average, fixed_point_t::_0);
 		// The army is below SUPPLY_ALERT_LEVEL of the supply (the message "without supplies" was given)
 		bool PROPERTY_RW_CUSTOM_NAME(supply_alert, is_supply_alert, set_supply_alert, false);
+		// The divisions of the army (see military/Division.hpp); empty for a country without the technology of the organisation of the army
+		memory::vector<DivisionInstance> divisions;
 
 	public:
 		UnitInstanceGroupBranched(
@@ -169,6 +172,13 @@ namespace OpenVic {
 
 		void update_gamestate();
 		void tick();
+
+		std::span<const DivisionInstance> get_divisions() const {
+			return divisions;
+		}
+		memory::vector<DivisionInstance>& get_mutable_divisions() {
+			return divisions;
+		}
 
 		void set_transport_navy(NavyInstance* navy) {
 			transport_navy = navy;
@@ -261,6 +271,12 @@ namespace OpenVic {
 		// TODO - use single counter or separate for leaders vs units vs unit groups? (even separate for branches?)
 		// Starts at 1, so ID 0 represents an invalid value
 		unique_id_t unique_id_counter = 1;
+
+	public:
+		// The ids of the divisions (0 is no division)
+		std::uint32_t next_division_id = 1;
+
+	private:
 
 		// TODO - maps from unique_ids to leader/unit/unit group pointers (one big map or multiple maps?)
 

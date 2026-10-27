@@ -1251,6 +1251,8 @@ ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentIn
 	new_army.set_supply_level(army.get_supply_level());
 	new_army.set_supply_priority(army.get_supply_priority());
 	new_army.set_supply_priority_custom(army.is_supply_priority_custom());
+	// The regiment leaves its division (the next day the new army puts it into its reserve)
+	regiment.set_division_id(0);
 
 	if (!army.remove_unit(regiment)) {
 		destroy_group(new_army);
@@ -1278,6 +1280,12 @@ bool UnitInstanceManager::merge_armies(ArmyInstance& target, ArmyInstance& sourc
 				/ static_cast<std::int32_t>(target_count + source_count)
 		);
 	}
+
+	// The divisions of the source come with their regiments (the ids are unique in the game)
+	for (DivisionInstance const& division : source.get_divisions()) {
+		target.get_mutable_divisions().push_back(division);
+	}
+	source.get_mutable_divisions().clear();
 
 	memory::vector<UnitInstance*> moved;
 	for (UnitInstance& unit : source.get_units()) {

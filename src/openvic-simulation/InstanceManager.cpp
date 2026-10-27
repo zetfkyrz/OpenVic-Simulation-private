@@ -12,6 +12,7 @@
 #include "openvic-simulation/console/ConsoleInstance.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/economy/production/ArtisanalProducer.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/SupplyDelivery.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
@@ -254,6 +255,11 @@ void InstanceManager::tick() {
 			trade_network.begin_day();
 		}
 		{
+			// The regiments get into the divisions of their armies (the countries with the technology of the organisation of the army)
+			OV_PROFILE_SCOPE(tick_profiler, "divisions");
+			update_all_divisions(*this);
+		}
+		{
 			// What the supply limits of the provinces let through to the armies (one thread, before the countries work out the cost)
 			OV_PROFILE_SCOPE(tick_profiler, "army supply delivery");
 			update_army_supply_delivery(*this);
@@ -486,6 +492,9 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 
 	update_modifier_sums();
 	map_instance.initialise_for_new_game(*this);
+	// The regiments of the start of the game are put into divisions (out of the template) and the armies of the countries without the
+	// technology of the organisation of the army lose their generals
+	update_all_divisions(*this);
 	country_instance_manager.update_gamestate(today, map_instance);
 	market_instance.execute_orders();
 

@@ -21,6 +21,7 @@
 #include "openvic-simulation/economy/BuildingLevel.hpp"
 #include "openvic-simulation/economy/BuildingRestrictionCategory.hpp"
 #include "openvic-simulation/military/CombatWidth.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/SupplyPriority.hpp"
 #include "openvic-simulation/military/UnitBranchedGetterMacro.hpp"
 #include "openvic-simulation/modifier/ModifierSum.hpp"
@@ -474,6 +475,11 @@ namespace OpenVic {
 		// section 1), worked out every day: the global supply_limit that is added to the limit of the province, the multiplier of the
 		// technologies and the bonus of the own land
 		bool deep_assault_technology = false;
+		// The templates of the divisions of the country (military/Division.hpp); the standard one is made the first time the country has the
+		// technology of the organisation of the army
+		memory::vector<DivisionTemplate> division_templates;
+		std::uint32_t next_division_template_id = 1;
+		bool division_templates_made = false;
 		fixed_point_t PROPERTY(supply_limit_global_base);
 		fixed_point_t PROPERTY(supply_limit_multiplier, fixed_point_t::_1);
 		fixed_point_t PROPERTY(supply_home_bonus);
@@ -783,6 +789,30 @@ namespace OpenVic {
 			bool army_has_own_priority, supply_priority_t army_priority
 		) const {
 			return army_has_own_priority ? army_priority : army_supply_priority;
+		}
+		[[nodiscard]] std::span<const DivisionTemplate> get_division_templates() const {
+			return division_templates;
+		}
+		[[nodiscard]] DivisionTemplate const* find_division_template(const std::uint32_t id) const {
+			for (DivisionTemplate const& division_template : division_templates) {
+				if (division_template.id == id) {
+					return &division_template;
+				}
+			}
+			return nullptr;
+		}
+		// For the commands and the daily update only
+		memory::vector<DivisionTemplate>& get_mutable_division_templates() {
+			return division_templates;
+		}
+		std::uint32_t take_division_template_id() {
+			return next_division_template_id++;
+		}
+		bool are_division_templates_made() const {
+			return division_templates_made;
+		}
+		void set_division_templates_made(const bool made) {
+			division_templates_made = made;
 		}
 		// Days of the reserve of supplies a regiment of this country keeps
 		[[nodiscard]] fixed_point_t get_supply_reserve_capacity() const;

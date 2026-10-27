@@ -63,6 +63,8 @@ namespace OpenVic {
 	private:
 		Pop* PROPERTY_PTR(pop);
 		bool PROPERTY_CUSTOM_PREFIX(mobilised, is);
+		// The division of its army (DivisionInstance::id) the regiment is in, 0 if it is in none (a country without divisions)
+		std::uint32_t PROPERTY_RW(division_id, 0);
 
 		UnitInstanceBranched(
 			unique_id_t new_unique_id,

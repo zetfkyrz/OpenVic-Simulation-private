@@ -1226,7 +1226,10 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 		if (!country.get_auto_assign_leaders()) {
 			continue;
 		}
-		assign_free(country.get_armies(), country.get_leaders<unit_branch_t::LAND>());
+		// Generals command the armies of the countries with the technology of the organisation of the army only
+		if (country.has_army_organisation()) {
+			assign_free(country.get_armies(), country.get_leaders<unit_branch_t::LAND>());
+		}
 		assign_free(country.get_navies(), country.get_leaders<unit_branch_t::NAVAL>());
 	}
 }
