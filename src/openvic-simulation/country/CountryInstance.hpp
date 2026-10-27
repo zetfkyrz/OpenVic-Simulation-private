@@ -120,6 +120,10 @@ namespace OpenVic {
 		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
 			openvic_trade_defines = &defines;
 		}
+		static inline OpenVicSupplyDefines const* openvic_supply_defines = nullptr;
+		static void set_openvic_supply_defines(OpenVicSupplyDefines const& defines) {
+			openvic_supply_defines = &defines;
+		}
 
 		// Thresholds for different uncivilised country statuses
 		static constexpr fixed_point_t PRIMITIVE_CIVILISATION_PROGRESS = fixed_point_t(15) / 100;
@@ -465,6 +469,12 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(mobilisation_impact);
 		fixed_point_t PROPERTY(mobilisation_economy_impact);
 		fixed_point_t PROPERTY(supply_consumption);
+		// The parts of the supply limit of the provinces that depend on the country of the army (docs/PLAN_ARMY_SUPPLY_FRONTS.md,
+		// section 1), worked out every day: the global supply_limit that is added to the limit of the province, the multiplier of the
+		// technologies and the bonus of the own land
+		fixed_point_t PROPERTY(supply_limit_global_base);
+		fixed_point_t PROPERTY(supply_limit_multiplier, fixed_point_t::_1);
+		fixed_point_t PROPERTY(supply_home_bonus);
 		size_t PROPERTY(ship_count, 0);
 		fixed_point_t PROPERTY(total_consumed_ship_supply);
 		fixed_point_t PROPERTY(max_ship_supply);
@@ -727,6 +737,14 @@ namespace OpenVic {
 		// modifier "war" of Vic2 halves it)
 		[[nodiscard]] fixed_point_t get_supply_research_multiplier() const {
 			return fixed_point_t::_1;
+		}
+		// TODO research: the technologies that raise the supply limit of the provinces (as a multiplier) and the bonus of the
+		// own land (SUPPLY_HOME_BONUS_TECH, added to SUPPLY_HOME_BONUS when the technology is known)
+		[[nodiscard]] fixed_point_t get_supply_limit_research_multiplier() const {
+			return fixed_point_t::_1;
+		}
+		[[nodiscard]] bool has_supply_home_bonus_technology() const {
+			return false;
 		}
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
 		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;

@@ -164,6 +164,8 @@ InstanceManager::InstanceManager(
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
+	CountryInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
+	ProvinceInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
 	Pop::set_openvic_population_defines(definition_manager.get_define_manager().get_openvic_defines().population);
 	ResourceGatheringOperation::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 }

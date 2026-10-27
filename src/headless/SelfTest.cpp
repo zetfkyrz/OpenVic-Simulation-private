@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <openvic-simulation/GameManager.hpp>
+#include <openvic-simulation/DefinitionManager.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/economy/GoodInstance.hpp>
@@ -21,6 +22,9 @@
 #include <openvic-simulation/economy/trading/TradeNetwork.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/military/UnitInstance.hpp>
+#include <openvic-simulation/military/UnitInstanceGroup.hpp>
+#include <openvic-simulation/military/UnitType.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/misc/MoneyLedger.hpp>
@@ -563,6 +567,67 @@ namespace {
 		play(im, 5);
 	}
 
+	// Supply limit of the provinces (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 1): the parts of the breakdown make the capacity, it is never
+	// negative, the better terrain gives more, the railroad and the own land raise it and the load is the consumption of the regiments
+	void test_supply_limit(Results& r, InstanceManager& im) {
+		OpenVicSupplyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().supply;
+		std::size_t land = 0, bad_sum = 0, negative = 0, bad_rail = 0, bad_home = 0, bad_load = 0, with_army = 0;
+		fixed_point_t best_local = fixed_point_t::_0, worst_local = fixed_point_t(100000);
+		std::size_t railroads = 0;
+		for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
+			if (province.province_definition.is_water()) {
+				continue;
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				continue;
+			}
+			land++;
+			ProvinceInstance::supply_breakdown_t const own = province.get_supply_breakdown(owner);
+			const fixed_point_t expected = (own.local_limit + own.country_limit) * own.limit_multiplier * own.rail_multiplier
+				* own.technology_multiplier * (fixed_point_t::_1 + own.home_bonus);
+			bad_sum += (own.capacity != std::max(fixed_point_t::_0, expected));
+			negative += own.capacity < fixed_point_t::_0;
+			bad_rail += own.rail_multiplier != fixed_point_t::_1 + defines.supply_rail_bonus_per_level.fixed() * own.rail_level;
+			railroads += own.rail_level > fixed_point_t::_0;
+			bad_home += !own.is_home || own.home_bonus != owner->get_supply_home_bonus();
+			// another country: no bonus of the own land
+			for (CountryInstance const& other : im.get_country_instance_manager().get_country_instances()) {
+				if (&other != owner && other.exists()) {
+					ProvinceInstance::supply_breakdown_t const foreign = province.get_supply_breakdown(&other);
+					bad_home += foreign.is_home || foreign.home_bonus != fixed_point_t::_0;
+					break;
+				}
+			}
+			if (own.local_limit > best_local) {
+				best_local = own.local_limit;
+			}
+			if (own.local_limit < worst_local) {
+				worst_local = own.local_limit;
+			}
+			fixed_point_t load = fixed_point_t::_0;
+			for (ArmyInstance const& army : province.get_armies()) {
+				if (&army.get_country() == owner) {
+					for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+						load += regiment.unit_type.supply_consumption;
+					}
+				}
+			}
+			with_army += load > fixed_point_t::_0;
+			bad_load += own.load != load;
+		}
+		r.check(land > 1000, "supply limit: the land provinces with an owner are counted", fmt::format("{}", land));
+		r.check(bad_sum == 0, "supply limit: the capacity is (local + global) * base * railroad * technologies * (1 + own land)", fmt::format("{} provinces", bad_sum));
+		r.check(negative == 0, "supply limit: the capacity is never negative");
+		r.check(bad_rail == 0, "supply limit: every level of the railroad adds the same share (the levels are added)", fmt::format("{} provinces", bad_rail));
+		r.check(bad_home == 0, "supply limit: the bonus of the own land is only for the owner", fmt::format("{} provinces", bad_home));
+		r.check(best_local > worst_local && worst_local > fixed_point_t::_0, "supply limit: the better terrain gives a higher limit than the worse one",
+			fmt::format("{} .. {}", worst_local, best_local));
+		r.check(with_army > 0, "supply limit: there are provinces with the regiments of their owner");
+		r.check(bad_load == 0, "supply limit: the load is the supply consumption of the regiments of the country", fmt::format("{} provinces", bad_load));
+		r.check(railroads > 0, "supply limit: there are provinces with a railroad at the start", fmt::format("{}", railroads));
+	}
+
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
 	void test_trade_and_hunger(Results& r, InstanceManager& im) {
@@ -919,6 +984,7 @@ namespace {
 		if (im == nullptr) {
 			return;
 		}
+		test_supply_limit(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

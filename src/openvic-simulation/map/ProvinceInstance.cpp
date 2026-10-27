@@ -2,6 +2,7 @@
 #include "ProvinceInstanceDeps.hpp"
 #include "population/PopsAggregateDeps.hpp"
 
+#include <algorithm>
 #include <type_traits>
 
 #include "openvic-simulation/country/CountryDefinition.hpp"
@@ -15,7 +16,12 @@
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/misc/GameRulesManager.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/modifier/ModifierManager.hpp"
 #include "openvic-simulation/modifier/StaticModifierCache.hpp"
+#include "openvic-simulation/military/UnitInstance.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
+#include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/types/ConstructorTags.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
@@ -373,6 +379,24 @@ void ProvinceInstance::update_gamestate(InstanceManager const& instance_manager)
 		}
 	}
 
+	// The supply limit that the province gives itself (the part for a country is added by get_supply_breakdown)
+	supply_limit_local = fixed_point_t::_0;
+	supply_rail_level = fixed_point_t::_0;
+	{
+		ModifierEffectCache const& modifier_effect_cache =
+			instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+		supply_limit_local = std::max(
+			fixed_point_t::_0, modifier_sum.get_modifier_effect_value(*modifier_effect_cache.get_supply_limit_local_base())
+		);
+		BuildingType const* const railroad =
+			instance_manager.definition_manager.get_economy_manager().get_building_type_manager().get_infrastructure_building_type();
+		if (railroad != nullptr && railroad->province_building_index.has_value() && !province_definition.is_water()) {
+			supply_rail_level = fixed_point_t(
+				type_safe::get(buildings[railroad->province_building_index.value()].get_level())
+			);
+		}
+	}
+
 	land_regiment_count = 0;
 	for (ArmyInstance const& army : armies) {
 		land_regiment_count += army.get_unit_count();
@@ -393,6 +417,50 @@ void ProvinceInstance::update_gamestate(InstanceManager const& instance_manager)
 		building.update_gamestate(today);
 	}
 	_update_pops(instance_manager.definition_manager.get_define_manager().get_military_defines());
+}
+
+fixed_point_t ProvinceInstance::get_supply_load(CountryInstance const* const country) const {
+	fixed_point_t load = fixed_point_t::_0;
+	if (country == nullptr) {
+		return load;
+	}
+	for (ArmyInstance const& army : armies) {
+		if (&army.get_country() != country) {
+			continue;
+		}
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			load += regiment.unit_type.supply_consumption;
+		}
+	}
+	return load;
+}
+
+ProvinceInstance::supply_breakdown_t ProvinceInstance::get_supply_breakdown(CountryInstance const* const country) const {
+	supply_breakdown_t ret {};
+	ret.local_limit = supply_limit_local;
+	ret.limit_multiplier = openvic_supply_defines != nullptr ? openvic_supply_defines->supply_limit_base : fixed_point_t::_1;
+	ret.rail_level = supply_rail_level;
+	ret.rail_multiplier = fixed_point_t::_1;
+	if (openvic_supply_defines != nullptr) {
+		ret.rail_multiplier += openvic_supply_defines->supply_rail_bonus_per_level.fixed() * supply_rail_level;
+	}
+	ret.technology_multiplier = fixed_point_t::_1;
+	if (country != nullptr) {
+		ret.country_limit = country->get_supply_limit_global_base();
+		ret.technology_multiplier = country->get_supply_limit_multiplier();
+		ret.is_home = owner == country;
+		if (ret.is_home) {
+			ret.home_bonus = country->get_supply_home_bonus();
+		}
+		ret.load = get_supply_load(country);
+	}
+	// The limit never goes below zero (a negative global supply_limit of a country cannot make a province eat the regiments)
+	ret.capacity = std::max(
+		fixed_point_t::_0,
+		(ret.local_limit + ret.country_limit) * ret.limit_multiplier * ret.rail_multiplier * ret.technology_multiplier
+			* (fixed_point_t::_1 + ret.home_bonus)
+	);
+	return ret;
 }
 
 void ProvinceInstance::province_tick(

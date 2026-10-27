@@ -11,6 +11,7 @@
 #include "openvic-simulation/core/portable/ForwardableSpan.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/economy/BuildingInstance.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/economy/production/ResourceGatheringOperation.hpp"
 #include "openvic-simulation/map/LifeRating.hpp"
 #include "openvic-simulation/military/UnitBranchedGetterMacro.hpp"
@@ -106,6 +107,10 @@ namespace OpenVic {
 		// Set by the trade network every month: the railroad level (0..1) and the share of the price that a seller here loses on the
 		// way to the market of its country (the better the railroad, the smaller)
 		fixed_point_t PROPERTY(infrastructure_fraction);
+		// The supply limit (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 1), worked out every day: the part that the province itself gives
+		// (the modifiers of the terrain, the type of the province, the climate and the buildings) and the levels of its railroad
+		fixed_point_t PROPERTY(supply_limit_local);
+		fixed_point_t PROPERTY(supply_rail_level);
 		fixed_point_t PROPERTY(freight_rate);
 		bool PROPERTY_RW(is_overseas, false);
 		bool PROPERTY(has_empty_adjacent_province, false);
@@ -170,6 +175,29 @@ namespace OpenVic {
 			infrastructure_fraction = new_infrastructure_fraction;
 			freight_rate = new_freight_rate;
 		}
+
+		// Every part of the supply limit of the province for the armies of a country (the sum of the parts is the capacity) and
+		// the load: the supply consumption of the regiments of that country in the province. One function makes both the numbers
+		// of the game and the tooltips, so they cannot differ
+		struct supply_breakdown_t {
+			fixed_point_t local_limit; // what the province gives
+			fixed_point_t country_limit; // the global supply_limit of the country
+			fixed_point_t limit_multiplier; // SUPPLY_LIMIT_BASE
+			fixed_point_t rail_level; // levels of the railroad
+			fixed_point_t rail_multiplier; // 1 + bonus * levels
+			fixed_point_t technology_multiplier; // percentage change of the country and the technologies
+			fixed_point_t home_bonus; // the bonus of the own land (0 on the land of others)
+			fixed_point_t capacity; // the supply limit of the province
+			fixed_point_t load; // the supply consumption of the regiments of the country in the province
+			bool is_home = false; // the province is owned by the country
+		};
+		static inline OpenVicSupplyDefines const* openvic_supply_defines = nullptr;
+		static void set_openvic_supply_defines(OpenVicSupplyDefines const& defines) {
+			openvic_supply_defines = &defines;
+		}
+		// country can be null (the numbers of the province without a country: no global limit, no technologies, no own land)
+		[[nodiscard]] supply_breakdown_t get_supply_breakdown(CountryInstance const* country) const;
+		[[nodiscard]] fixed_point_t get_supply_load(CountryInstance const* country) const;
 
 		GoodDefinition const* get_rgo_good() const;
 		bool set_rgo_production_type_nullable(

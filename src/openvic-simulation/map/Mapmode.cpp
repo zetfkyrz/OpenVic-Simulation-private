@@ -289,7 +289,47 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 	);
 	ret &= add_mapmode("mapmode_culture", shaded_mapmode<Culture,pop_sum_t>(&ProvinceInstance::get_population_by_culture), "MAPMODE_13");
 	ret &= add_mapmode("mapmode_sphere", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_14");
-	ret &= add_mapmode("mapmode_supply", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_15");
+	// Supply: the supply limit of the province for the armies of the player divided by their load (without an army of the player there:
+	// by the load of a standard division); the colours are in the defines ov_supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 1)
+	ret &= add_mapmode(
+		"mapmode_supply",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			OpenVicSupplyDefines const* const defines = ProvinceInstance::openvic_supply_defines;
+			if (player_country == nullptr || defines == nullptr) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			ProvinceInstance::supply_breakdown_t const supply = province.get_supply_breakdown(player_country);
+			const fixed_point_t load = supply.load > fixed_point_t::_0 ? supply.load : defines->supply_map_reference_load;
+			if (load <= fixed_point_t::_0) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			const fixed_point_t ratio = supply.capacity / load;
+			colour_argb_t colour = 0x7E1010_argb;
+			if (ratio >= defines->supply_map_dark_green_from.fixed()) {
+				colour = 0x0E6B2E_argb;
+			} else if (ratio > defines->supply_map_green_above.fixed()) {
+				colour = 0x3FBF4F_argb;
+			} else if (ratio > defines->supply_map_light_blue_above.fixed()) {
+				colour = 0x55C8F0_argb;
+			} else if (ratio >= defines->supply_map_blue_from.fixed()) {
+				colour = 0x2F5FD0_argb;
+			} else if (ratio >= defines->supply_map_yellow_from.fixed()) {
+				colour = 0xF2D13A_argb;
+			} else if (ratio >= defines->supply_map_orange_from.fixed()) {
+				colour = 0xF29A2E_argb;
+			} else if (ratio >= defines->supply_map_red_from.fixed()) {
+				colour = 0xD63A2F_argb;
+			}
+			return colour.with_alpha(ALPHA_VALUE);
+		},
+		"MAPMODE_15"
+	);
 	ret &= add_mapmode("mapmode_party_loyalty", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_16");
 	ret &= add_mapmode("mapmode_ranking", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_17");
 	ret &= add_mapmode("mapmode_migration", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_18");

@@ -1668,6 +1668,20 @@ void CountryInstance::_update_military() {
 
 	supply_consumption = fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_supply_consumption());
 
+	// The supply limit of the provinces for the armies of this country
+	supply_limit_global_base = get_modifier_effect_value(*modifier_effect_cache.get_supply_limit_global_base());
+	supply_limit_multiplier = std::max(
+		fixed_point_t::_0,
+		fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_supply_limit_global_percentage_change())
+	) * get_supply_limit_research_multiplier();
+	supply_home_bonus = fixed_point_t::_0;
+	if (openvic_supply_defines != nullptr) {
+		supply_home_bonus = openvic_supply_defines->supply_home_bonus.fixed();
+		if (has_supply_home_bonus_technology()) {
+			supply_home_bonus += openvic_supply_defines->supply_home_bonus_tech.fixed();
+		}
+	}
+
 	const size_t regular_army_size = std::min(4 * deployed_non_mobilised_regiments, get_max_supported_regiment_count());
 
 	fixed_point_t sum_of_regiment_type_stats = 0;

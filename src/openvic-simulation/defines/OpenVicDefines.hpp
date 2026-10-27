@@ -464,6 +464,30 @@ namespace OpenVic {
 	/* The workers eat the goods they keep from the quantity that they need at most: the base need of the goods they eat times this */ \
 	INT(SUBSISTENCE_NEED_MULTIPLIER, subsistence_need_multiplier, 2, 1, 100)
 
+	// Supply limit of the provinces (docs/PLAN_ARMY_SUPPLY_FRONTS.md): how many regiments a province can feed. The limit of a province is
+	// (what the files give it: terrain, land_province, climate, buildings + the global supply_limit of the country of the army) times the
+	// railroad times the technologies times the bonus of the own land. The map mode "supply" colours the provinces by limit / load
+#define OV_SUPPLY_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	/* The limit that the files give, times this (1 = as in the files) */ \
+	FIXED(SUPPLY_LIMIT_BASE, supply_limit_base, fixed_point_t::_1, 0, 100) \
+	/* Every level of the railroad of the province adds this share to the limit (the levels are added: 3 levels = +30 percent) */ \
+	RATE(SUPPLY_RAIL_BONUS_PER_LEVEL, supply_rail_bonus_per_level, Rate(10, 100), 0, 10) \
+	/* On the own land of the army (the province is owned by the country of the army: not allied, not captured) the limit is higher by this */ \
+	/* share; the second share is what the technology that is not in the game yet will give */ \
+	RATE(SUPPLY_HOME_BONUS, supply_home_bonus, Rate(5, 100), 0, 10) \
+	RATE(SUPPLY_HOME_BONUS_TECH, supply_home_bonus_tech, Rate(5, 100), 0, 10) \
+	/* The map mode "supply" for a province without an army: the load is this many regiments (a standard division) */ \
+	FIXED(SUPPLY_MAP_REFERENCE_LOAD, supply_map_reference_load, fixed_point_t(4), 0, 1000) \
+	/* Colours of the map mode "supply" by limit / load. At least the first: dark green; above the second: green; above the third: light */ \
+	/* blue; at least the fourth: blue; below 1 (a shortage) at least the fifth: yellow, the sixth: orange, the seventh: red; less: dark red */ \
+	RATE(SUPPLY_MAP_DARK_GREEN_FROM, supply_map_dark_green_from, Rate(150, 100), 0, 100) \
+	RATE(SUPPLY_MAP_GREEN_ABOVE, supply_map_green_above, Rate(125, 100), 0, 100) \
+	RATE(SUPPLY_MAP_LIGHT_BLUE_ABOVE, supply_map_light_blue_above, Rate(110, 100), 0, 100) \
+	RATE(SUPPLY_MAP_BLUE_FROM, supply_map_blue_from, Rate(100, 100), 0, 100) \
+	RATE(SUPPLY_MAP_YELLOW_FROM, supply_map_yellow_from, Rate(90, 100), 0, 100) \
+	RATE(SUPPLY_MAP_ORANGE_FROM, supply_map_orange_from, Rate(75, 100), 0, 100) \
+	RATE(SUPPLY_MAP_RED_FROM, supply_map_red_from, Rate(50, 100), 0, 100)
+
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPoliticsDefines, "ov_politics", OV_POLITICS_DEFINES)
@@ -474,6 +498,7 @@ namespace OpenVic {
 	OV_DEFINE_GROUP(OpenVicEconomyDefines, "ov_economy", OV_ECONOMY_DEFINES)
 	OV_DEFINE_GROUP(OpenVicCreditDefines, "ov_credit", OV_CREDIT_DEFINES)
 	OV_DEFINE_GROUP(OpenVicTradeDefines, "ov_trade", OV_TRADE_DEFINES)
+	OV_DEFINE_GROUP(OpenVicSupplyDefines, "ov_supply", OV_SUPPLY_DEFINES)
 
 	struct OpenVicDefines {
 	private:
@@ -494,6 +519,7 @@ namespace OpenVic {
 		OpenVicEconomyDefines economy;
 		OpenVicCreditDefines credit;
 		OpenVicTradeDefines trade;
+		OpenVicSupplyDefines supply;
 
 		OpenVicDefines();
 
