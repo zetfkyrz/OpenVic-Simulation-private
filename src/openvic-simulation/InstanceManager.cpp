@@ -12,6 +12,7 @@
 #include "openvic-simulation/console/ConsoleInstance.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/economy/production/ArtisanalProducer.hpp"
+#include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -166,6 +167,7 @@ InstanceManager::InstanceManager(
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 	CountryInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
 	ProvinceInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
+	SupplyContext::set(country_instance_manager, war_manager);
 	Pop::set_openvic_population_defines(definition_manager.get_define_manager().get_openvic_defines().population);
 	ResourceGatheringOperation::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 }

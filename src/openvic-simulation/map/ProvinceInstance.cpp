@@ -385,9 +385,12 @@ void ProvinceInstance::update_gamestate(InstanceManager const& instance_manager)
 	{
 		ModifierEffectCache const& modifier_effect_cache =
 			instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
-		supply_limit_local = std::max(
-			fixed_point_t::_0, modifier_sum.get_modifier_effect_value(*modifier_effect_cache.get_supply_limit_local_base())
-		);
+		fixed_point_t local_limit = modifier_sum.get_modifier_effect_value(*modifier_effect_cache.get_supply_limit_local_base());
+		// The climate does not change the supply yet (a stub: the seasons and their climate will come later), so what it gives is taken off
+		if (province_definition.get_climate() != nullptr) {
+			local_limit -= province_definition.get_climate()->get_effect(*modifier_effect_cache.get_supply_limit_local_base());
+		}
+		supply_limit_local = std::max(fixed_point_t::_0, local_limit);
 		BuildingType const* const railroad =
 			instance_manager.definition_manager.get_economy_manager().get_building_type_manager().get_infrastructure_building_type();
 		if (railroad != nullptr && railroad->province_building_index.has_value() && !province_definition.is_water()) {
@@ -435,8 +438,11 @@ fixed_point_t ProvinceInstance::get_supply_load(CountryInstance const* const cou
 	return load;
 }
 
-ProvinceInstance::supply_breakdown_t ProvinceInstance::get_supply_breakdown(CountryInstance const* const country) const {
+ProvinceInstance::supply_breakdown_t ProvinceInstance::get_supply_breakdown(
+	CountryInstance const* const country, SupplyTerritory const& territory
+) const {
 	supply_breakdown_t ret {};
+	ret.territory = territory;
 	ret.local_limit = supply_limit_local;
 	ret.limit_multiplier = openvic_supply_defines != nullptr ? openvic_supply_defines->supply_limit_base : fixed_point_t::_1;
 	ret.rail_level = supply_rail_level;
@@ -458,7 +464,7 @@ ProvinceInstance::supply_breakdown_t ProvinceInstance::get_supply_breakdown(Coun
 	ret.capacity = std::max(
 		fixed_point_t::_0,
 		(ret.local_limit + ret.country_limit) * ret.limit_multiplier * ret.rail_multiplier * ret.technology_multiplier
-			* (fixed_point_t::_1 + ret.home_bonus)
+			* (fixed_point_t::_1 + ret.home_bonus) * std::clamp(ret.territory.coefficient, fixed_point_t::_0, fixed_point_t::_1)
 	);
 	return ret;
 }

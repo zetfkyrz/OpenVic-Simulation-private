@@ -476,6 +476,23 @@ namespace OpenVic {
 	/* share; the second share is what the technology that is not in the game yet will give */ \
 	RATE(SUPPLY_HOME_BONUS, supply_home_bonus, Rate(5, 100), 0, 10) \
 	RATE(SUPPLY_HOME_BONUS_TECH, supply_home_bonus_tech, Rate(5, 100), 0, 10) \
+	/* The supply coefficient of the armies on the land that is not held by the country or a friend (an ally, a country on the same side of a */ \
+	/* war, a country that gave the passage). One neighbour province is held: the first number (the technology adds the second); two or */ \
+	/* more neighbours are held: 100 percent. No neighbour is held, but one province lies between: the base for the first held province */ \
+	/* that touches the provinces between and the step for every next one (at most the count of them is counted). The same for two */ \
+	/* provinces between, which the technology "modern armies" opens (SUPPLY_GAP2_ENABLED = 1 opens it without the technology). Further */ \
+	/* away: SUPPLY_FAR (the technology adds). The generals do not change these numbers, only the technologies do */ \
+	RATE(SUPPLY_NEIGHBOUR_ONE, supply_neighbour_one, Rate(90, 100), 0, 1) \
+	RATE(SUPPLY_NEIGHBOUR_ONE_TECH, supply_neighbour_one_tech, Rate(10, 100), 0, 1) \
+	RATE(SUPPLY_GAP1_BASE, supply_gap1_base, Rate(50, 100), 0, 1) \
+	RATE(SUPPLY_GAP1_STEP, supply_gap1_step, Rate(10, 100), 0, 1) \
+	INT(SUPPLY_GAP1_MAX_COUNT, supply_gap1_max_count, 4, 1, 100) \
+	INT(SUPPLY_GAP2_ENABLED, supply_gap2_enabled, 0, 0, 1) \
+	RATE(SUPPLY_GAP2_BASE, supply_gap2_base, Rate(25, 100), 0, 1) \
+	RATE(SUPPLY_GAP2_STEP, supply_gap2_step, Rate(5, 100), 0, 1) \
+	INT(SUPPLY_GAP2_MAX_COUNT, supply_gap2_max_count, 5, 1, 100) \
+	RATE(SUPPLY_FAR, supply_far, Rate(10, 100), 0, 1) \
+	RATE(SUPPLY_FAR_TECH, supply_far_tech, Rate(10, 100), 0, 1) \
 	/* The map mode "supply" for a province without an army: the load is this many regiments (a standard division) */ \
 	FIXED(SUPPLY_MAP_REFERENCE_LOAD, supply_map_reference_load, fixed_point_t(4), 0, 1000) \
 	/* Colours of the map mode "supply" by limit / load. At least the first: dark green; above the second: green; above the third: light */ \

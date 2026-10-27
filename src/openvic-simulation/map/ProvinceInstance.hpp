@@ -14,6 +14,7 @@
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/economy/production/ResourceGatheringOperation.hpp"
 #include "openvic-simulation/map/LifeRating.hpp"
+#include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/military/UnitBranchedGetterMacro.hpp"
 #include "openvic-simulation/modifier/ModifierSum.hpp"
 #include "openvic-simulation/population/Pop.hpp"
@@ -187,6 +188,7 @@ namespace OpenVic {
 			fixed_point_t rail_multiplier; // 1 + bonus * levels
 			fixed_point_t technology_multiplier; // percentage change of the country and the technologies
 			fixed_point_t home_bonus; // the bonus of the own land (0 on the land of others)
+			SupplyTerritory territory; // the supply coefficient of the land that is not held by the country or a friend (1 on the held land)
 			fixed_point_t capacity; // the supply limit of the province
 			fixed_point_t load; // the supply consumption of the regiments of the country in the province
 			bool is_home = false; // the province is owned by the country
@@ -195,8 +197,9 @@ namespace OpenVic {
 		static void set_openvic_supply_defines(OpenVicSupplyDefines const& defines) {
 			openvic_supply_defines = &defines;
 		}
-		// country can be null (the numbers of the province without a country: no global limit, no technologies, no own land)
-		[[nodiscard]] supply_breakdown_t get_supply_breakdown(CountryInstance const* country) const;
+		// country can be null (the numbers of the province without a country: no global limit, no technologies, no own land);
+		// the territory is what calculate_supply_territory gave for the country in this province
+		[[nodiscard]] supply_breakdown_t get_supply_breakdown(CountryInstance const* country, SupplyTerritory const& territory) const;
 		[[nodiscard]] fixed_point_t get_supply_load(CountryInstance const* country) const;
 
 		GoodDefinition const* get_rgo_good() const;

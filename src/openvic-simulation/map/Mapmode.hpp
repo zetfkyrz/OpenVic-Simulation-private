@@ -33,10 +33,13 @@ namespace OpenVic {
 		using colour_func_t = fu2::function<
 			base_stripe_t(MapInstance const&, ProvinceInstance const&, CountryInstance const*, ProvinceInstance const*) const
 		>;
+		// Called once before the colours of all the provinces are made (a mapmode can work out what its colour_func needs for every province)
+		using prepare_func_t = fu2::function<void(MapInstance const&, CountryInstance const*) const>;
 
 	private:
 		// Not const so they don't have to be copied when the Mapmode is moved
 		colour_func_t PROPERTY(colour_func);
+		prepare_func_t PROPERTY(prepare_func);
 		memory::string PROPERTY(localisation_key);
 
 	public:
@@ -51,9 +54,16 @@ namespace OpenVic {
 			index_t new_index,
 			colour_func_t new_colour_func,
 			std::string_view new_localisation_key = {},
-			bool new_is_parchment_mapmode_allowed = true
+			bool new_is_parchment_mapmode_allowed = true,
+			prepare_func_t new_prepare_func = {}
 		);
 		Mapmode(Mapmode&&) = default;
+
+		void prepare(MapInstance const& map_instance, CountryInstance const* player_country) const {
+			if (prepare_func) {
+				prepare_func(map_instance, player_country);
+			}
+		}
 
 		base_stripe_t get_base_stripe_colours(
 			MapInstance const& map_instance, ProvinceInstance const& province,
@@ -72,7 +82,8 @@ namespace OpenVic {
 			std::string_view identifier,
 			Mapmode::colour_func_t colour_func,
 			std::string_view localisation_key = {},
-			bool parchment_mapmode_allowed = true
+			bool parchment_mapmode_allowed = true,
+			Mapmode::prepare_func_t prepare_func = {}
 		);
 
 		/* The mapmode colour image contains of a list of base colours and stripe colours. Each colour is four bytes

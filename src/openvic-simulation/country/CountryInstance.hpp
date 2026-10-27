@@ -746,6 +746,17 @@ namespace OpenVic {
 		[[nodiscard]] bool has_supply_home_bonus_technology() const {
 			return false;
 		}
+		// TODO research: the technologies that change the supply coefficient of the armies away from the own land (SUPPLY_NEIGHBOUR_ONE_TECH:
+		// one held neighbour gives 100 percent; SUPPLY_FAR_TECH: more far away; "modern armies" opens the search through two provinces)
+		[[nodiscard]] bool has_supply_neighbour_technology() const {
+			return false;
+		}
+		[[nodiscard]] bool has_supply_far_technology() const {
+			return false;
+		}
+		[[nodiscard]] bool has_supply_gap2_technology() const {
+			return false;
+		}
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
 		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;
 		[[nodiscard]] fixed_point_t calculate_navy_supply_cost_per_day() const;

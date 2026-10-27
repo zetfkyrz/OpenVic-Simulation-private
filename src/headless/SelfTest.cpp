@@ -22,7 +22,10 @@
 #include <openvic-simulation/economy/trading/TradeNetwork.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/military/SupplyTerritory.hpp>
 #include <openvic-simulation/military/UnitInstance.hpp>
+#include <openvic-simulation/military/War.hpp>
+#include <openvic-simulation/country/CountryInstanceManager.hpp>
 #include <openvic-simulation/military/UnitInstanceGroup.hpp>
 #include <openvic-simulation/military/UnitType.hpp>
 #include <openvic-simulation/map/State.hpp>
@@ -567,11 +570,13 @@ namespace {
 		play(im, 5);
 	}
 
-	// Supply limit of the provinces (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 1): the parts of the breakdown make the capacity, it is never
-	// negative, the better terrain gives more, the railroad and the own land raise it and the load is the consumption of the regiments
+	// Supply limit of the provinces (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 1 and 2): the parts of the breakdown make the capacity, it
+	// is never negative, the better terrain gives more, the railroad and the own land raise it, the load is the consumption of the
+	// regiments, and the coefficient of the land that is not held depends on how far the held provinces are
 	void test_supply_limit(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().supply;
-		std::size_t land = 0, bad_sum = 0, negative = 0, bad_rail = 0, bad_home = 0, bad_load = 0, with_army = 0;
+		CountryInstanceManager const& countries = im.get_country_instance_manager();
+		std::size_t land = 0, bad_sum = 0, negative = 0, bad_rail = 0, bad_home = 0, bad_load = 0, with_army = 0, bad_coefficient = 0;
 		fixed_point_t best_local = fixed_point_t::_0, worst_local = fixed_point_t(100000);
 		std::size_t railroads = 0;
 		for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
@@ -583,18 +588,22 @@ namespace {
 				continue;
 			}
 			land++;
-			ProvinceInstance::supply_breakdown_t const own = province.get_supply_breakdown(owner);
+			SupplyFriends const friends = SupplyFriends::build(*owner, countries, im.get_war_manager());
+			SupplyTerritory const territory =
+				calculate_supply_territory(province, im.get_map_instance(), *owner, friends, defines);
+			bad_coefficient += territory.coefficient < fixed_point_t::_0 || territory.coefficient > fixed_point_t::_1;
+			ProvinceInstance::supply_breakdown_t const own = province.get_supply_breakdown(owner, territory);
 			const fixed_point_t expected = (own.local_limit + own.country_limit) * own.limit_multiplier * own.rail_multiplier
-				* own.technology_multiplier * (fixed_point_t::_1 + own.home_bonus);
+				* own.technology_multiplier * (fixed_point_t::_1 + own.home_bonus) * territory.coefficient;
 			bad_sum += (own.capacity != std::max(fixed_point_t::_0, expected));
 			negative += own.capacity < fixed_point_t::_0;
 			bad_rail += own.rail_multiplier != fixed_point_t::_1 + defines.supply_rail_bonus_per_level.fixed() * own.rail_level;
 			railroads += own.rail_level > fixed_point_t::_0;
 			bad_home += !own.is_home || own.home_bonus != owner->get_supply_home_bonus();
 			// another country: no bonus of the own land
-			for (CountryInstance const& other : im.get_country_instance_manager().get_country_instances()) {
+			for (CountryInstance const& other : countries.get_country_instances()) {
 				if (&other != owner && other.exists()) {
-					ProvinceInstance::supply_breakdown_t const foreign = province.get_supply_breakdown(&other);
+					ProvinceInstance::supply_breakdown_t const foreign = province.get_supply_breakdown(&other, SupplyTerritory {});
 					bad_home += foreign.is_home || foreign.home_bonus != fixed_point_t::_0;
 					break;
 				}
@@ -617,7 +626,8 @@ namespace {
 			bad_load += own.load != load;
 		}
 		r.check(land > 1000, "supply limit: the land provinces with an owner are counted", fmt::format("{}", land));
-		r.check(bad_sum == 0, "supply limit: the capacity is (local + global) * base * railroad * technologies * (1 + own land)", fmt::format("{} provinces", bad_sum));
+		r.check(bad_sum == 0, "supply limit: the capacity is (local + global) * base * railroad * technologies * (1 + own land) * territory", fmt::format("{} provinces", bad_sum));
+		r.check(bad_coefficient == 0, "supply limit: the supply coefficient of the territory is always between 0 and 1", fmt::format("{} provinces", bad_coefficient));
 		r.check(negative == 0, "supply limit: the capacity is never negative");
 		r.check(bad_rail == 0, "supply limit: every level of the railroad adds the same share (the levels are added)", fmt::format("{} provinces", bad_rail));
 		r.check(bad_home == 0, "supply limit: the bonus of the own land is only for the owner", fmt::format("{} provinces", bad_home));
@@ -626,6 +636,174 @@ namespace {
 		r.check(with_army > 0, "supply limit: there are provinces with the regiments of their owner");
 		r.check(bad_load == 0, "supply limit: the load is the supply consumption of the regiments of the country", fmt::format("{} provinces", bad_load));
 		r.check(railroads > 0, "supply limit: there are provinces with a railroad at the start", fmt::format("{}", railroads));
+
+		// ---- The friends: the country, an ally, a country that gave the passage, the same side of a war; not an enemy
+		CountryInstance* first = nullptr;
+		CountryInstance* ally = nullptr;
+		CountryInstance* stranger = nullptr;
+		CountryInstance* enemy = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || country.get_total_rank() == 0) {
+				continue;
+			}
+			if (first == nullptr) {
+				first = &country;
+			} else if (ally == nullptr) {
+				ally = &country;
+			} else if (stranger == nullptr) {
+				stranger = &country;
+			} else if (enemy == nullptr) {
+				enemy = &country;
+			}
+		}
+		r.check(enemy != nullptr, "supply friends: four countries exist");
+		if (enemy != nullptr) {
+			SupplyFriends friends = SupplyFriends::build(*first, countries, im.get_war_manager());
+			r.check(friends.contains(first), "supply friends: a country is its own friend");
+			r.check(!friends.contains(ally) && !friends.contains(stranger) && !friends.contains(nullptr),
+				"supply friends: nobody else is a friend without an alliance, a passage or a war on the same side");
+			ally->set_alliance_with(*first, true);
+			stranger->set_military_access_to(*first, false);
+			first->set_military_access_to(*stranger, true);
+			friends = SupplyFriends::build(*first, countries, im.get_war_manager());
+			r.check(friends.contains(ally), "supply friends: an ally is a friend");
+			r.check(friends.contains(stranger), "supply friends: a country that gave the passage of the troops is a friend");
+			r.check(!friends.contains(enemy), "supply friends: the others are still not friends");
+			// A country that took the passage from the first one does not give it supply (the passage is one way)
+			SupplyFriends const other_side = SupplyFriends::build(*stranger, countries, im.get_war_manager());
+			r.check(!other_side.contains(first), "supply friends: the passage works one way");
+			first->set_military_access_to(*stranger, false);
+			ally->set_alliance_with(*first, false);
+
+			// War: the enemy is not a friend; the countries on the same side are
+			if (im.get_war_manager().declare_war(im, *first, *enemy)) {
+				friends = SupplyFriends::build(*first, countries, im.get_war_manager());
+				r.check(!friends.contains(enemy), "supply friends: the enemy in a war is not a friend");
+				bool all_side = true;
+				for (War const* war : im.get_war_manager().get_wars_of(*first)) {
+					for (CountryInstance const* member : war->get_side(war->is_attacker(*first))) {
+						all_side &= friends.contains(member);
+					}
+					for (CountryInstance const* member : war->get_side(!war->is_attacker(*first))) {
+						all_side &= !friends.contains(member);
+					}
+				}
+				r.check(all_side, "supply friends: the countries on the same side of the war are friends, the other side is not");
+			}
+		}
+
+		// ---- The coefficient of the land that is not held, checked by a different way (sets of the provinces) on every province
+		if (first != nullptr) {
+			const SupplyFriends friends = SupplyFriends::build(*first, countries, im.get_war_manager());
+			MapInstance const& map = im.get_map_instance();
+			const auto land_neighbours = [&map](ProvinceInstance const& province) {
+				std::vector<ProvinceInstance const*> result;
+				for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+					if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND) {
+						result.push_back(&map.get_province_instance_by_definition(adjacency.get_to()));
+					}
+				}
+				return result;
+			};
+			std::size_t checked = 0, wrong = 0, held_wrong = 0;
+			std::size_t kinds[6] = {};
+			for (ProvinceInstance const& province : map.get_province_instances()) {
+				if (province.province_definition.is_water()) {
+					continue;
+				}
+				SupplyTerritory const got = calculate_supply_territory(province, map, *first, friends, defines);
+				kinds[static_cast<std::size_t>(got.kind)]++;
+				if (is_supply_held(province, friends)) {
+					held_wrong += got.kind != SupplyTerritory::kind_t::HELD || got.coefficient != fixed_point_t::_1;
+					continue;
+				}
+				checked++;
+				// Level 1: the held neighbours
+				std::vector<ProvinceInstance const*> level1 = land_neighbours(province);
+				std::size_t held1 = 0;
+				std::vector<ProvinceInstance const*> between;
+				for (ProvinceInstance const* neighbour : level1) {
+					if (is_supply_held(*neighbour, friends)) {
+						held1++;
+					} else {
+						between.push_back(neighbour);
+					}
+				}
+				SupplyTerritory::kind_t expected_kind = SupplyTerritory::kind_t::FAR;
+				fixed_point_t expected_coefficient = defines.supply_far.fixed();
+				if (held1 >= 2) {
+					expected_kind = SupplyTerritory::kind_t::TWO_NEIGHBOURS;
+					expected_coefficient = fixed_point_t::_1;
+				} else if (held1 == 1) {
+					expected_kind = SupplyTerritory::kind_t::ONE_NEIGHBOUR;
+					expected_coefficient = defines.supply_neighbour_one.fixed();
+				} else {
+					// Level 2: the held provinces next to the provinces between (not the province itself, not those between)
+					std::vector<ProvinceInstance const*> held2;
+					std::vector<ProvinceInstance const*> between2;
+					const auto contains = [](std::vector<ProvinceInstance const*> const& list, ProvinceInstance const* item) {
+						return std::find(list.begin(), list.end(), item) != list.end();
+					};
+					for (ProvinceInstance const* first_step : between) {
+						for (ProvinceInstance const* second_step : land_neighbours(*first_step)) {
+							if (second_step == &province || contains(between, second_step)) {
+								continue;
+							}
+							if (is_supply_held(*second_step, friends)) {
+								if (!contains(held2, second_step)) {
+									held2.push_back(second_step);
+								}
+							} else if (!contains(between2, second_step)) {
+								between2.push_back(second_step);
+							}
+						}
+					}
+					if (!held2.empty()) {
+						expected_kind = SupplyTerritory::kind_t::ONE_BETWEEN;
+						expected_coefficient = defines.supply_gap1_base.fixed()
+							+ defines.supply_gap1_step.fixed()
+								* (std::min<std::int32_t>(static_cast<std::int32_t>(held2.size()), defines.supply_gap1_max_count) - 1);
+					}
+				}
+				// The search through two provinces is not open at the start (no technology), so the rest is far away
+				wrong += got.kind != expected_kind || got.coefficient != expected_coefficient;
+			}
+			r.check(checked > 1000, "supply territory: many provinces are not held by a country and its friends", fmt::format("{}", checked));
+			r.check(held_wrong == 0, "supply territory: the provinces that are held give 100 percent");
+			r.check(wrong == 0, "supply territory: the kind and the coefficient equal the ones counted another way on every province",
+				fmt::format("{} provinces", wrong));
+			r.check(
+				kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::ONE_NEIGHBOUR)] > 0
+					&& kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::ONE_BETWEEN)] > 0
+					&& kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::FAR)] > 0,
+				"supply territory: provinces of every kind exist", fmt::format("{} {} {}",
+					kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::ONE_NEIGHBOUR)],
+					kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::ONE_BETWEEN)],
+					kinds[static_cast<std::size_t>(SupplyTerritory::kind_t::FAR)])
+			);
+
+			// The search through two provinces between (opened by a technology, or by the define): only the provinces that were far away change
+			OpenVicSupplyDefines& opened = const_cast<OpenVicSupplyDefines&>(defines);
+			std::size_t changed = 0, bad_changed = 0;
+			for (ProvinceInstance const& province : map.get_province_instances()) {
+				if (province.province_definition.is_water()) {
+					continue;
+				}
+				opened.supply_gap2_enabled = 0;
+				SupplyTerritory const closed = calculate_supply_territory(province, map, *first, friends, defines);
+				opened.supply_gap2_enabled = 1;
+				SupplyTerritory const open = calculate_supply_territory(province, map, *first, friends, defines);
+				opened.supply_gap2_enabled = 0;
+				if (closed.kind != open.kind || closed.coefficient != open.coefficient) {
+					changed++;
+					bad_changed += closed.kind != SupplyTerritory::kind_t::FAR || open.kind != SupplyTerritory::kind_t::TWO_BETWEEN
+						|| open.coefficient < opened.supply_gap2_base.fixed()
+						|| open.coefficient > opened.supply_gap2_base.fixed() + opened.supply_gap2_step.fixed() * (opened.supply_gap2_max_count - 1);
+				}
+			}
+			r.check(changed > 0, "supply territory: with two provinces between opened some far provinces get the 25 percent kind", fmt::format("{}", changed));
+			r.check(bad_changed == 0, "supply territory: opening it only changes far provinces and gives 25 to 45 percent", fmt::format("{} provinces", bad_changed));
+		}
 	}
 
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the

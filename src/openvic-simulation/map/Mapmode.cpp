@@ -1,6 +1,7 @@
 #include "Mapmode.hpp"
 
 #include <limits>
+#include <memory>
 
 #include <type_safe/strong_typedef.hpp>
 
@@ -11,6 +12,7 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/population/Culture.hpp"
 #include "openvic-simulation/population/PopSum.hpp"
 #include "openvic-simulation/population/Religion.hpp"
@@ -24,10 +26,12 @@ Mapmode::Mapmode(
 	index_t new_index,
 	colour_func_t new_colour_func,
 	std::string_view new_localisation_key,
-	bool new_is_parchment_mapmode_allowed
+	bool new_is_parchment_mapmode_allowed,
+	prepare_func_t new_prepare_func
 ) : HasIdentifier { new_identifier },
 	HasIndex { new_index },
 	colour_func { std::move(new_colour_func) },
+	prepare_func { std::move(new_prepare_func) },
 	localisation_key { new_localisation_key.empty() ? new_identifier : new_localisation_key },
 	is_parchment_mapmode_allowed { new_is_parchment_mapmode_allowed } {}
 
@@ -51,7 +55,8 @@ bool MapmodeManager::add_mapmode(
 	std::string_view identifier,
 	Mapmode::colour_func_t colour_func,
 	std::string_view localisation_key,
-	bool parchment_mapmode_allowed
+	bool parchment_mapmode_allowed,
+	Mapmode::prepare_func_t prepare_func
 ) {
 	if (identifier.empty()) {
 		spdlog::error_s("Invalid mapmode identifier - empty!");
@@ -64,7 +69,7 @@ bool MapmodeManager::add_mapmode(
 	return mapmodes.emplace_item(
 		identifier,
 		identifier, index_from_count<Mapmode::index_t>(get_mapmode_count()), colour_func, localisation_key,
-		parchment_mapmode_allowed
+		parchment_mapmode_allowed, std::move(prepare_func)
 	);
 }
 
@@ -90,6 +95,8 @@ bool MapmodeManager::generate_mapmode_colours(
 	Mapmode::base_stripe_t* target_stripes = reinterpret_cast<Mapmode::base_stripe_t*>(target);
 
 	target_stripes[ProvinceDefinition::NULL_PROVINCE_NUMBER] = colour_argb_t::null();
+
+	mapmode->prepare(map_instance, player_country);
 
 	for (ProvinceInstance const& province : map_instance.get_province_instances()) {
 		target_stripes[province.province_definition.get_province_number()] = mapmode->get_base_stripe_colours(
@@ -289,11 +296,14 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 	);
 	ret &= add_mapmode("mapmode_culture", shaded_mapmode<Culture,pop_sum_t>(&ProvinceInstance::get_population_by_culture), "MAPMODE_13");
 	ret &= add_mapmode("mapmode_sphere", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_14");
-	// Supply: the supply limit of the province for the armies of the player divided by their load (without an army of the player there:
-	// by the load of a standard division); the colours are in the defines ov_supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 1)
+	// Supply: the supply limit of the province for the armies of the player (with the coefficient of the land that the player and his
+	// friends do not hold) divided by their load (without an army of the player there: by the load of a standard division); the colours
+	// are in the defines ov_supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 1 and 2). The friends of the player are worked out once
+	// before the colours of the provinces are made
+	const std::shared_ptr<SupplyFriends> supply_friends = std::make_shared<SupplyFriends>();
 	ret &= add_mapmode(
 		"mapmode_supply",
-		[](
+		[supply_friends](
 			MapInstance const& map_instance, ProvinceInstance const& province,
 			CountryInstance const* player_country, ProvinceInstance const* selected_province
 		) -> Mapmode::base_stripe_t {
@@ -304,7 +314,10 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 			if (player_country == nullptr || defines == nullptr) {
 				return DEFAULT_COLOUR_GREY;
 			}
-			ProvinceInstance::supply_breakdown_t const supply = province.get_supply_breakdown(player_country);
+			SupplyTerritory const territory = calculate_supply_territory(
+				province, map_instance, *player_country, *supply_friends, *defines
+			);
+			ProvinceInstance::supply_breakdown_t const supply = province.get_supply_breakdown(player_country, territory);
 			const fixed_point_t load = supply.load > fixed_point_t::_0 ? supply.load : defines->supply_map_reference_load;
 			if (load <= fixed_point_t::_0) {
 				return DEFAULT_COLOUR_GREY;
@@ -328,7 +341,10 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 			}
 			return colour.with_alpha(ALPHA_VALUE);
 		},
-		"MAPMODE_15"
+		"MAPMODE_15", true,
+		[supply_friends](MapInstance const&, CountryInstance const* player_country) -> void {
+			*supply_friends = player_country != nullptr ? SupplyContext::build_friends(*player_country) : SupplyFriends {};
+		}
 	);
 	ret &= add_mapmode("mapmode_party_loyalty", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_16");
 	ret &= add_mapmode("mapmode_ranking", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_17");
