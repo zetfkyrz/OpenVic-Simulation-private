@@ -71,6 +71,11 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army.get_unit_count());
 			hasher.add(army.get_total_strength());
 			hasher.add(army.get_total_organisation());
+			hasher.add(army.get_supply_level());
+			hasher.add(army.get_supply_ratio());
+			hasher.add(army.get_supply_reserve_average());
+			hasher.add(static_cast<std::uint64_t>(army.get_supply_priority()));
+			hasher.add(army.is_supply_priority_custom() ? 1 : 0);
 		}
 	}
 

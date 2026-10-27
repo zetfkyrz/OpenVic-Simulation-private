@@ -21,6 +21,7 @@
 #include "openvic-simulation/economy/BuildingLevel.hpp"
 #include "openvic-simulation/economy/BuildingRestrictionCategory.hpp"
 #include "openvic-simulation/military/CombatWidth.hpp"
+#include "openvic-simulation/military/SupplyPriority.hpp"
 #include "openvic-simulation/military/UnitBranchedGetterMacro.hpp"
 #include "openvic-simulation/modifier/ModifierSum.hpp"
 #include "openvic-simulation/politics/RuleSet.hpp"
@@ -472,6 +473,7 @@ namespace OpenVic {
 		// The parts of the supply limit of the provinces that depend on the country of the army (docs/PLAN_ARMY_SUPPLY_FRONTS.md,
 		// section 1), worked out every day: the global supply_limit that is added to the limit of the province, the multiplier of the
 		// technologies and the bonus of the own land
+		bool deep_assault_technology = false;
 		fixed_point_t PROPERTY(supply_limit_global_base);
 		fixed_point_t PROPERTY(supply_limit_multiplier, fixed_point_t::_1);
 		fixed_point_t PROPERTY(supply_home_bonus);
@@ -488,6 +490,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(war_exhaustion);
 		// Share of the supplies the armies needed yesterday that the national stockpile could give (1 = fully supplied)
 		fixed_point_t PROPERTY(army_supply_ratio, fixed_point_t::_1);
+		// The priority of the supply of the armies that have no priority of their own (the setting of the tab of the armies)
+		supply_priority_t PROPERTY_RW(army_supply_priority, supply_priority_t::STANDARD);
 		fixed_point_t PROPERTY(navy_supply_ratio, fixed_point_t::_1);
 		// How well equipped the army and the navy are (1 = fully): it goes to (the budget slider times the supply ratio) by a share a day
 		// (ov_economy SUPPLY_LEVEL_CHANGE_PER_DAY); the attack, the defence and the gun power in battles are multiplied by it
@@ -748,15 +752,40 @@ namespace OpenVic {
 		}
 		// TODO research: the technologies that change the supply coefficient of the armies away from the own land (SUPPLY_NEIGHBOUR_ONE_TECH:
 		// one held neighbour gives 100 percent; SUPPLY_FAR_TECH: more far away; "modern armies" opens the search through two provinces)
-		[[nodiscard]] bool has_supply_neighbour_technology() const {
+		// The technology of the organisation of the army opens the divisions, the templates, the generals and the reserve of supplies of the
+		// regiments (a week); only the civilised countries can have it. Now it is a flag that the civilised countries have from the start.
+		[[nodiscard]] bool has_army_organisation() const {
+			return is_civilised();
+		}
+		// The technology of the deep strikes and assaults: better supply on the land of an enemy (one held neighbour gives 100 percent, a bonus
+		// to the supply far away), the supply through two provinces and one more week of the reserve of the regiments. Not in the game yet.
+		[[nodiscard]] bool has_deep_assault_technology() const {
+			return deep_assault_technology;
+		}
+		// A technology of the late game that adds one more day to the reserve of the regiments (not in the game yet)
+		[[nodiscard]] bool has_late_supply_reserve_technology() const {
 			return false;
+		}
+		void set_deep_assault_technology(const bool known) {
+			deep_assault_technology = known;
+		}
+		[[nodiscard]] bool has_supply_neighbour_technology() const {
+			return has_deep_assault_technology();
 		}
 		[[nodiscard]] bool has_supply_far_technology() const {
-			return false;
+			return has_deep_assault_technology();
 		}
 		[[nodiscard]] bool has_supply_gap2_technology() const {
-			return false;
+			return has_deep_assault_technology();
 		}
+		// The priority that applies to an army (its own or the one of the country)
+		[[nodiscard]] supply_priority_t get_effective_supply_priority(
+			bool army_has_own_priority, supply_priority_t army_priority
+		) const {
+			return army_has_own_priority ? army_priority : army_supply_priority;
+		}
+		// Days of the reserve of supplies a regiment of this country keeps
+		[[nodiscard]] fixed_point_t get_supply_reserve_capacity() const;
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)
 		[[nodiscard]] fixed_point_t calculate_army_supply_cost_per_day() const;
 		[[nodiscard]] fixed_point_t calculate_navy_supply_cost_per_day() const;

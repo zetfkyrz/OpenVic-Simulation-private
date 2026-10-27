@@ -18,8 +18,9 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(organisation);
 		fixed_point_t PROPERTY(max_organisation);
 		fixed_point_t PROPERTY(strength);
-		// The day (counted from the start of the calendar) the unit was created on: the supplies are used every period of days from it
-		int64_t PROPERTY_RW(supply_origin, 0);
+		// The reserve of supplies of the unit in days (docs/PLAN_ARMY_SUPPLY_FRONTS.md): it is used while the supplies do not arrive, and is
+		// filled while they do. Negative at first: on the first day it is full (the units of the start and the new ones come supplied)
+		fixed_point_t PROPERTY_RW(supply_reserve, fixed_point_t(-1));
 
 	protected:
 		UnitInstance(
@@ -43,14 +44,6 @@ namespace OpenVic {
 		}
 
 		void set_name(std::string_view new_name);
-
-		// The supplies are used up every period of days (ov_economy SUPPLY_PERIOD_DAYS) counted from the day the unit was created on
-		static int64_t get_supply_day_number(const Date date) {
-			return static_cast<int64_t>(date - Date {});
-		}
-		bool is_supply_day(const Date today, const int32_t period_days) const {
-			return (get_supply_day_number(today) - supply_origin) % period_days == 0;
-		}
 
 		// Combat helpers, values are clamped to [0, max]
 		void take_damage(fixed_point_t organisation_loss, fixed_point_t strength_loss);

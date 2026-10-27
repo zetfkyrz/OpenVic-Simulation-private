@@ -109,7 +109,7 @@ namespace {
 			const fixed_point_t defence_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
 			const fixed_point_t morale_multiplier = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.morale);
 			// The units that are not fully supplied fight worse: attack and defence are proportional to the supply level
-			const fixed_point_t supply_level = army->get_country().get_army_supply_level();
+			const fixed_point_t supply_level = army->get_supply_level();
 
 			if (fixed_point_t(static_cast<int32_t>(army->get_dig_in_level())) > dig_in_best) {
 				dig_in_best = fixed_point_t(static_cast<int32_t>(army->get_dig_in_level()));
@@ -869,7 +869,7 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			// (only at war, and never below a quarter, so that a country with an empty stockpile still can recover)
 			fixed_point_t supply = fixed_point_t::_1;
 			if (army.get_country().is_at_war()) {
-				supply = std::max(army.get_country().get_army_supply_ratio(), wd.recovery_min_supply.fixed());
+				supply = std::max(army.get_supply_ratio(), wd.recovery_min_supply.fixed());
 			}
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
 				regiment.recover(

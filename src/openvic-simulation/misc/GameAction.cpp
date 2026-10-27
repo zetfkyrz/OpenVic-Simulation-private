@@ -917,6 +917,43 @@ bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t c
 	return group->set_leader(leader);
 }
 
+// The priority of the supply of one army: 0 standard, 1 increased, 2 maximum; 3 takes the own priority off (the one of the country applies)
+bool GameActionManager::VariantVisitor::operator() (set_army_supply_priority_argument_t const& argument) const {
+	const auto [army_id, value] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	if (army == nullptr || value > 3) {
+		return false;
+	}
+	if (value == 3) {
+		const bool changed = army->is_supply_priority_custom();
+		army->set_supply_priority_custom(false);
+		army->set_supply_priority(supply_priority_t::STANDARD);
+		return changed;
+	}
+	const supply_priority_t priority = static_cast<supply_priority_t>(value);
+	if (army->is_supply_priority_custom() && army->get_supply_priority() == priority) {
+		return false;
+	}
+	army->set_supply_priority_custom(true);
+	army->set_supply_priority(priority);
+	return true;
+}
+
+// The priority of the armies of a country that have no priority of their own
+bool GameActionManager::VariantVisitor::operator() (set_global_supply_priority_argument_t const& argument) const {
+	const auto [country_index, value] = argument;
+	if (value > 2) {
+		return false;
+	}
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	const supply_priority_t priority = static_cast<supply_priority_t>(value);
+	if (country.get_army_supply_priority() == priority) {
+		return false;
+	}
+	country.set_army_supply_priority(priority);
+	return true;
+}
+
 bool GameActionManager::VariantVisitor::operator() (disband_regiment_argument_t const& argument) const {
 	ArmyInstance* army = nullptr;
 	RegimentInstance* const regiment = find_regiment(instance_manager, type_safe::get(argument), army);

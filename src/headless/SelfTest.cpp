@@ -22,6 +22,7 @@
 #include <openvic-simulation/economy/trading/TradeNetwork.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/military/SupplyDelivery.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
 #include <openvic-simulation/military/UnitInstance.hpp>
 #include <openvic-simulation/military/War.hpp>
@@ -806,6 +807,206 @@ namespace {
 		}
 	}
 
+	// The delivery of the supply to the armies, the priorities and the reserves of the regiments (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 3)
+	void test_supply_delivery(Results& r, InstanceManager& im) {
+		OpenVicSupplyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().supply;
+		const fixed_point_t standard = get_supply_priority_multiplier(defines, supply_priority_t::STANDARD);
+		const fixed_point_t increased = get_supply_priority_multiplier(defines, supply_priority_t::INCREASED);
+		const fixed_point_t maximum = get_supply_priority_multiplier(defines, supply_priority_t::MAXIMUM);
+		r.check(standard == fixed_point_t::_1 && increased == fixed_point_t(5) / 2 && maximum == fixed_point_t(5),
+			"supply delivery: the priorities send 1, 2.5 and 5 times the need at most");
+
+		// A province that lets through the share d of the need: the standard priority sends the need and gets the share d
+		bool bounded = true, standard_ok = true, increased_ok = true, never_more_sent = true;
+		for (int step = 0; step <= 100; ++step) {
+			const fixed_point_t d = fixed_point_t(step) / 100;
+			for (const fixed_point_t multiplier : { standard, increased, maximum }) {
+				SupplyDeliveryResult const result = calculate_supply_delivery(d, multiplier);
+				bounded &= result.delivery >= fixed_point_t::_0 && result.delivery <= fixed_point_t::_1;
+				bounded &= result.send_multiplier >= fixed_point_t::_1 && result.send_multiplier <= multiplier;
+				// Never more than makes up for the losses: what arrives does not exceed the need
+				never_more_sent &= result.delivery <= fixed_point_t::_1;
+				if (multiplier == standard) {
+					standard_ok &= result.delivery == d && result.send_multiplier == fixed_point_t::_1;
+				}
+			}
+			SupplyDeliveryResult const result = calculate_supply_delivery(d, increased);
+			// With the increased priority half of the need is already made up for at d = 0.4 (0.4 * 2.5 = 1)
+			if (step >= 41) {
+				increased_ok &= result.delivery == fixed_point_t::_1;
+			} else if (step > 0 && step < 40) {
+				increased_ok &= result.delivery == d * increased;
+			}
+		}
+		r.check(bounded && never_more_sent, "supply delivery: what is sent is between 1 and the multiplier of the priority, what arrives is never above the need");
+		r.check(standard_ok, "supply delivery: the standard priority sends the need and what arrives is the share the province lets through");
+		r.check(increased_ok, "supply delivery: the increased priority makes up for the losses up to 2.5 times the need");
+		r.check(calculate_supply_delivery(fixed_point_t::_0, maximum).delivery == fixed_point_t::_0
+				&& calculate_supply_delivery(fixed_point_t::_0, maximum).send_multiplier == fixed_point_t::_1,
+			"supply delivery: nothing gets through and nothing is sent (a province without a limit does not divide by zero)");
+		r.check(calculate_supply_delivery(fixed_point_t(3), maximum).delivery == fixed_point_t::_1,
+			"supply delivery: a share above 1 does not give more than the need");
+
+		// The reserve: a week without supplies lasts exactly the days of the reserve, then the regiment is without
+		const fixed_point_t week = fixed_point_t(7);
+		fixed_point_t reserve = week;
+		int days = 0;
+		fixed_point_t deficit = fixed_point_t::_0;
+		while (deficit == fixed_point_t::_0 && days < 30) {
+			SupplyReserveResult const result = step_supply_reserve(reserve, fixed_point_t::_1, fixed_point_t::_0, week);
+			reserve = result.reserve;
+			deficit = result.deficit;
+			days++;
+		}
+		r.check(days == 8 && reserve == fixed_point_t::_0, "supply reserve: a regiment with a reserve of 7 days stands 7 days without supplies, then it has a deficit",
+			fmt::format("{} days", days));
+		SupplyReserveResult half = step_supply_reserve(week, fixed_point_t(1) / 2, fixed_point_t::_0, week);
+		r.check(half.reserve == week - fixed_point_t(1) / 2 && half.deficit == fixed_point_t::_0, "supply reserve: half of the need arriving costs half a day of the reserve");
+		SupplyReserveResult refilled = step_supply_reserve(fixed_point_t(3), fixed_point_t::_0, fixed_point_t::_1, week);
+		r.check(refilled.reserve == fixed_point_t(4), "supply reserve: with everything arriving the reserve rises by the refill");
+		SupplyReserveResult capped = step_supply_reserve(fixed_point_t(7), fixed_point_t::_0, fixed_point_t::_1, week);
+		r.check(capped.reserve == week, "supply reserve: the reserve never rises above its capacity");
+		SupplyReserveResult none = step_supply_reserve(fixed_point_t::_0, fixed_point_t(3) / 10, fixed_point_t::_0, fixed_point_t::_0);
+		r.check(none.reserve == fixed_point_t::_0 && none.deficit == fixed_point_t(3) / 10, "supply reserve: without a reserve (no technology) the whole shortfall is a deficit");
+
+		// The armies of a real game after some days
+		play(im, 3);
+		std::size_t armies = 0, bad_level = 0, bad_delivery = 0, bad_send = 0, bad_reserve = 0, with_reserve = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			const fixed_point_t capacity = country.get_supply_reserve_capacity();
+			for (ArmyInstance const& army : country.get_armies()) {
+				armies++;
+				bad_level += army.get_supply_level() < fixed_point_t::_0 || army.get_supply_level() > fixed_point_t::_1;
+				bad_delivery += army.get_supply_delivery() < fixed_point_t::_0 || army.get_supply_delivery() > fixed_point_t::_1
+					|| army.get_supply_ratio() < fixed_point_t::_0 || army.get_supply_ratio() > fixed_point_t::_1;
+				bad_send += army.get_supply_send_multiplier() < fixed_point_t::_1 || army.get_supply_send_multiplier() > maximum;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					bad_reserve += regiment.get_supply_reserve() < fixed_point_t::_0 || regiment.get_supply_reserve() > capacity;
+					with_reserve += regiment.get_supply_reserve() > fixed_point_t::_0;
+				}
+			}
+		}
+		r.check(armies > 50, "supply delivery: there are armies", fmt::format("{}", armies));
+		r.check(bad_level == 0 && bad_delivery == 0, "supply delivery: the supply level and what arrives of every army are between 0 and 1",
+			fmt::format("{} {}", bad_level, bad_delivery));
+		r.check(bad_send == 0, "supply delivery: no army is sent more than the multiplier of the maximum priority", fmt::format("{}", bad_send));
+		r.check(bad_reserve == 0, "supply delivery: the reserve of every regiment is between 0 and the capacity of its country", fmt::format("{}", bad_reserve));
+		r.check(with_reserve > 0, "supply delivery: the regiments of the civilised countries have a reserve");
+
+		// The actions: the priority of an army, the return to the priority of the country, the priority of the country
+		ArmyInstance* army = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.has_armies()) {
+				army = &country.get_armies().front().get();
+				break;
+			}
+		}
+		r.check(army != nullptr, "supply priority: an army exists");
+		if (army != nullptr) {
+			CountryInstance& owner = army->get_country();
+			r.check(!army->is_supply_priority_custom() && owner.get_effective_supply_priority(false, army->get_supply_priority()) == supply_priority_t::STANDARD,
+				"supply priority: an army has the priority of its country at first");
+			im.queue_game_action<set_global_supply_priority_argument_t>(owner.index, std::uint32_t(1));
+			im.force_tick_and_update();
+			r.check(owner.get_army_supply_priority() == supply_priority_t::INCREASED, "supply priority: the priority of the country is set");
+			im.queue_game_action<set_army_supply_priority_argument_t>(army->unique_id, std::uint32_t(2));
+			im.force_tick_and_update();
+			r.check(army->is_supply_priority_custom() && army->get_supply_priority() == supply_priority_t::MAXIMUM,
+				"supply priority: an army can have its own priority");
+			im.queue_game_action<set_global_supply_priority_argument_t>(owner.index, std::uint32_t(0));
+			im.force_tick_and_update();
+			r.check(army->get_supply_priority() == supply_priority_t::MAXIMUM && army->is_supply_priority_custom(),
+				"supply priority: the priority of the country does not change an army that has its own");
+			im.queue_game_action<set_army_supply_priority_argument_t>(army->unique_id, std::uint32_t(3));
+			im.force_tick_and_update();
+			r.check(!army->is_supply_priority_custom(), "supply priority: an army can return to the priority of its country");
+		}
+
+		// ---- An army on the land of an enemy far from its own land: the limit lets little through, the reserve is used up in days, then the
+		// supply level falls (the war between two countries was declared by the tests above)
+		{
+			OpenVicSupplyDefines& open_defines = const_cast<OpenVicSupplyDefines&>(defines);
+			CountryInstanceManager const& all_countries = im.get_country_instance_manager();
+			ArmyInstance* raider = nullptr;
+			for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+				if (!country.is_at_war() || country.get_war_enemies().empty() || !country.has_armies()) {
+					continue;
+				}
+				for (ArmyInstance& candidate : country.get_armies()) {
+					if (candidate.get_unit_count() >= 4 && (raider == nullptr || candidate.get_unit_count() > raider->get_unit_count())) {
+						raider = &candidate;
+					}
+				}
+				if (raider != nullptr) {
+					break;
+				}
+			}
+			r.check(raider != nullptr, "supply on enemy land: an army of a country at war with four regiments exists");
+			if (raider != nullptr) {
+				CountryInstance& attacker = raider->get_country();
+				const SupplyFriends raider_friends = SupplyFriends::build(attacker, all_countries, im.get_war_manager());
+				ProvinceInstance* target = nullptr;
+				for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+					if (!province.province_definition.is_water() && province.get_owner() != nullptr && province.get_owner() == province.get_controller()
+						&& attacker.is_at_war_with(*province.get_owner())
+						&& calculate_supply_territory(province, im.get_map_instance(), attacker, raider_friends, defines).kind
+							== SupplyTerritory::kind_t::FAR) {
+						target = &province;
+						break;
+					}
+				}
+				r.check(target != nullptr, "supply on enemy land: an enemy province far from the land of the attacker exists");
+				if (target != nullptr) {
+					const fixed_point_t capacity = attacker.get_supply_reserve_capacity();
+					raider->set_location(*target);
+					raider->set_supply_level(fixed_point_t::_1);
+					for (RegimentInstance& regiment : raider->get_regiment_instances()) {
+						regiment.set_supply_reserve(capacity);
+					}
+					raider->set_supply_priority_custom(true);
+					raider->set_supply_priority(supply_priority_t::STANDARD);
+					play(im, 1);
+					const fixed_point_t first_delivery = raider->get_supply_delivery();
+					r.check(first_delivery < fixed_point_t::_1 && first_delivery > fixed_point_t::_0,
+						"supply on enemy land: the limit of the enemy province lets through only a part of the need",
+						fmt::format("{}", first_delivery));
+					const fixed_point_t reserve_after_one = raider->get_supply_reserve_average();
+					r.check(reserve_after_one < capacity, "supply on enemy land: the reserve is used on the first day",
+						fmt::format("{} of {}", reserve_after_one, capacity));
+					r.check(raider->get_supply_level() == fixed_point_t::_1, "supply on enemy land: the supply level does not fall while there is a reserve");
+					// The army must stay where it is
+					int days = 1;
+					while (days < 30 && raider->get_supply_reserve_average() > fixed_point_t::_0) {
+						raider->set_location(*target);
+						play(im, 1);
+						days++;
+					}
+					r.check(raider->get_supply_reserve_average() == fixed_point_t::_0, "supply on enemy land: the reserve is used up", fmt::format("{} days", days));
+					const fixed_point_t shortfall = fixed_point_t::_1 - raider->get_supply_delivery();
+					const int expected = shortfall > fixed_point_t::_0 ? static_cast<int>((capacity / shortfall).round<int32_t>()) : 0;
+					r.check(days >= expected - 1 && days <= expected + 2, "supply on enemy land: the reserve lasts its days divided by the shortfall",
+						fmt::format("{} days, expected about {}", days, expected));
+					for (int i = 0; i < 10; ++i) {
+						raider->set_location(*target);
+						play(im, 1);
+					}
+					r.check(raider->get_supply_level() < fixed_point_t::_1, "supply on enemy land: the supply level falls when the reserve is used up",
+						fmt::format("{}", raider->get_supply_level()));
+					// The maximum priority sends more and makes up for the losses
+					const fixed_point_t standard_ratio = raider->get_supply_ratio();
+					raider->set_supply_priority(supply_priority_t::MAXIMUM);
+					raider->set_location(*target);
+					play(im, 1);
+					r.check(raider->get_supply_ratio() > standard_ratio && raider->get_supply_send_multiplier() > fixed_point_t::_1,
+						"supply on enemy land: the maximum priority sends more and what arrives is more",
+						fmt::format("{} -> {} (sent x{})", standard_ratio, raider->get_supply_ratio(), raider->get_supply_send_multiplier()));
+					r.check(raider->get_supply_ratio() <= fixed_point_t::_1, "supply on enemy land: what arrives never exceeds the need");
+					(void)open_defines;
+				}
+			}
+		}
+	}
+
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
 	void test_trade_and_hunger(Results& r, InstanceManager& im) {
@@ -1163,6 +1364,7 @@ namespace {
 			return;
 		}
 		test_supply_limit(r, *im);
+		test_supply_delivery(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

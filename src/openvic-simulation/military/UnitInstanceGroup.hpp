@@ -3,6 +3,7 @@
 #include <functional>
 #include <string_view>
 
+#include "openvic-simulation/military/SupplyPriority.hpp"
 #include "openvic-simulation/core/memory/Colony.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/military/Leader.hpp"
@@ -138,6 +139,24 @@ namespace OpenVic {
 		uint16_t idle_days = 0; // Days spent without moving or fighting, dig in grows with them
 
 		bool PROPERTY_RW_CUSTOM_NAME(exiled, is_exiled, set_is_exiled, false);
+
+	public:
+		using supply_priority_t = OpenVic::supply_priority_t;
+
+	private:
+		// The own priority of the army; while supply_priority_custom is false the priority of the country (for all the armies) is used
+		supply_priority_t PROPERTY_RW(supply_priority, supply_priority_t::STANDARD);
+		bool PROPERTY_RW_CUSTOM_NAME(supply_priority_custom, is_supply_priority_custom, set_supply_priority_custom, false);
+		// The supply level (0..1) of the army: the attack and defence of its regiments are multiplied by it
+		fixed_point_t PROPERTY_RW(supply_level, fixed_point_t::_1);
+		// Worked out every day: the share of the need that the supply limit of the province lets through, how many times more than the need is
+		// sent (the priority), the share of the need that arrived (after the stockpile and the budget) and the average reserve in days
+		fixed_point_t PROPERTY_RW(supply_delivery, fixed_point_t::_1);
+		fixed_point_t PROPERTY_RW(supply_send_multiplier, fixed_point_t::_1);
+		fixed_point_t PROPERTY_RW(supply_ratio, fixed_point_t::_1);
+		fixed_point_t PROPERTY_RW(supply_reserve_average, fixed_point_t::_0);
+		// The army is below SUPPLY_ALERT_LEVEL of the supply (the message "without supplies" was given)
+		bool PROPERTY_RW_CUSTOM_NAME(supply_alert, is_supply_alert, set_supply_alert, false);
 
 	public:
 		UnitInstanceGroupBranched(

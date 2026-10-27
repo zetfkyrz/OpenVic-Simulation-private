@@ -342,7 +342,27 @@ namespace OpenVic {
 	FIXED(THROTTLE_MIN, throttle_min, fixed_point_t::_0_20, 0.01, 1) \
 	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1) \
 	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
-	/* Supplies of the army and the navy: every SUPPLY_PERIOD_DAYS days (counted from the day a unit was created) a unit uses this */ 	/* share of what its construction cost (its supply_cost goods; a good that is not in the construction cost, such as ammunition, */ 	/* takes the amount of small_arms). The goods that are used up (canned_food, fuel, coal) take the consumable share, the equipment */ 	/* (arms, ammunition, artillery, convoys) the durable one */ 	INT(SUPPLY_PERIOD_DAYS, supply_period_days, 3, 1, 365) 	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 1000), 0, 10) 	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(1, 100), 0, 10) 	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 1000), 0, 10) 	RATE(NAVY_SUPPLY_CONSUMABLE_SHARE, navy_supply_consumable_share, Rate(1, 100), 0, 10) 	/* The coal and the fuel of ships (their share replaces the consumable one): a fleet that stands at sea, one that moves, one in a port */ 	RATE(NAVY_FUEL_SHARE_AT_SEA, navy_fuel_share_at_sea, Rate(1, 1000), 0, 10) 	RATE(NAVY_FUEL_SHARE_MOVING, navy_fuel_share_moving, Rate(1, 100), 0, 10) 	RATE(NAVY_FUEL_SHARE_IN_PORT, navy_fuel_share_in_port, Rate(0, 100), 0, 10) 	/* The other goods of a group that moves use this many times more, on the land of an enemy (a country at war with the owner) */ 	/* every good of a group uses this many times more (both together are multiplied) */ 	FIXED(SUPPLY_MOVING_MULTIPLIER, supply_moving_multiplier, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) 	FIXED(SUPPLY_ENEMY_LAND_MULTIPLIER, supply_enemy_land_multiplier, fixed_point_t::_2, 0, 100) 	/* The supply level of the army and of the navy (1 = fully equipped) goes to the level of the budget slider times the share of the */ 	/* needs the stockpile could give; it changes by this share a day. The attack, defence and gun power are multiplied by it */ 	RATE(SUPPLY_LEVEL_CHANGE_PER_DAY, supply_level_change_per_day, Rate(2, 100), 0, 1) \
+	/* Supplies of the army and the navy: every day a unit uses a day of the share (given per month, spread over SUPPLY_DAYS_PER_MONTH days) of */ \
+	/* what its construction cost (its supply_cost goods; a good that is not in the construction cost, such as ammunition, takes the amount of */ \
+	/* small_arms). The goods that are used up (canned_food, fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, */ \
+	/* convoys) the durable one. An infantry regiment (10 rifles, 10 cans to build): 0.1 rifles and 1 can a month (1 and 10 percent) */ \
+	INT(SUPPLY_DAYS_PER_MONTH, supply_days_per_month, 30, 1, 365) \
+	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 100), 0, 10) \
+	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(10, 100), 0, 10) \
+	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 100), 0, 10) \
+	RATE(NAVY_SUPPLY_CONSUMABLE_SHARE, navy_supply_consumable_share, Rate(10, 100), 0, 10) \
+	/* The coal and the fuel of ships (their share replaces the consumable one): a fleet that stands at sea, one that moves, one in a port */ \
+	RATE(NAVY_FUEL_SHARE_AT_SEA, navy_fuel_share_at_sea, Rate(1, 100), 0, 10) \
+	RATE(NAVY_FUEL_SHARE_MOVING, navy_fuel_share_moving, Rate(10, 100), 0, 10) \
+	RATE(NAVY_FUEL_SHARE_IN_PORT, navy_fuel_share_in_port, Rate(0, 100), 0, 10) \
+	/* A group that moves uses this many times more of the goods (not of the coal and the fuel of ships); on the land of an enemy (a country */ \
+	/* at war with the owner) every good of a group uses this many times more (both together are multiplied) */ \
+	FIXED(SUPPLY_MOVING_MULTIPLIER, supply_moving_multiplier, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) \
+	FIXED(SUPPLY_ENEMY_LAND_MULTIPLIER, supply_enemy_land_multiplier, fixed_point_t::_2, 0, 100) \
+	/* The supply level of the navy (1 = fully equipped) goes to the level of the budget slider times the share of the needs the stockpile */ \
+	/* could give, the supply level of an army to what the supplies of its regiments let (when their reserve is used up); it changes by this */ \
+	/* share a day. The attack, defence and gun power are multiplied by it */ \
+	RATE(SUPPLY_LEVEL_CHANGE_PER_DAY, supply_level_change_per_day, Rate(2, 100), 0, 1) \
 	INT(CONSTRUCTION_RESERVE_DAYS, construction_reserve_days, 5, 0, 3650) \
 	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 7, 0, 3650) \
 	/* Investment fund: the construction slider of the budget sets aside this share of the daily income at 100 percent */ \
@@ -476,6 +496,26 @@ namespace OpenVic {
 	/* share; the second share is what the technology that is not in the game yet will give */ \
 	RATE(SUPPLY_HOME_BONUS, supply_home_bonus, Rate(5, 100), 0, 10) \
 	RATE(SUPPLY_HOME_BONUS_TECH, supply_home_bonus_tech, Rate(5, 100), 0, 10) \
+	/* The reserve of every regiment, in days of its supply, comes from the technologies (without them it is 0): the organisation of the army */ \
+	/* (the civilised countries have it from the start) and the deep strikes and assaults give this many days each, a late technology one more */ \
+	/* day: a week in all. The days */ \
+	/* are counted for the need on the land of an enemy: a regiment without any supply stands that many days, then its supply level falls. */ \
+	/* Without a delivery (shortfall) the reserve falls by the days of the shortfall; with a full delivery it rises by the refill (days a day) */ \
+	INT(SUPPLY_UNIT_RESERVE_DAYS_ORGANISATION, supply_unit_reserve_days_organisation, 3, 0, 365) \
+	INT(SUPPLY_UNIT_RESERVE_DAYS_DEEP_ASSAULT, supply_unit_reserve_days_deep_assault, 3, 0, 365) \
+	INT(SUPPLY_UNIT_RESERVE_DAYS_LATE, supply_unit_reserve_days_late, 1, 0, 365) \
+	FIXED(SUPPLY_UNIT_RESERVE_REFILL_PER_DAY, supply_unit_reserve_refill_per_day, fixed_point_t::_1, 0, 100) \
+	/* The priority of the supply of an army: the increased priority sends this many times more than the army needs (but not more than */ \
+	/* what covers the losses), the maximum priority this many times more */ \
+	FIXED(SUPPLY_PRIORITY_INCREASED_MAX, supply_priority_increased_max, fixed_point_t::_2 + fixed_point_t::_0_50, 1, 100) \
+	FIXED(SUPPLY_PRIORITY_MAX_MAX, supply_priority_max_max, fixed_point_t(5), 1, 100) \
+	/* A province that cannot feed the regiments in it takes the free supply limit of its neighbours (that are held by the country or its */ \
+	/* friends) with this efficiency */ \
+	RATE(SUPPLY_NEIGHBOUR_EFFICIENCY, supply_neighbour_efficiency, Rate(75, 100), 0, 1) \
+	/* An army that gets at least this share of its need is fully supplied (its reserve neither falls nor needs more than it gets) */ \
+	RATE(SUPPLY_FULL_THRESHOLD, supply_full_threshold, Rate(99, 100), 0, 1) \
+	/* The supply level of an army below this share gives the message "the army is without supplies" */ \
+	RATE(SUPPLY_ALERT_LEVEL, supply_alert_level, Rate(50, 100), 0, 1) \
 	/* The supply coefficient of the armies on the land that is not held by the country or a friend (an ally, a country on the same side of a */ \
 	/* war, a country that gave the passage). One neighbour province is held: the first number (the technology adds the second); two or */ \
 	/* more neighbours are held: 100 percent. No neighbour is held, but one province lies between: the base for the first held province */ \

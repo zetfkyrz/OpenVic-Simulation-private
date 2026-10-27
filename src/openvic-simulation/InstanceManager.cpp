@@ -12,6 +12,7 @@
 #include "openvic-simulation/console/ConsoleInstance.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/economy/production/ArtisanalProducer.hpp"
+#include "openvic-simulation/military/SupplyDelivery.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
@@ -251,6 +252,11 @@ void InstanceManager::tick() {
 				trade_network.update(*this);
 			}
 			trade_network.begin_day();
+		}
+		{
+			// What the supply limits of the provinces let through to the armies (one thread, before the countries work out the cost)
+			OV_PROFILE_SCOPE(tick_profiler, "army supply delivery");
+			update_army_supply_delivery(*this);
 		}
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "countries before the map");

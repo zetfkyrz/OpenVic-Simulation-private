@@ -601,8 +601,6 @@ UnitInstanceBranched<Branch>& UnitInstanceManager::generate_unit_instance(
 		}()
 	);
 
-	// The units of the start of the game have no date of creation: their supply days are spread by their number
-	unit_instance.set_supply_origin(static_cast<int64_t>(unit_instance.unique_id));
 	unit_instance_map.emplace(unit_instance.unique_id, unit_instance);
 
 	return unit_instance;
@@ -744,7 +742,6 @@ void UnitInstanceManager::tick(const Date today) {
 			ShipInstance& ship = *ships.insert(ShipInstance {
 				ship_id, fmt::format("{} {}", ship_type->get_identifier(), ship_id), *ship_type
 			});
-			ship.set_supply_origin(UnitInstance::get_supply_day_number(today));
 			unit_instance_map.emplace(ship.unique_id, ship);
 
 			NavyInstance* fleet = nullptr;
@@ -768,7 +765,6 @@ void UnitInstanceManager::tick(const Date today) {
 		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
 			regiment_id, fmt::format("{} {}", regiment_type->get_identifier(), regiment_id), *regiment_type, pop, false
 		});
-		regiment.set_supply_origin(UnitInstance::get_supply_day_number(today));
 		unit_instance_map.emplace(regiment.unique_id, regiment);
 
 		// Joins a standing army of the country in the province or forms a new one
@@ -1251,6 +1247,10 @@ ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentIn
 		new_army_id, fmt::format("{} ({})", army.get_name(), new_army_id), army.get_country(), army.get_location()
 	);
 	unit_instance_group_map.emplace(new_army.unique_id, new_army);
+	// The new army keeps the supplies and the priority of the one it was split from
+	new_army.set_supply_level(army.get_supply_level());
+	new_army.set_supply_priority(army.get_supply_priority());
+	new_army.set_supply_priority_custom(army.is_supply_priority_custom());
 
 	if (!army.remove_unit(regiment)) {
 		destroy_group(new_army);
@@ -1266,6 +1266,17 @@ bool UnitInstanceManager::merge_armies(ArmyInstance& target, ArmyInstance& sourc
 	if (&target == &source || &target.get_country() != &source.get_country() ||
 		&target.get_location() != &source.get_location() || source.is_moving() || target.is_moving()) {
 		return false;
+	}
+
+	// The supply level of the joined army is the average of the two (by the number of regiments)
+	const size_t target_count = target.get_unit_count();
+	const size_t source_count = source.get_unit_count();
+	if (target_count + source_count > 0) {
+		target.set_supply_level(
+			(target.get_supply_level() * static_cast<std::int32_t>(target_count)
+				+ source.get_supply_level() * static_cast<std::int32_t>(source_count))
+				/ static_cast<std::int32_t>(target_count + source_count)
+		);
 	}
 
 	memory::vector<UnitInstance*> moved;

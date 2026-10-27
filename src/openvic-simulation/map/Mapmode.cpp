@@ -339,7 +339,14 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 			} else if (ratio >= defines->supply_map_red_from.fixed()) {
 				colour = 0xD63A2F_argb;
 			}
-			return colour.with_alpha(ALPHA_VALUE);
+			// A province that is taken (held by another country than its owner) is striped with the colour of the one who holds it, as in the
+			// political mapmode
+			const colour_argb_t base_colour = colour.with_alpha(ALPHA_VALUE);
+			CountryInstance const* const holder = province.get_controller();
+			if (holder != nullptr && province.get_owner() != nullptr && holder != province.get_owner()) {
+				return { base_colour, colour_argb_t { holder->get_colour(), ALPHA_VALUE } };
+			}
+			return base_colour;
 		},
 		"MAPMODE_15", true,
 		[supply_friends](MapInstance const&, CountryInstance const* player_country) -> void {

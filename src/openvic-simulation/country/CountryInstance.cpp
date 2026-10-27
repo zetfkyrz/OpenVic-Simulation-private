@@ -37,6 +37,7 @@
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/misc/GameRulesManager.hpp"
+#include "openvic-simulation/military/SupplyDelivery.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/modifier/StaticModifierCache.hpp"
 #include "openvic-simulation/politics/Government.hpp"
@@ -67,13 +68,13 @@ using namespace OpenVic;
 using enum CountryInstance::country_status_t;
 
 namespace {
-	// What a unit uses of each of its supply goods: the share (of the durable or of the consumable goods, of the army or of the
-	// navy; for the coal and the fuel of a ship: at sea, on the move or in a port) of the amount that its construction needed, per
-	// period (whole_period) or per day on average, times the state of its group and the scale (the slider of the budget)
+	// What a unit uses of each of its supply goods in a day: the share a month (of the durable or of the consumable goods, of the army
+	// or of the navy; for the coal and the fuel of a ship: at sea, on the move or in a port) of the amount that its construction needed,
+	// divided by the days of the month, times the state of its group and the scale (the slider of the budget)
 	template<typename Callback>
 	void for_each_daily_supply(
 		UnitType const& unit_type, const bool is_army, CountryInstance::supply_state_t const& state, const fixed_point_t scale,
-		Callback&& callback, const bool whole_period = false
+		Callback&& callback
 	) {
 		OpenVicEconomyDefines const& defines = *CountryInstance::openvic_economy_defines;
 		for (UnitType::supply_item_t const& item : unit_type.get_supply_items()) {
@@ -90,10 +91,8 @@ namespace {
 					multiplier = multiplier * defines.supply_moving_multiplier;
 				}
 			}
-			fixed_point_t amount = share->of(item.construction_amount) * multiplier * unit_type.supply_consumption * scale;
-			if (!whole_period) {
-				amount = amount / defines.supply_period_days;
-			}
+			const fixed_point_t amount =
+				share->of(item.construction_amount) * multiplier * unit_type.supply_consumption * scale / defines.supply_days_per_month;
 			callback(*item.good, amount);
 		}
 	}
@@ -2210,33 +2209,39 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	//			: min(1, slider * days_since_start / spread_cost_days) * resources_total
 	//		government_needs += daily_needs
 	//		max_government_consumption += remainder
-	const auto add_unit_needs = [this, today](
-		UnitInstance const& unit, supply_state_t const& state, const fixed_point_t slider, const bool is_army
+	// Every unit uses its supplies every day. What the stockpile is kept ready for and what is used up today is the same
+	const auto add_unit_needs = [this](
+		UnitInstance const& unit, supply_state_t const& state, const fixed_point_t scale, const bool is_army
 	) -> void {
-		if (slider <= fixed_point_t::_0) {
+		if (scale <= fixed_point_t::_0) {
 			return;
 		}
-		// What the stockpile is kept ready for: the average of a day
-		for_each_daily_supply(unit.unit_type, is_army, state, slider, [this, is_army](GoodDefinition const& good, const fixed_point_t daily_need) {
+		for_each_daily_supply(unit.unit_type, is_army, state, scale, [this, is_army](GoodDefinition const& good, const fixed_point_t daily_need) {
 			good_data_t& good_data = goods_data.at_index(good.index);
 			(is_army ? good_data.army_needs : good_data.navy_needs) += daily_need;
+			(is_army ? good_data.army_due : good_data.navy_due) += daily_need;
 		});
-		// What the unit uses up on its supply day (every period of days, counted from the day of its creation)
-		if (unit.is_supply_day(today, openvic_economy_defines->supply_period_days)) {
-			for_each_daily_supply(unit.unit_type, is_army, state, slider, [this, is_army](GoodDefinition const& good, const fixed_point_t period_need) {
-				good_data_t& good_data = goods_data.at_index(good.index);
-				(is_army ? good_data.army_due : good_data.navy_due) += period_need;
-			}, true);
-		}
 	};
 
 	const fixed_point_t army_slider = army_spending_slider_value.get_value_untracked();
 	const fixed_point_t navy_slider = navy_spending_slider_value.get_value_untracked();
+	const fixed_point_t reserve_capacity = get_supply_reserve_capacity();
+	const fixed_point_t reserve_refill = openvic_supply_defines->supply_unit_reserve_refill_per_day;
 
-	for (ArmyInstance const& army : armies) {
+	// The armies: what is sent is the need times what the priority sends (the delivery of the day was worked out by the supply of the
+	// provinces, see military/SupplyDelivery.hpp), and a regiment whose reserve is not full and whose army gets all it needs fills it
+	for (ArmyInstance& army : armies) {
 		const supply_state_t state = get_supply_state(army);
-		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-			add_unit_needs(regiment, state, army_slider, true);
+		const bool full_delivery = army.get_supply_delivery() >= openvic_supply_defines->supply_full_threshold.fixed();
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (regiment.get_supply_reserve() < fixed_point_t::_0) {
+				regiment.set_supply_reserve(reserve_capacity); // the units come supplied
+			}
+			add_unit_needs(regiment, state, army_slider * army.get_supply_send_multiplier(), true);
+			if (full_delivery && regiment.get_supply_reserve() < reserve_capacity) {
+				const fixed_point_t refill = std::min(reserve_refill, reserve_capacity - regiment.get_supply_reserve());
+				add_unit_needs(regiment, state, army_slider * refill, true);
+			}
 		}
 	}
 	for (NavyInstance const& navy : navies) {
@@ -2274,7 +2279,7 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
 		const fixed_point_t due = good_data.army_due + good_data.navy_due;
 
-		// The supplies of the units whose day it is are used up
+		// The supplies of the day are used up
 		if (due > fixed_point_t::_0) {
 			const fixed_point_t consumed = std::min(due, good_data.stockpile_amount);
 			good_data.stockpile_amount -= consumed;
@@ -2293,21 +2298,84 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		}
 	}
 
-	// The ratios (and so the attrition and the recovery) change only on the days the units use supplies
+	// The share of the goods that the stockpile could give (the same for all armies)
+	const fixed_point_t goods_share = army_needed_total > fixed_point_t::_0
+		? std::min(fixed_point_t::_1, army_supplied_total / army_needed_total) : fixed_point_t::_1;
 	if (army_needed_total > fixed_point_t::_0) {
-		army_supply_ratio = army_supplied_total / army_needed_total;
+		army_supply_ratio = goods_share;
 	}
 	if (navy_needed_total > fixed_point_t::_0) {
 		navy_supply_ratio = navy_supplied_total / navy_needed_total;
 	}
 
-	// The supply level goes slowly to the level of the slider (what the government pays for) times what the stockpile could give
+	// The supply level goes slowly to its target
 	const fixed_point_t level_step = openvic_economy_defines->supply_level_change_per_day.of(fixed_point_t::_1);
 	const auto move_level = [level_step](fixed_point_t& level, const fixed_point_t target) -> void {
 		level = level < target ? std::min(target, level + level_step) : std::max(target, level - level_step);
 	};
-	move_level(army_supply_level, army_slider * army_supply_ratio);
+
+	// The armies: what arrived is the delivery (the supply limit and the priority) times what the stockpile gave times the slider; what did
+	// not arrive is taken from the reserves of the regiments, and when a reserve is used up the supply level of the army goes down
+	const fixed_point_t paid_share = std::clamp(army_slider, fixed_point_t::_0, fixed_point_t::_1);
+	fixed_point_t level_sum = 0;
+	fixed_point_t ratio_sum = 0;
+	std::int32_t regiment_total = 0;
+	for (ArmyInstance& army : armies) {
+		const std::int32_t count = static_cast<std::int32_t>(army.get_unit_count());
+		if (count == 0) {
+			continue;
+		}
+		const fixed_point_t arrived = std::clamp(army.get_supply_delivery() * goods_share * paid_share, fixed_point_t::_0, fixed_point_t::_1);
+		// An army that gets almost all it needs is fully supplied (the stockpile is seldom exactly enough)
+		const bool full = arrived >= openvic_supply_defines->supply_full_threshold.fixed();
+		const fixed_point_t shortfall = full ? fixed_point_t::_0 : fixed_point_t::_1 - arrived;
+		fixed_point_t deficit_sum = 0;
+		fixed_point_t reserve_sum = 0;
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			// What the regiment gets to fill its reserve is what the stockpile gave of it
+			const fixed_point_t refill = full ? reserve_refill * goods_share : fixed_point_t::_0;
+			const SupplyReserveResult result = step_supply_reserve(regiment.get_supply_reserve(), shortfall, refill, reserve_capacity);
+			regiment.set_supply_reserve(result.reserve);
+			deficit_sum += result.deficit;
+			reserve_sum += result.reserve;
+		}
+		army.set_supply_ratio(arrived);
+		army.set_supply_reserve_average(reserve_sum / count);
+		fixed_point_t level = army.get_supply_level();
+		move_level(level, std::clamp(fixed_point_t::_1 - deficit_sum / count, fixed_point_t::_0, fixed_point_t::_1));
+		army.set_supply_level(level);
+
+		level_sum += level * count;
+		ratio_sum += arrived * count;
+		regiment_total += count;
+	}
+	// The values of the country (the budget, the tooltips): the average of the armies
+	if (regiment_total > 0) {
+		army_supply_level = level_sum / regiment_total;
+		army_supply_ratio = ratio_sum / regiment_total;
+	} else {
+		army_supply_level = fixed_point_t::_1;
+		army_supply_ratio = fixed_point_t::_1;
+	}
 	move_level(navy_supply_level, navy_slider * navy_supply_ratio);
+}
+
+fixed_point_t CountryInstance::get_supply_reserve_capacity() const {
+	if (openvic_supply_defines == nullptr) {
+		return fixed_point_t::_0;
+	}
+	// TODO research: a stub, the days come from the technologies of the organisation of the army and of the deep strikes and assaults
+	fixed_point_t days = fixed_point_t::_0;
+	if (has_army_organisation()) {
+		days += openvic_supply_defines->supply_unit_reserve_days_organisation;
+	}
+	if (has_deep_assault_technology()) {
+		days += openvic_supply_defines->supply_unit_reserve_days_deep_assault;
+	}
+	if (has_late_supply_reserve_technology()) {
+		days += openvic_supply_defines->supply_unit_reserve_days_late;
+	}
+	return days;
 }
 
 void CountryInstance::manage_national_stockpile(

@@ -614,8 +614,11 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 	// Battle: an enemy fleet attacks the fleet in the sea next to the port
 	NavyInstance* enemy = nullptr;
 	for (NavyInstance const& candidate : unit_manager.get_navies()) {
+		// An enemy the country is at war with or can declare a war on (not one it has just made peace with: a truce)
 		if (&candidate.get_country() != &country && !candidate.get_country().is_rebel_country() && candidate.get_unit_count() >= 1
-			&& !country.has_alliance_with(candidate.get_country())) {
+			&& !country.has_alliance_with(candidate.get_country())
+			&& (country.is_at_war_with(candidate.get_country())
+				|| instance_manager.get_war_manager().can_declare_war(country, candidate.get_country(), instance_manager.get_today()))) {
 			enemy = static_cast<NavyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
 			break;
 		}
