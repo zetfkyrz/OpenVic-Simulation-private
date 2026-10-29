@@ -226,29 +226,29 @@ namespace {
 			"rifle = { icon = \"small_arms\" name = \"LINE_RIFLE\" slot = infantry unit_types = { infantry } }\n"
 			"siege_artillery = { icon = \"artillery\" name = \"LINE_SIEGE\" slot = special unit_types = { siege } }\n");
 		write_test_file(base / "common/ov_equipment/rifles/rifle_a.txt",
-			"rifle_a = {\n line = rifle\n tier = 1\n rof = 2.5\n range = 100\n accuracy = 0.3\n reliability = 0.85\n weight = 4.5\n"
+			"rifle_a = {\n line = rifle\n tier = 1\n attack = 4\n defence = 4\n weight = 4.5\n"
 			" flags = { smokeless breech_loading breech_loading }\n good = { base_price = 37 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/rifle_b.txt",
-			"rifle_b = {\n line = rifle\n tier = 2\n rof = 3\n range = 300\n accuracy = 0.5\n reliability = 0.9\n weight = 4.2\n"
+			"rifle_b = {\n line = rifle\n tier = 2\n attack = 6\n defence = 5\n weight = 4.2\n"
 			" unlock_key = \"my_unlock:b\"\n mystery_key = 5\n good = { id = \"rifle_b_good\" base_price = 50 }\n}\n");
 		// A new line with one weapon: no code is needed
 		write_test_file(base / "common/ov_equipment/siege/mortar_1.txt",
-			"mortar_1 = {\n line = siege_artillery\n tier = 1\n rof = 0.5\n range = 3000\n accuracy = 0.4\n reliability = 0.9\n weight = 2000\n"
+			"mortar_1 = {\n line = siege_artillery\n tier = 1\n attack = 8\n defence = 2\n weight = 2000\n"
 			" good = { base_price = 90 }\n}\n");
 		// Broken: an unknown line, a missing value, a value out of its range, a file that cannot be parsed
 		write_test_file(base / "common/ov_equipment/rifles/bad_line.txt",
-			"bad_line = {\n line = nothing\n tier = 1\n rof = 1\n range = 1\n accuracy = 0.3\n reliability = 0.8\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_line = {\n line = nothing\n tier = 1\n attack = 1\n defence = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_missing.txt",
-			"bad_missing = {\n line = rifle\n tier = 1\n rof = 1\n range = 1\n accuracy = 0.3\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_missing = {\n line = rifle\n tier = 1\n attack = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_range.txt",
-			"bad_range = {\n line = rifle\n tier = 1\n rof = 1\n range = 1\n accuracy = 1.5\n reliability = 0.8\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_range = {\n line = rifle\n tier = 1\n attack = -1\n defence = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_syntax.txt", "bad_syntax = { line = rifle tier = \n");
 		// The mod: replaces rifle_a with a file of the same path, adds rifle_c, replaces rifle_b by id from another file
 		write_test_file(mod / "common/ov_equipment/rifles/rifle_a.txt",
-			"rifle_a = {\n line = rifle\n tier = 1\n rof = 4\n range = 120\n accuracy = 0.35\n reliability = 0.85\n weight = 4.4\n good = { base_price = 40 }\n}\n");
+			"rifle_a = {\n line = rifle\n tier = 1\n attack = 5\n defence = 4\n weight = 4.4\n good = { base_price = 40 }\n}\n");
 		write_test_file(mod / "common/ov_equipment/rifles/rifle_c.txt",
-			"rifle_c = {\n line = rifle\n tier = 3\n rof = 6\n range = 400\n accuracy = 0.6\n reliability = 0.9\n weight = 4\n good = { base_price = 70 }\n}\n"
-			"rifle_b = {\n line = rifle\n tier = 2\n rof = 3.5\n range = 310\n accuracy = 0.5\n reliability = 0.9\n weight = 4.2\n good = { base_price = 51 }\n}\n");
+			"rifle_c = {\n line = rifle\n tier = 3\n attack = 9\n defence = 6\n weight = 4\n good = { base_price = 70 }\n}\n"
+			"rifle_b = {\n line = rifle\n tier = 2\n attack = 7\n defence = 5\n weight = 4.2\n good = { base_price = 51 }\n}\n");
 
 		Dataloader loader;
 		const Dataloader::path_vector_t roots { base, mod };
@@ -267,14 +267,14 @@ namespace {
 		r.check(
 			manager.find_equipment("bad_line") == nullptr && manager.find_equipment("bad_missing") == nullptr
 				&& manager.find_equipment("bad_range") == nullptr && manager.find_equipment("bad_syntax") == nullptr,
-			"equipment: a weapon of an unknown line, with a missing or out of range value, or in a file with a syntax error is not loaded"
+			"equipment: a weapon of an unknown line, with a missing or wrong value, or in a file with a syntax error is not loaded"
 		);
 		EquipmentDefinition const* const mortar = manager.find_equipment("mortar_1");
 		r.check(mortar != nullptr && mortar->line == "siege_artillery", "equipment: a weapon of the new line is loaded without code");
 
 		EquipmentDefinition const* const rifle_a = manager.find_equipment("rifle_a");
 		r.check(
-			rifle_a != nullptr && rifle_a->rof == fixed_point_t(4) && rifle_a->good.base_price == fixed_point_t(40),
+			rifle_a != nullptr && rifle_a->attack == fixed_point_t(5) && rifle_a->good.base_price == fixed_point_t(40),
 			"equipment: a file of a mod with the same path replaces the built-in one"
 		);
 		r.check(rifle_a != nullptr && rifle_a->unlock_key == "equipment:rifle_a", "equipment: the unlock key is equipment:<id> by default");
@@ -284,7 +284,7 @@ namespace {
 		);
 		EquipmentDefinition const* const rifle_b = manager.find_equipment("rifle_b");
 		r.check(
-			rifle_b != nullptr && rifle_b->rof == fixed_point_t(7) / 2 && rifle_b->unlock_key == "equipment:rifle_b",
+			rifle_b != nullptr && rifle_b->attack == fixed_point_t(7) && rifle_b->unlock_key == "equipment:rifle_b",
 			"equipment: a weapon of a mod with the id of another one replaces it, whatever the file"
 		);
 		EquipmentDefinition const* const rifle_c = manager.find_equipment("rifle_c");
@@ -327,9 +327,9 @@ namespace {
 		}
 		EquipmentDefinition const* const rifle_3 = manager.find_equipment("rifle_3");
 		r.check(
-			rifle_3 != nullptr && rifle_3->rof == fixed_point_t(7) && rifle_3->range == fixed_point_t(500)
-				&& rifle_3->accuracy == fixed_point_t(65) / 100 && rifle_3->has_flag("breech_loading") && !rifle_3->has_flag("magazine"),
-			"equipment: rifle_3 has the values of the table (rof 7, range 500, accuracy 0.65, breech loading)"
+			rifle_3 != nullptr && rifle_3->attack == fixed_point_t(9) && rifle_3->defence == fixed_point_t(13) / 2
+				&& rifle_3->has_flag("breech_loading") && !rifle_3->has_flag("magazine"),
+			"equipment: rifle_3 has the values of the table (attack 9, defence 6.5, breech loading)"
 		);
 		EquipmentDefinition const* const rifle_1 = manager.find_equipment("rifle_1");
 		r.check(
@@ -338,13 +338,13 @@ namespace {
 		);
 		EquipmentDefinition const* const gun_4 = manager.find_equipment("field_gun_4");
 		r.check(
-			gun_4 != nullptr && gun_4->has_flag("indirect_fire") && gun_4->rof == fixed_point_t(17) && gun_4->good.base_price == fixed_point_t(185),
-			"equipment: field_gun_4 is the quick-firing gun (rof 17, indirect fire, price 185)"
+			gun_4 != nullptr && gun_4->has_flag("indirect_fire") && gun_4->attack == fixed_point_t(6) && gun_4->good.base_price == fixed_point_t(185),
+			"equipment: field_gun_4 is the quick-firing gun (attack 6, indirect fire, price 185)"
 		);
 		EquipmentDefinition const* const gun_1 = manager.find_equipment("field_gun_1");
 		r.check(
-			gun_1 != nullptr && gun_1->canister_range == fixed_point_t(300) && gun_1->has_flag("canister"),
-			"equipment: field_gun_1 has canister (range 300)"
+			gun_1 != nullptr && gun_1->has_flag("canister") && gun_1->attack == fixed_point_t(3) / 2,
+			"equipment: field_gun_1 has canister and the attack 1.5 of the artillery regiment"
 		);
 		bool prices_grow = true;
 		for (std::string_view line : { "rifle", "field_artillery" }) {
@@ -354,6 +354,14 @@ namespace {
 			}
 		}
 		r.check(prices_grow, "equipment: the base price grows with the generation");
+		bool power_grows = true;
+		for (std::string_view line : { "rifle", "field_artillery" }) {
+			auto const generations = manager.get_line_equipment(line);
+			for (std::size_t i = 1; i < generations.size(); i++) {
+				power_grows &= generations[i]->attack > generations[i - 1]->attack && generations[i]->defence > generations[i - 1]->defence;
+			}
+		}
+		r.check(power_grows, "equipment: the attack and the defence grow with the generation");
 	}
 
 	// ---- the unlocks of a country (docs/EQUIPMENT_MODDING.md, section 6)

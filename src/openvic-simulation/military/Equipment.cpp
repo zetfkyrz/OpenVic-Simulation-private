@@ -33,10 +33,6 @@ namespace {
 	bool is_known_slot(std::string_view slot) {
 		return slot == "infantry" || slot == "cavalry" || slot == "support" || slot == "special";
 	}
-
-	bool in_range(fixed_point_t const value, fixed_point_t const min, fixed_point_t const max) {
-		return value >= min && value <= max;
-	}
 }
 
 bool EquipmentDefinition::has_flag(std::string_view flag) const {
@@ -118,11 +114,8 @@ std::size_t EquipmentManager::load_equipment_file(std::string_view source, ast::
 				"line", ONE_EXACTLY, expect_identifier_or_string(assign_variable_callback_string(definition.line)),
 				"tier", ONE_EXACTLY, expect_uint(assign_variable_callback(definition.tier)),
 				"unlock_key", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.unlock_key)),
-				"rof", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.rof)),
-				"range", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.range)),
-				"canister_range", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(definition.canister_range)),
-				"accuracy", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.accuracy)),
-				"reliability", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.reliability)),
+				"attack", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.attack)),
+				"defence", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.defence)),
 				"ammo_per_day", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(definition.ammo_per_day)),
 				"ammo_good", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.ammo_good)),
 				"weight", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.weight)),
@@ -172,16 +165,11 @@ std::size_t EquipmentManager::load_equipment_file(std::string_view source, ast::
 			if (definition.tier < 1) {
 				return skip("tier must be 1 or more");
 			}
-			if (definition.rof <= fixed_point_t::_0 || definition.range <= fixed_point_t::_0) {
-				return skip("rof and range must be above 0");
+			if (definition.attack <= fixed_point_t::_0 || definition.defence <= fixed_point_t::_0) {
+				return skip("attack and defence must be above 0");
 			}
-			if (!in_range(definition.accuracy, fixed_point_t::_0, fixed_point_t::_1)
-				|| !in_range(definition.reliability, fixed_point_t::_0, fixed_point_t::_1)) {
-				return skip("accuracy and reliability must be between 0 and 1");
-			}
-			if (definition.weight < fixed_point_t::_0 || definition.ammo_per_day < fixed_point_t::_0
-				|| definition.canister_range < fixed_point_t::_0) {
-				return skip("weight, ammo_per_day and canister_range cannot be negative");
+			if (definition.weight < fixed_point_t::_0 || definition.ammo_per_day < fixed_point_t::_0) {
+				return skip("weight and ammo_per_day cannot be negative");
 			}
 			if (definition.good.base_price <= fixed_point_t::_0) {
 				return skip("the base_price of the good must be above 0");

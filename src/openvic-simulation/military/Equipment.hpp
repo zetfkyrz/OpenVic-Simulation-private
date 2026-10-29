@@ -47,12 +47,11 @@ namespace OpenVic {
 		std::uint32_t tier = 1; // the generation, 1 and up
 		memory::string unlock_key; // the unlock of the country that makes the weapon available (equipment:<id> if the file has none)
 
-		fixed_point_t rof = fixed_point_t::_0; // shots per minute
-		fixed_point_t range = fixed_point_t::_0; // metres
-		fixed_point_t canister_range = fixed_point_t::_0; // metres, 0 if the weapon has no canister
-		fixed_point_t accuracy = fixed_point_t::_0; // 0..1
-		fixed_point_t reliability = fixed_point_t::_0; // 0..1
-		fixed_point_t ammo_per_day = fixed_point_t::_0; // of ammo_good, per piece
+		// The strength of a piece in the points of the regiment types (units/*.txt: attack, defence). A regiment keeps the attack and the defence of
+		// its type with the weapon of the first generation of its line and gets more or less with another one, in proportion to these numbers.
+		fixed_point_t attack = fixed_point_t::_0;
+		fixed_point_t defence = fixed_point_t::_0;
+		fixed_point_t ammo_per_day = fixed_point_t::_0; // of ammo_good a piece uses in a day of battle
 		memory::string ammo_good; // empty: the weapon does not use a special ammunition (the field is for the ammunition generations later)
 		fixed_point_t weight = fixed_point_t::_0; // kilograms of a piece (carried by the ships)
 		memory::vector<std::pair<memory::string, fixed_point_t>> cost; // goods (by identifier) a piece of it costs in a template
