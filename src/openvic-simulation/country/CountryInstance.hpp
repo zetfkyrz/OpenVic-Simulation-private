@@ -20,6 +20,7 @@
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/BuildingLevel.hpp"
 #include "openvic-simulation/economy/BuildingRestrictionCategory.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/military/CombatWidth.hpp"
 #include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/SupplyPriority.hpp"
@@ -480,6 +481,9 @@ namespace OpenVic {
 		memory::vector<DivisionTemplate> division_templates;
 		std::uint32_t next_division_template_id = 1;
 		bool division_templates_made = false;
+		// The groups of armies (military/ArmyGroup.hpp)
+		memory::vector<ArmyGroup> army_groups;
+		std::uint32_t next_army_group_id = 1;
 		fixed_point_t PROPERTY(supply_limit_global_base);
 		fixed_point_t PROPERTY(supply_limit_multiplier, fixed_point_t::_1);
 		fixed_point_t PROPERTY(supply_home_bonus);
@@ -789,6 +793,23 @@ namespace OpenVic {
 			bool army_has_own_priority, supply_priority_t army_priority
 		) const {
 			return army_has_own_priority ? army_priority : army_supply_priority;
+		}
+		[[nodiscard]] std::span<const ArmyGroup> get_army_groups() const {
+			return army_groups;
+		}
+		[[nodiscard]] ArmyGroup const* find_army_group(const std::uint32_t id) const {
+			for (ArmyGroup const& group : army_groups) {
+				if (group.id == id) {
+					return &group;
+				}
+			}
+			return nullptr;
+		}
+		memory::vector<ArmyGroup>& get_mutable_army_groups() {
+			return army_groups;
+		}
+		std::uint32_t take_army_group_id() {
+			return next_army_group_id++;
 		}
 		[[nodiscard]] std::span<const DivisionTemplate> get_division_templates() const {
 			return division_templates;

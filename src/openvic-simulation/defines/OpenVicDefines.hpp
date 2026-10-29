@@ -512,6 +512,12 @@ namespace OpenVic {
 	/* A province that cannot feed the regiments in it takes the free supply limit of its neighbours (that are held by the country or its */ \
 	/* friends) with this efficiency */ \
 	RATE(SUPPLY_NEIGHBOUR_EFFICIENCY, supply_neighbour_efficiency, Rate(75, 100), 0, 1) \
+	/* The bonus of a general to the supply of his army (the third factor of the supply limit): the traits that reduce the attrition give the */ \
+	/* attrition times this, every point of prestige gives this share. A field marshal gives his bonus times SUPPLY_MARSHAL_SHARE to all the */ \
+	/* armies of his group */ \
+	FIXED(SUPPLY_LEADER_ATTRITION_FACTOR, supply_leader_attrition_factor, fixed_point_t::_1, 0, 100) \
+	RATE(SUPPLY_LEADER_PRESTIGE_BONUS, supply_leader_prestige_bonus, Rate(0, 100), 0, 1) \
+	RATE(SUPPLY_MARSHAL_SHARE, supply_marshal_share, Rate(50, 100), 0, 1) \
 	/* An army that gets at least this share of its need is fully supplied (its reserve neither falls nor needs more than it gets) */ \
 	RATE(SUPPLY_FULL_THRESHOLD, supply_full_threshold, Rate(99, 100), 0, 1) \
 	/* The supply level of an army below this share gives the message "the army is without supplies" */ \

@@ -59,6 +59,8 @@ namespace OpenVic {
 	private:
 		UnitInstanceGroup* PROPERTY_PTR(unit_instance_group, nullptr);
 		bool PROPERTY_RW(can_be_used, true);
+		// The general is the field marshal of a group of armies (he does not lead an army)
+		bool PROPERTY_RW_CUSTOM_NAME(marshal, is_marshal, set_marshal, false);
 	public:
 		const unique_id_t unique_id;
 

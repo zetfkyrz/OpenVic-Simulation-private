@@ -160,6 +160,10 @@ namespace OpenVic {
 		bool PROPERTY_RW_CUSTOM_NAME(supply_alert, is_supply_alert, set_supply_alert, false);
 		// The divisions of the army (see military/Division.hpp); empty for a country without the technology of the organisation of the army
 		memory::vector<DivisionInstance> divisions;
+		// The group of armies the army is in (military/ArmyGroup.hpp), 0 if it is in none
+		std::uint32_t PROPERTY_RW(army_group_id, 0);
+		// The bonus of the general of the army and the field marshal of its group to its supply, worked out every day
+		fixed_point_t PROPERTY_RW(supply_leader_bonus, fixed_point_t::_0);
 
 	public:
 		UnitInstanceGroupBranched(

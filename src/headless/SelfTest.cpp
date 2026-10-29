@@ -22,6 +22,8 @@
 #include <openvic-simulation/economy/trading/TradeNetwork.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
+#include <openvic-simulation/military/ArmyGroup.hpp>
+#include <openvic-simulation/military/Leader.hpp>
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
@@ -1211,6 +1213,131 @@ namespace {
 		}
 	}
 
+	// Groups of armies and field marshals, the bonus of the generals to the supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 1 and 4)
+	void test_army_groups(Results& r, InstanceManager& im) {
+		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && candidate.has_army_organisation() && candidate.get_armies().size() >= 3
+				&& candidate.get_leaders<unit_branch_t::LAND>().size() >= 3) {
+				country = &candidate;
+				break;
+			}
+		}
+		r.check(country != nullptr, "army groups: a civilised country with three armies and three generals exists");
+		if (country == nullptr) {
+			return;
+		}
+		const bool auto_assign_before = country->get_auto_assign_leaders();
+		country->set_auto_assign_leaders(false);
+		// Two armies with a general each and a general that leads nobody (he becomes the marshal)
+		ArmyInstance* first = &country->get_armies()[0].get();
+		ArmyInstance* second = &country->get_armies()[1].get();
+		for (ArmyInstance& army : country->get_armies()) {
+			army.set_leader(nullptr);
+		}
+		LeaderInstance* lead_first = nullptr;
+		LeaderInstance* lead_second = nullptr;
+		LeaderInstance* marshal = nullptr;
+		for (LeaderInstance& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (leader.get_unit_instance_group() != nullptr || leader.is_marshal() || !leader.get_can_be_used()) {
+				continue;
+			}
+			if (lead_first == nullptr) {
+				lead_first = &leader;
+			} else if (lead_second == nullptr) {
+				lead_second = &leader;
+			} else if (marshal == nullptr) {
+				marshal = &leader;
+			}
+		}
+		r.check(marshal != nullptr, "army groups: three free generals exist");
+		if (marshal == nullptr) {
+			return;
+		}
+		first->set_leader(lead_first);
+		second->set_leader(lead_second);
+
+		// The group
+		const std::size_t groups_before = country->get_army_groups().size();
+		im.queue_game_action<create_army_group_argument_t>(country->index);
+		im.force_tick_and_update();
+		r.check(country->get_army_groups().size() == groups_before + 1, "army groups: a group can be made");
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		im.queue_game_action<set_army_group_argument_t>(first->unique_id, group_id);
+		im.queue_game_action<set_army_group_argument_t>(second->unique_id, group_id);
+		im.queue_game_action<set_army_group_argument_t>(second->unique_id, std::uint32_t(9999));
+		im.force_tick_and_update();
+		r.check(first->get_army_group_id() == group_id && second->get_army_group_id() == group_id, "army groups: armies can join a group, an unknown group is refused");
+
+		// The field marshal: a general that leads nobody
+		// A general that leads an army can be made the marshal: he leaves the army
+		im.queue_game_action<set_army_group_marshal_argument_t>(country->index, group_id, lead_first->unique_id);
+		im.force_tick_and_update();
+		r.check(country->find_army_group(group_id)->marshal_id == lead_first->unique_id && first->get_leader() == nullptr && lead_first->is_marshal(),
+			"army groups: a general that leads an army can become the marshal, he leaves the army");
+		im.queue_game_action<set_army_group_marshal_argument_t>(country->index, group_id, std::uint32_t(0));
+		im.force_tick_and_update();
+		r.check(country->find_army_group(group_id)->marshal_id == 0 && !lead_first->is_marshal(), "army groups: the marshal can be taken off");
+		first->set_leader(lead_first);
+		im.queue_game_action<set_army_group_marshal_argument_t>(country->index, group_id, marshal->unique_id);
+		im.force_tick_and_update();
+		r.check(country->find_army_group(group_id)->marshal_id == marshal->unique_id && marshal->is_marshal(), "army groups: a free general becomes the marshal");
+		im.queue_game_action<set_army_leader_argument_t>(second->unique_id, marshal->unique_id);
+		im.force_tick_and_update();
+		r.check(second->get_leader() == lead_second, "army groups: a marshal cannot lead an army");
+		LeaderInstance* const spare = marshal;
+		// The auto assignment does not take the marshal (the armies without a general get the other free generals)
+		country->set_auto_assign_leaders(true);
+		for (int day = 0; day < 3; ++day) {
+			im.force_tick_and_update();
+		}
+		country->set_auto_assign_leaders(false);
+		r.check(spare->get_unit_instance_group() == nullptr && spare->is_marshal(), "army groups: the marshal is not given to an army by the auto assignment");
+		first->set_leader(lead_first);
+		second->set_leader(lead_second);
+
+		// The bonus: the prestige of the general (and the half of the one of the marshal for the army of the group); 1 percent a point of prestige
+		defines.supply_leader_prestige_bonus.numerator = 100;
+		play(im, 1);
+		const fixed_point_t expected_first = lead_first->get_prestige() / 100 + marshal->get_prestige() / 100 / 2;
+		const fixed_point_t expected_second = lead_second->get_prestige() / 100 + marshal->get_prestige() / 100 / 2;
+		const auto near_enough = [](fixed_point_t a, fixed_point_t b) -> bool {
+			return a - b < fixed_point_t(1) / 1000 && b - a < fixed_point_t(1) / 1000;
+		};
+		r.check(near_enough(first->get_supply_leader_bonus(), expected_first) && near_enough(second->get_supply_leader_bonus(), expected_second),
+			"army groups: the army gets the bonus of its general and half of the bonus of the marshal of its group",
+			fmt::format("{} / {} and {} / {}", first->get_supply_leader_bonus(), expected_first, second->get_supply_leader_bonus(), expected_second));
+		// An army outside the group gets no bonus of the marshal
+		ArmyInstance* outside = &country->get_armies()[2].get();
+		r.check(near_enough(outside->get_supply_leader_bonus(), outside->get_leader() != nullptr ? outside->get_leader()->get_prestige() / 100 : fixed_point_t::_0),
+			"army groups: an army outside the group gets no bonus of the marshal");
+		defines.supply_leader_prestige_bonus.numerator = 0;
+		play(im, 1);
+		r.check(first->get_supply_leader_bonus() == fixed_point_t::_0, "army groups: without the prestige bonus and the traits the bonus of the generals is 0 (the balance is not touched)");
+
+		// Deleting a group frees the marshal and the armies
+		im.queue_game_action<delete_army_group_argument_t>(country->index, group_id);
+		im.force_tick_and_update();
+		r.check(first->get_army_group_id() == 0 && !marshal->is_marshal() && country->find_army_group(group_id) == nullptr,
+			"army groups: deleting a group frees its armies and its marshal");
+		country->set_auto_assign_leaders(auto_assign_before);
+
+		// Without the technology
+		CountryInstance* plain = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.has_army_organisation() && candidate.has_armies()) {
+				plain = &candidate;
+				break;
+			}
+		}
+		if (plain != nullptr) {
+			im.queue_game_action<create_army_group_argument_t>(plain->index);
+			im.force_tick_and_update();
+			r.check(plain->get_army_groups().empty(), "army groups: a country without the technology cannot make groups");
+		}
+	}
+
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
 	void test_trade_and_hunger(Results& r, InstanceManager& im) {
@@ -1569,6 +1696,7 @@ namespace {
 		}
 		test_supply_limit(r, *im);
 		test_divisions(r, *im);
+		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

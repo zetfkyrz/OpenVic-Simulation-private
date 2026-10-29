@@ -13,7 +13,11 @@
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
+#include "openvic-simulation/military/Leader.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/modifier/ModifierManager.hpp"
 #include "openvic-simulation/military/UnitInstance.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
@@ -99,6 +103,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
 	const fixed_point_t efficiency = defines.supply_neighbour_efficiency.fixed();
 	const fixed_point_t alert_level = defines.supply_alert_level.fixed();
+	ModifierEffectCache const& modifier_effect_cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	// How much of the free limit of a province was taken by the neighbours in the work of this country (reset after every country)
 	std::vector<fixed_point_t> lent(map.get_province_instances().size() + 1, fixed_point_t::_0);
@@ -185,7 +190,25 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 				const supply_priority_t priority = country.get_effective_supply_priority(
 					army.is_supply_priority_custom(), army.get_supply_priority()
 				);
-				const SupplyDeliveryResult result = calculate_supply_delivery(share, get_supply_priority_multiplier(defines, priority));
+				// The third factor: the bonus of the general and of the field marshal of the group less the temporary debuffs (not on the territory
+				// coefficient: only the technologies change that)
+				fixed_point_t leader_bonus = fixed_point_t::_0;
+				if (army.get_leader() != nullptr) {
+					leader_bonus += calculate_leader_supply_bonus(*army.get_leader(), modifier_effect_cache, defines);
+				}
+				if (army.get_army_group_id() != 0) {
+					ArmyGroup const* const army_group = country.find_army_group(army.get_army_group_id());
+					LeaderInstance const* const marshal = army_group != nullptr && army_group->marshal_id != 0
+						? instance_manager.get_unit_instance_manager().get_leader_instance_by_unique_id(army_group->marshal_id) : nullptr;
+					if (marshal != nullptr) {
+						leader_bonus += calculate_leader_supply_bonus(*marshal, modifier_effect_cache, defines) * defines.supply_marshal_share.fixed();
+					}
+				}
+				army.set_supply_leader_bonus(leader_bonus);
+				const fixed_point_t third_factor = std::max(fixed_point_t::_0, fixed_point_t::_1 + leader_bonus - calculate_temporary_supply_debuff(country));
+				const SupplyDeliveryResult result = calculate_supply_delivery(
+					std::clamp(share * third_factor, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
+				);
 				army.set_supply_send_multiplier(result.send_multiplier);
 				army.set_supply_delivery(result.delivery);
 			}

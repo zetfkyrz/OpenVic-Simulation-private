@@ -1190,7 +1190,7 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 			}
 			LeaderInstance* best = nullptr;
 			for (LeaderInstance& leader : leaders) {
-				if (leader.get_unit_instance_group() == nullptr && leader.get_can_be_used()
+				if (leader.get_unit_instance_group() == nullptr && leader.get_can_be_used() && !leader.is_marshal()
 					&& (best == nullptr || leader.get_prestige() > best->get_prestige())) {
 					best = &leader;
 				}

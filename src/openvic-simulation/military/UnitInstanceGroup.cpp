@@ -245,6 +245,10 @@ bool UnitInstanceGroup::set_country(CountryInstance& new_country) {
 }
 
 bool UnitInstanceGroup::set_leader(LeaderInstance* new_leader) {
+	// A field marshal does not lead an army (nothing changes)
+	if (new_leader != nullptr && new_leader->is_marshal()) {
+		return false;
+	}
 	bool ret = true;
 
 	if (leader != new_leader) {

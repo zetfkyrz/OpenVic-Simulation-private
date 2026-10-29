@@ -7,6 +7,7 @@
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/military/UnitInstance.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
@@ -114,6 +115,7 @@ void OpenVic::update_all_divisions(InstanceManager& instance_manager) {
 		if (!country.exists()) {
 			continue;
 		}
+		update_army_groups(instance_manager, country);
 		if (country.has_army_organisation()) {
 			if (!country.are_division_templates_made()) {
 				country.set_division_templates_made(true);

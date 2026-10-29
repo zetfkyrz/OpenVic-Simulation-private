@@ -6,6 +6,7 @@
 #include "openvic-simulation/core/Typedefs.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
@@ -969,6 +970,30 @@ bool GameActionManager::VariantVisitor::operator() (reform_army_to_template_argu
 	const auto [army_id, division_id, template_id] = argument;
 	ArmyInstance* const army = find_army(instance_manager, army_id);
 	return army != nullptr && reform_army_to_template(instance_manager, *army, division_id, template_id);
+}
+
+// Groups of armies and field marshals
+bool GameActionManager::VariantVisitor::operator() (create_army_group_argument_t const& argument) const {
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument));
+	return create_army_group(country);
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_army_group_argument_t const& argument) const {
+	const auto [country_index, group_id] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return delete_army_group(instance_manager, country, group_id);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_argument_t const& argument) const {
+	const auto [army_id, group_id] = argument;
+	ArmyInstance* const army = find_army(instance_manager, army_id);
+	return army != nullptr && set_army_group(army->get_country(), *army, group_id);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_marshal_argument_t const& argument) const {
+	const auto [country_index, group_id, leader_id] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_marshal(instance_manager, country, group_id, leader_id);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_global_supply_priority_argument_t const& argument) const {
