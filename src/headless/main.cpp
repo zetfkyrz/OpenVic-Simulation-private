@@ -29,6 +29,8 @@
 #include <openvic-simulation/politics/PoliticsManager.hpp>
 #include <openvic-simulation/country/CountryParty.hpp>
 #include <openvic-simulation/military/UnitInstanceGroup.hpp>
+#include <openvic-simulation/economy/GoodInstance.hpp>
+#include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/BattleFormulas.hpp>
 #include <openvic-simulation/military/DivisionStats.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
@@ -1162,6 +1164,51 @@ static fs::path find_builtin_data_path(char const* program) {
 
 static size_t info_count = 0, warning_count = 0, error_count = 0, critical_count = 0;
 
+// WEAPONS (at the end of -e): for every weapon its good at the market (price, base price, stockpiles of the countries, what the factories made
+// yesterday) and how many factories make it; the regiments by weapon (docs/WAR_ASSUMPTIONS.md)
+static void print_weapon_report(InstanceManager& instance_manager) {
+	EquipmentManager const& equipment_manager = instance_manager.definition_manager.get_military_manager().get_equipment_manager();
+	GoodDefinitionManager const& goods = instance_manager.definition_manager.get_economy_manager().get_good_definition_manager();
+	for (EquipmentDefinition const& equipment : equipment_manager.get_equipment()) {
+		GoodDefinition const* const good = goods.get_good_definition_by_identifier(equipment.good.identifier);
+		if (good == nullptr) {
+			continue;
+		}
+		std::size_t factories = 0, open_factories = 0, regiments = 0;
+		fixed_point_t produced = fixed_point_t::_0, stockpiles = fixed_point_t::_0;
+		for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+			for (State const& state : state_set.get_states()) {
+				for (FactoryInstance const& factory : state.get_factories()) {
+					if (factory.production_type->output_good.index == good->index) {
+						factories++;
+						open_factories += factory.is_open() && factory.get_level() > building_level_t(0);
+						produced += factory.get_output_quantity_yesterday();
+					}
+				}
+			}
+		}
+		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists()) {
+				continue;
+			}
+			stockpiles += country.get_good_data(*good).stockpile_amount;
+			for (ArmyInstance& army : country.get_armies()) {
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					regiments += regiment.get_weapon() == &equipment || (regiment.get_weapon() == nullptr && equipment.tier == 1
+						&& equipment_manager.find_line_of_unit_type(regiment.get_regiment_type().get_identifier()) == equipment_manager.find_line(equipment.line));
+				}
+			}
+		}
+		GoodInstance const& good_instance = instance_manager.get_good_instance_manager().get_good_instance_by_definition(*good);
+		fmt::println(
+			"WEAPONS {:<12} tier={} price={:.2f} base={:.2f} factories={} open={} produced_yesterday={:.2f} stockpiles={:.1f} regiments={}",
+			equipment.identifier, equipment.tier, static_cast<double>(good_instance.get_price()), static_cast<double>(good->base_price), factories,
+			open_factories, static_cast<double>(produced), static_cast<double>(stockpiles), regiments
+		);
+	}
+}
+
+
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
 static bool dump_templates = false, dump_battles = false;
 
@@ -1573,6 +1620,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	}
 
 	if (ret && economy_report_days > 0) {
+		print_weapon_report(*game_manager.get_instance_manager());
 		print_state_checksum(*game_manager.get_instance_manager());
 		if (verify_kept_sums) {
 			const size_t differences = ProvinceInstance::get_political_support_cache_mismatch_count();
