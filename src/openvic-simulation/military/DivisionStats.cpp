@@ -97,7 +97,7 @@ DivisionStats OpenVic::compute_division_stats(
 
 			// The goods: the weapon of the line is the one of the best generation (the good of the first generation is the one of the base game)
 			const std::string base_good = has_weapon
-				? std::string { info.first->good.replaces.empty() ? std::string_view { info.first->good.identifier } : std::string_view { info.first->good.replaces } }
+				? std::string { info.first->good.identifier }
 				: std::string {};
 			const auto good_id = [&](GoodDefinition const& good) -> std::string {
 				if (has_weapon && good.get_identifier() == base_good) {

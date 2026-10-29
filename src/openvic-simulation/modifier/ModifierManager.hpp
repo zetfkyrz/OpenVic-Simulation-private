@@ -92,6 +92,10 @@ namespace OpenVic {
 
 	public:
 		bool register_complex_modifier(const std::string_view identifier);
+		/* Another name for a modifier effect of the technologies (the old name of a renamed good: small_arms is rifle_1) */
+		bool add_technology_modifier_alias(std::string_view alias, std::string_view target) {
+			return technology_modifier_effects.add_identifier_alias(alias, target);
+		}
 		static memory::string get_flat_identifier(const std::string_view complex_modifier_identifier, const std::string_view variant_identifier);
 
 		bool setup_modifier_effects();

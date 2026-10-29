@@ -1,5 +1,7 @@
 #include "GoodDefinition.hpp"
 
+#include "openvic-simulation/military/Equipment.hpp"
+
 #include "openvic-simulation/modifier/ModifierManager.hpp"
 #include "openvic-simulation/core/memory/FixedVector.hpp"
 #include "openvic-simulation/core/string/Utility.hpp"
@@ -78,9 +80,10 @@ bool GoodDefinitionManager::add_good_definition(
 	}
 }
 
-bool GoodDefinitionManager::load_goods_file(ast::NodeCPtr root) {
+bool GoodDefinitionManager::load_goods_file(ast::NodeCPtr root, EquipmentManager const* equipment_manager) {
 	size_t total_expected_goods = 0;
 
+	renamed_goods.clear();
 	bool ret = expect_dictionary_reserve_length(
 		good_categories,
 		[this, &total_expected_goods](std::string_view key, ast::NodeCPtr value) -> bool {
@@ -99,12 +102,13 @@ bool GoodDefinitionManager::load_goods_file(ast::NodeCPtr root) {
 	)(root);
 
 	lock_good_categories();
-	reserve_more_good_definitions(total_expected_goods);
+	// The goods of the weapons that are new need room too (the categories keep references to the goods: the storage must not move)
+	reserve_more_good_definitions(total_expected_goods + (equipment_manager != nullptr ? equipment_manager->get_equipment().size() : 0));
 
 	ret &= good_categories.expect_item_dictionary(
-		[this](GoodCategory& good_category, ast::NodeCPtr good_category_value) -> bool {
+		[this, equipment_manager](GoodCategory& good_category, ast::NodeCPtr good_category_value) -> bool {
 			return expect_dictionary(
-				[this, &good_category](std::string_view key, ast::NodeCPtr value) -> bool {
+				[this, equipment_manager, &good_category](std::string_view key, ast::NodeCPtr value) -> bool {
 					colour_t colour = colour_t::null();
 					fixed_point_t base_price;
 					bool is_available_from_start = true, is_tradeable = true;
@@ -119,8 +123,21 @@ bool GoodDefinitionManager::load_goods_file(ast::NodeCPtr root) {
 						"overseas_penalty", ZERO_OR_ONE, expect_bool(assign_variable_callback(has_overseas_penalty))
 					)(value);
 
+					// A good that a weapon replaces is registered under the identifier and with the price of the weapon (the other values stay)
+					std::string_view identifier = key;
+					if (equipment_manager != nullptr) {
+						for (EquipmentDefinition const& equipment : equipment_manager->get_equipment()) {
+							if (!equipment.good.replaces.empty() && equipment.good.replaces == key) {
+								identifier = equipment.good.identifier;
+								base_price = equipment.good.base_price;
+								renamed_goods.emplace_back(memory::string { key }, memory::string { identifier });
+								break;
+							}
+						}
+					}
+
 					ret &= add_good_definition(
-						key, colour, good_category, base_price, is_available_from_start, is_tradeable, is_money,
+						identifier, colour, good_category, base_price, is_available_from_start, is_tradeable, is_money,
 						has_overseas_penalty
 					);
 
@@ -129,6 +146,34 @@ bool GoodDefinitionManager::load_goods_file(ast::NodeCPtr root) {
 			)(good_category_value);
 		}
 	)(root);
+
+	// The old names find the renamed goods
+	for (auto const& [old_name, new_name] : renamed_goods) {
+		if (!good_definitions.add_identifier_alias(old_name, new_name)) {
+			spdlog::warn_s("The good {} cannot be called {} too", new_name, old_name);
+		}
+	}
+	// The goods of the other weapons, in the order the weapons are loaded
+	if (equipment_manager != nullptr) {
+		for (EquipmentDefinition const& equipment : equipment_manager->get_equipment()) {
+			EquipmentGoodDescription const& description = equipment.good;
+			if (good_definitions.has_identifier(description.identifier)) {
+				continue; // the good of a weapon that replaced a good of the base game
+			}
+			GoodCategory* category = good_categories.get_item_by_identifier(description.category);
+			if (category == nullptr) {
+				spdlog::warn_s(
+					"The good {} of the weapon {} is in the category {} that does not exist, it goes to the first category",
+					description.identifier, equipment.identifier, description.category
+				);
+				category = &good_categories.front();
+			}
+			ret &= add_good_definition(
+				description.identifier, description.colour, *category, description.base_price, description.available_from_start, true, false,
+				false
+			);
+		}
+	}
 
 	lock_good_definitions();
 
@@ -222,6 +267,18 @@ bool GoodDefinitionManager::generate_modifiers(ModifierManager& modifier_manager
 			this_good_effects.rgo_size, "rgo_size", FORMAT_x100_2DP_PC_POS,
 			memory::fmt::format("{}_RGO_SIZE", good)
 		);
+	}
+
+	// The files of Vic2 write the modifiers of a good that a weapon renamed under its old name
+	for (auto const& [old_name, new_name] : renamed_goods) {
+		for (std::string_view const name : {
+			"rgo_goods_input", "rgo_goods_output", "rgo_goods_throughput", "factory_goods_input", "factory_goods_output",
+			"factory_goods_throughput", "artisan_goods_input", "artisan_goods_output", "artisan_goods_throughput", "rgo_size"
+		}) {
+			ret &= modifier_manager.add_technology_modifier_alias(
+				ModifierManager::get_flat_identifier(name, old_name), ModifierManager::get_flat_identifier(name, new_name)
+			);
+		}
 	}
 
 	return ret;

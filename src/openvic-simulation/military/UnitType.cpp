@@ -47,7 +47,7 @@ UnitType::UnitType(
 		if (auto const it = build_cost.find(good); it != build_cost.end()) {
 			construction_amount = it->second;
 		} else {
-			for (std::string_view const fallback : { "small_arms", "artillery" }) {
+			for (std::string_view const fallback : { "small_arms", "rifle_1", "artillery", "field_gun_1" }) {
 				for (auto const& [cost_good, cost_quantity] : build_cost) {
 					if (cost_good->get_identifier() == fallback) {
 						construction_amount = cost_quantity;

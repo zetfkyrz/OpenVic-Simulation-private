@@ -33,7 +33,8 @@ namespace OpenVic {
 		//     layer of the year, the limits of the division templates (ov_war.TEMPLATE_*)
 		// 21: the division template is a grid (ranks x rows of regiment types, slots of companies), the standard template is 4 infantry 2x2 and 2 cavalry
 		//     1x2, a regiment fills a cell of its own type; create/update_division_template carry the grid
-		inline constexpr int SIMULATION_VERSION = 21;
+		// 22: the weapons are goods (rifle_1..4, field_gun_1..4; small_arms and artillery are rifle_1 and field_gun_1), ov_data/common/ov_equipment
+		inline constexpr int SIMULATION_VERSION = 22;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

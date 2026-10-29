@@ -38,6 +38,8 @@ namespace OpenVic {
 		memory::string icon;
 		memory::string name_key;
 		colour_t colour = colour_t::null();
+		memory::string category = "military_goods"; // the category of goods the good is in
+		bool available_from_start = true; // not for a good that replaces one of the base game: it keeps the setting of that one
 	};
 
 	struct EquipmentDefinition {

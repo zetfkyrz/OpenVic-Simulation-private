@@ -543,7 +543,12 @@ bool Dataloader::_load_goods(DefinitionManager& definition_manager) const {
 
 	GoodDefinitionManager& good_definition_manager = definition_manager.get_economy_manager().get_good_definition_manager();
 
-	bool ret = good_definition_manager.load_goods_file(parse_defines(lookup_file(goods_file)).get_file_node());
+	// The weapons are read first: their goods are registered with the goods of the game (rifle_1 is the small arms of Vic2)
+	EquipmentManager& equipment_manager_for_goods = definition_manager.get_military_manager().get_equipment_manager();
+	const std::size_t equipment_count = load_equipment_files(equipment_manager_for_goods);
+	SPDLOG_INFO("Loaded {} weapons in {} equipment lines", equipment_count, equipment_manager_for_goods.get_lines().size());
+
+	bool ret = good_definition_manager.load_goods_file(parse_defines(lookup_file(goods_file)).get_file_node(), &equipment_manager_for_goods);
 
 	if (!good_definition_manager.generate_modifiers(definition_manager.get_modifier_manager())) {
 		spdlog::critical_s("Failed to generate good-based modifiers!");
@@ -1086,12 +1091,6 @@ bool Dataloader::load_defines(
 	if (!_load_goods(definition_manager)) {
 		spdlog::critical_s("Failed to load goods!");
 		ret = false;
-	}
-	{
-		// The weapons of the army: optional (a missing folder is only a message), a broken file is skipped with a warning
-		EquipmentManager& equipment_manager = definition_manager.get_military_manager().get_equipment_manager();
-		const std::size_t equipment_count = load_equipment_files(equipment_manager);
-		SPDLOG_INFO("Loaded {} weapons in {} equipment lines", equipment_count, equipment_manager.get_lines().size());
 	}
 	{
 		// The provisional layer of the unlocks by the year (TEMPORARY): optional

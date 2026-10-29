@@ -18,6 +18,7 @@
 #include <openvic-simulation/InstanceManager.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/economy/GoodInstance.hpp>
+#include <openvic-simulation/economy/GoodDefinition.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
 #include <openvic-simulation/economy/BuildingType.hpp>
 #include <openvic-simulation/economy/credit/Credit.hpp>
@@ -368,6 +369,41 @@ namespace {
 			}
 		}
 		r.check(power_grows, "equipment: the attack and the defence grow with the generation");
+
+		// The weapons are goods (rifle_1..4, field_gun_1..4); the old names find the same goods
+		GoodDefinitionManager const& goods = game_manager.get_definition_manager().get_economy_manager().get_good_definition_manager();
+		bool all_goods = true, prices_match = true, in_category = true;
+		for (EquipmentDefinition const& equipment : manager.get_equipment()) {
+			GoodDefinition const* const good = goods.get_good_definition_by_identifier(equipment.good.identifier);
+			all_goods &= good != nullptr;
+			if (good != nullptr) {
+				prices_match &= good->base_price == equipment.good.base_price;
+				in_category &= good->category.get_identifier() == equipment.good.category;
+			}
+		}
+		r.check(all_goods && manager.get_equipment().size() >= 8, "goods: every weapon is a good of the market (rifle_1..4, field_gun_1..4)");
+		r.check(prices_match, "goods: the base price of a good is the one of the file of its weapon");
+		r.check(in_category, "goods: the goods of the weapons are in the category of the file (military goods)");
+		r.check(
+			goods.get_good_definition_by_identifier("small_arms") != nullptr
+				&& goods.get_good_definition_by_identifier("small_arms") == goods.get_good_definition_by_identifier("rifle_1")
+				&& goods.get_good_definition_by_identifier("artillery") != nullptr
+				&& goods.get_good_definition_by_identifier("artillery") == goods.get_good_definition_by_identifier("field_gun_1"),
+			"goods: the old names small_arms and artillery are rifle_1 and field_gun_1 (the files of Vic2 keep working)"
+		);
+		UnitTypeManager const& unit_types = game_manager.get_definition_manager().get_military_manager().get_unit_type_manager();
+		RegimentType const* const infantry_type = unit_types.get_regiment_type_by_identifier("infantry");
+		GoodDefinition const* const rifle_good = goods.get_good_definition_by_identifier("rifle_1");
+		bool builds_with_rifles = false, ammunition_used = false;
+		if (infantry_type != nullptr) {
+			for (auto const& [good, quantity] : infantry_type->get_build_cost()) {
+				builds_with_rifles |= good == rifle_good && quantity > fixed_point_t::_0;
+			}
+			for (UnitType::supply_item_t const& item : infantry_type->get_supply_items()) {
+				ammunition_used |= item.good->get_identifier() == "ammunition" && item.construction_amount > fixed_point_t::_0;
+			}
+		}
+		r.check(builds_with_rifles && ammunition_used, "goods: an infantry regiment is built from rifle_1 (the old small arms of its file) and still uses ammunition");
 	}
 
 	// ---- the unlocks of a country (docs/EQUIPMENT_MODDING.md, section 6)

@@ -528,6 +528,19 @@ namespace OpenVic {
 			return index < size();
 		}
 
+		/* Makes another identifier find the item of an identifier that is registered: the old name of a renamed item (small_arms is rifle_1, see
+		 * GoodDefinitionManager::load_goods_file). The alias is not an item, it can be added after the registry is locked. false if the
+		 * target is not registered or the alias is taken. */
+		constexpr bool add_identifier_alias(std::string_view alias, std::string_view target) {
+			const typename identifier_index_map_t::const_iterator it = identifier_index_map.find(target);
+			if (it == identifier_index_map.end() || identifier_index_map.contains(alias)) {
+				return false;
+			}
+			const internal_storage_index_type index = it->second;
+			identifier_index_map.emplace(memory::string { alias }, index);
+			return true;
+		}
+
 		memory::vector<std::string_view> get_item_identifiers() const {
 			memory::vector<std::string_view> identifiers;
 			identifiers.reserve(items.size());

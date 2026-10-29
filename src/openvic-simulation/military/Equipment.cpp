@@ -147,7 +147,9 @@ std::size_t EquipmentManager::load_equipment_file(std::string_view source, ast::
 					"base_price", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.good.base_price)),
 					"icon", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.good.icon)),
 					"name", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.good.name_key)),
-					"colour", ZERO_OR_ONE, expect_colour(assign_variable_callback(definition.good.colour))
+					"colour", ZERO_OR_ONE, expect_colour(assign_variable_callback(definition.good.colour)),
+					"category", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.good.category)),
+					"available_from_start", ZERO_OR_ONE, expect_bool(assign_variable_callback(definition.good.available_from_start))
 				)
 			)(value);
 

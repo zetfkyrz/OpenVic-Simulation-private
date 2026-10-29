@@ -11,6 +11,7 @@
 namespace OpenVic {
 	struct GoodDefinitionManager;
 	struct GoodDefinition;
+	struct EquipmentManager;
 
 	struct GoodCategory : HasIdentifier, HasIndex<GoodCategory, good_category_index_t> {
 		friend struct GoodDefinitionManager;
@@ -58,6 +59,8 @@ namespace OpenVic {
 	private:
 		IdentifierRegistry<GoodCategory> IDENTIFIER_REGISTRY_CUSTOM_PLURAL(good_category, good_categories);
 		IdentifierRegistry<GoodDefinition> IDENTIFIER_REGISTRY(good_definition);
+		// The goods of the base game that a weapon renamed (old name, new identifier): the modifiers of the files of Vic2 use the old names too
+		memory::vector<std::pair<memory::string, memory::string>> renamed_goods;
 
 	public:
 		bool add_good_category(std::string_view identifier, size_t expected_goods_in_category);
@@ -67,7 +70,10 @@ namespace OpenVic {
 			bool is_available_from_start, bool is_tradeable, bool is_money, bool has_overseas_penalty
 		);
 
-		bool load_goods_file(ast::NodeCPtr root);
+		/* The goods of the base game (common/goods.txt) and the goods of the weapons (military/Equipment.hpp): a weapon whose good "replaces" a good of the
+		 * base game makes that one its own (small_arms is registered as rifle_1, the old name finds it too: the files of Vic2 keep working), the other
+		 * weapons add goods of their own. */
+		bool load_goods_file(ast::NodeCPtr root, EquipmentManager const* equipment_manager = nullptr);
 		bool generate_modifiers(ModifierManager& modifier_manager) const;
 	};
 }
