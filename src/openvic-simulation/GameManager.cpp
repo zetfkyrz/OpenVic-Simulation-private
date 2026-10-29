@@ -58,6 +58,24 @@ GameManager::~GameManager() {
 	}
 }
 
+void GameManager::set_builtin_data_path(fs::path const& path) {
+	builtin_data_path = path;
+}
+
+bool GameManager::set_base_path(Dataloader::path_span_t base_path) {
+	OV_ERR_FAIL_COND_V_MSG(base_path.size() > 1, false, "Too many base paths were provided, only one should be set.");
+	Dataloader::path_vector_t roots { base_path.begin(), base_path.end() };
+	if (!builtin_data_path.empty()) {
+		if (fs::is_directory(builtin_data_path)) {
+			roots.push_back(builtin_data_path);
+		} else {
+			spdlog::warn_s("The data folder of OpenVic is not a folder: {} (the weapons and their goods are not loaded)", builtin_data_path.string());
+		}
+	}
+	OV_ERR_FAIL_COND_V_MSG(!dataloader.set_roots(roots, {}), false, "Failed to set Dataloader's base path");
+	return true;
+}
+
 bool GameManager::load_mod_descriptors() {
 	if (mod_descriptors_loaded) {
 		spdlog::error_s("Cannot load mod descriptors - already loaded!");
@@ -118,14 +136,17 @@ bool GameManager::load_mods(memory::vector<memory::string> const& mods_to_find) 
 		}
 	}
 
-	Dataloader::path_vector_t roots = dataloader.get_roots();
+	// The dataloader keeps the roots in the order of the lookup (the last one first), the list for set_roots is in the order of loading:
+	// the base game, the data of OpenVic, then the mods
+	Dataloader::path_vector_t roots { dataloader.get_roots().rbegin(), dataloader.get_roots().rend() };
+	const fs::path base_root = roots.front();
 	roots.reserve(load_list.size() + roots.size());
 
 	vector_ordered_set<fs::path> replace_paths;
 
 	/* Actually registers all roots and replace paths to be loaded by the game. */
 	for (Mod const& mod : load_list) {
-		roots.emplace_back(roots[0] / mod.get_dataloader_root_path());
+		roots.emplace_back(base_root / mod.get_dataloader_root_path());
 		for (std::string_view path : mod.get_replace_paths()) {
 			replace_paths.emplace(path);
 		}

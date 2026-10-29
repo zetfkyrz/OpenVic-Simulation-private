@@ -1130,6 +1130,30 @@ struct SinkGuard {
 	}
 };
 
+// The data of OpenVic itself (the folder ov_data of the repository): --ov-data <folder>, else the environment variable OPENVIC_DATA_PATH, else
+// the folder ov_data found in the current folder, next to the executable or in one of their parents
+static fs::path g_builtin_data_path;
+
+static fs::path find_builtin_data_path(char const* program) {
+	if (char const* const from_environment = std::getenv("OPENVIC_DATA_PATH"); from_environment != nullptr && *from_environment != 0) {
+		return from_environment;
+	}
+	std::error_code ec;
+	for (fs::path start : { fs::current_path(ec), fs::absolute(fs::path { program }, ec).parent_path() }) {
+		for (int depth = 0; depth < 8 && !start.empty(); depth++) {
+			if (fs::is_directory(start / "ov_data", ec)) {
+				return start / "ov_data";
+			}
+			fs::path parent = start.parent_path();
+			if (parent == start) {
+				break;
+			}
+			start = std::move(parent);
+		}
+	}
+	return {};
+}
+
 static size_t info_count = 0, warning_count = 0, error_count = 0, critical_count = 0;
 static bool run_headless(fs::path const& root, memory::vector<memory::string>& mods, bool run_tests) {
 	bool ret = true;
@@ -1159,6 +1183,7 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	SPDLOG_INFO("Commit hash: {}", GameManager::get_commit_hash());
 
 	SPDLOG_INFO("===== Setting base path... =====");
+	game_manager.set_builtin_data_path(g_builtin_data_path);
 	ret &= game_manager.set_base_path(roots);
 
 	SPDLOG_INFO("===== Loading mod descriptors... =====");
@@ -1603,6 +1628,12 @@ int main(int argc, char const* argv[]) {
 				return -1;
 			}
 			economy_report_days = static_cast<size_t>(std::max(0, std::atoi(argv[argn])));
+		} else if (strcmp(arg, "--ov-data") == 0) {
+			if (++argn >= argc) {
+				fmt::println(stderr, "Missing folder after \"--ov-data\".");
+				return -1;
+			}
+			g_builtin_data_path = argv[argn];
 		} else if (strcmp(arg, "-b") == 0) {
 			if (!_read("-b", "base directory", std::identity {})) {
 				return -1;
@@ -1614,6 +1645,9 @@ int main(int argc, char const* argv[]) {
 		} else {
 			break;
 		}
+	}
+	if (g_builtin_data_path.empty()) {
+		g_builtin_data_path = find_builtin_data_path(argc > 0 ? argv[0] : "");
 	}
 	if (root.empty()) {
 		root = Dataloader::search_for_game_path();

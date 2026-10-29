@@ -26,6 +26,7 @@ namespace OpenVic {
 		DefinitionManager PROPERTY(definition_manager);
 		ModManager PROPERTY(mod_manager);
 		std::optional<InstanceManager> instance_manager;
+		fs::path builtin_data_path;
 
 		InstanceManager::gamestate_updated_func_t gamestate_updated_callback;
 		bool PROPERTY_CUSTOM_PREFIX(definitions_loaded, are);
@@ -47,11 +48,15 @@ namespace OpenVic {
 			return instance_manager ? &*instance_manager : nullptr;
 		}
 
-		inline bool set_base_path(Dataloader::path_span_t base_path) {
-			OV_ERR_FAIL_COND_V_MSG(base_path.size() > 1, false, "Too many base paths were provided, only one should be set.");
-			OV_ERR_FAIL_COND_V_MSG(!dataloader.set_roots(base_path, {}), false, "Failed to set Dataloader's base path");
-			return true;
-		};
+		// The folder with the data of OpenVic itself (ov_data: the weapons, their goods and recipes...). It is a root of the dataloader
+		// between the base game and the mods, so a mod overrides it with files of the same path. Set it before set_base_path; if it is
+		// not set (or is not a folder) the game loads without it, with a warning.
+		void set_builtin_data_path(fs::path const& path);
+		[[nodiscard]] fs::path const& get_builtin_data_path() const {
+			return builtin_data_path;
+		}
+
+		bool set_base_path(Dataloader::path_span_t base_path);
 
 		bool load_mod_descriptors();
 

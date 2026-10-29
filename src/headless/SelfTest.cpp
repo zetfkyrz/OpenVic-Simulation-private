@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,6 +27,8 @@
 #include <openvic-simulation/military/ArmyGroup.hpp>
 #include <openvic-simulation/military/Leader.hpp>
 #include <openvic-simulation/military/Division.hpp>
+#include <openvic-simulation/military/Equipment.hpp>
+#include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
 #include <openvic-simulation/military/UnitInstance.hpp>
@@ -197,6 +201,157 @@ namespace {
 	}
 
 	// ---------------------------------------------------------------- tests on a real game
+
+	// ---- the weapons (docs/EQUIPMENT_MODDING.md)
+
+	void write_test_file(std::filesystem::path const& path, std::string_view text) {
+		std::filesystem::create_directories(path.parent_path());
+		std::ofstream file { path, std::ios::binary };
+		file << text;
+	}
+
+	// The weapons are read from files only: a new line and new weapons come with files, a mod replaces a weapon, a broken file is skipped
+	void test_equipment_pure(Results& r) {
+		namespace fs = std::filesystem;
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_equipment";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		const fs::path base = temp / "base";
+		const fs::path mod = temp / "mod";
+
+		write_test_file(base / "common/ov_equipment/lines.txt",
+			"rifle = { icon = \"small_arms\" name = \"LINE_RIFLE\" slot = infantry unit_types = { infantry } }\n"
+			"siege_artillery = { icon = \"artillery\" name = \"LINE_SIEGE\" slot = special unit_types = { siege } }\n");
+		write_test_file(base / "common/ov_equipment/rifles/rifle_a.txt",
+			"rifle_a = {\n line = rifle\n tier = 1\n rof = 2.5\n range = 100\n accuracy = 0.3\n reliability = 0.85\n weight = 4.5\n"
+			" flags = { smokeless breech_loading breech_loading }\n good = { base_price = 37 }\n}\n");
+		write_test_file(base / "common/ov_equipment/rifles/rifle_b.txt",
+			"rifle_b = {\n line = rifle\n tier = 2\n rof = 3\n range = 300\n accuracy = 0.5\n reliability = 0.9\n weight = 4.2\n"
+			" unlock_key = \"my_unlock:b\"\n mystery_key = 5\n good = { id = \"rifle_b_good\" base_price = 50 }\n}\n");
+		// A new line with one weapon: no code is needed
+		write_test_file(base / "common/ov_equipment/siege/mortar_1.txt",
+			"mortar_1 = {\n line = siege_artillery\n tier = 1\n rof = 0.5\n range = 3000\n accuracy = 0.4\n reliability = 0.9\n weight = 2000\n"
+			" good = { base_price = 90 }\n}\n");
+		// Broken: an unknown line, a missing value, a value out of its range, a file that cannot be parsed
+		write_test_file(base / "common/ov_equipment/rifles/bad_line.txt",
+			"bad_line = {\n line = nothing\n tier = 1\n rof = 1\n range = 1\n accuracy = 0.3\n reliability = 0.8\n weight = 1\n good = { base_price = 1 }\n}\n");
+		write_test_file(base / "common/ov_equipment/rifles/bad_missing.txt",
+			"bad_missing = {\n line = rifle\n tier = 1\n rof = 1\n range = 1\n accuracy = 0.3\n weight = 1\n good = { base_price = 1 }\n}\n");
+		write_test_file(base / "common/ov_equipment/rifles/bad_range.txt",
+			"bad_range = {\n line = rifle\n tier = 1\n rof = 1\n range = 1\n accuracy = 1.5\n reliability = 0.8\n weight = 1\n good = { base_price = 1 }\n}\n");
+		write_test_file(base / "common/ov_equipment/rifles/bad_syntax.txt", "bad_syntax = { line = rifle tier = \n");
+		// The mod: replaces rifle_a with a file of the same path, adds rifle_c, replaces rifle_b by id from another file
+		write_test_file(mod / "common/ov_equipment/rifles/rifle_a.txt",
+			"rifle_a = {\n line = rifle\n tier = 1\n rof = 4\n range = 120\n accuracy = 0.35\n reliability = 0.85\n weight = 4.4\n good = { base_price = 40 }\n}\n");
+		write_test_file(mod / "common/ov_equipment/rifles/rifle_c.txt",
+			"rifle_c = {\n line = rifle\n tier = 3\n rof = 6\n range = 400\n accuracy = 0.6\n reliability = 0.9\n weight = 4\n good = { base_price = 70 }\n}\n"
+			"rifle_b = {\n line = rifle\n tier = 2\n rof = 3.5\n range = 310\n accuracy = 0.5\n reliability = 0.9\n weight = 4.2\n good = { base_price = 51 }\n}\n");
+
+		Dataloader loader;
+		const Dataloader::path_vector_t roots { base, mod };
+		r.check(loader.set_roots(roots, {}, false), "equipment: the roots of a test (a base and a mod) are accepted");
+
+		EquipmentManager manager;
+		const std::size_t loaded = loader.load_equipment_files(manager);
+		r.check(manager.get_lines().size() == 2, "equipment: the two lines of lines.txt are loaded", std::to_string(manager.get_lines().size()));
+		r.check(
+			manager.find_line("siege_artillery") != nullptr && manager.find_line("siege_artillery")->slot == "special",
+			"equipment: a new line is described by a file only"
+		);
+		// rifle_a (replaced), rifle_b, rifle_c, rifle_b again (replaced), mortar_1; the four broken files are skipped
+		r.check(loaded == 5 && manager.get_equipment().size() == 4, "equipment: the good files are loaded, the broken ones are skipped",
+			fmt::format("loaded {} of {} weapons", loaded, manager.get_equipment().size()));
+		r.check(
+			manager.find_equipment("bad_line") == nullptr && manager.find_equipment("bad_missing") == nullptr
+				&& manager.find_equipment("bad_range") == nullptr && manager.find_equipment("bad_syntax") == nullptr,
+			"equipment: a weapon of an unknown line, with a missing or out of range value, or in a file with a syntax error is not loaded"
+		);
+		EquipmentDefinition const* const mortar = manager.find_equipment("mortar_1");
+		r.check(mortar != nullptr && mortar->line == "siege_artillery", "equipment: a weapon of the new line is loaded without code");
+
+		EquipmentDefinition const* const rifle_a = manager.find_equipment("rifle_a");
+		r.check(
+			rifle_a != nullptr && rifle_a->rof == fixed_point_t(4) && rifle_a->good.base_price == fixed_point_t(40),
+			"equipment: a file of a mod with the same path replaces the built-in one"
+		);
+		r.check(rifle_a != nullptr && rifle_a->unlock_key == "equipment:rifle_a", "equipment: the unlock key is equipment:<id> by default");
+		r.check(
+			rifle_a != nullptr && rifle_a->flags.empty() && !rifle_a->has_flag("breech_loading"),
+			"equipment: the flags of a mod weapon are only the ones of its file"
+		);
+		EquipmentDefinition const* const rifle_b = manager.find_equipment("rifle_b");
+		r.check(
+			rifle_b != nullptr && rifle_b->rof == fixed_point_t(7) / 2 && rifle_b->unlock_key == "equipment:rifle_b",
+			"equipment: a weapon of a mod with the id of another one replaces it, whatever the file"
+		);
+		EquipmentDefinition const* const rifle_c = manager.find_equipment("rifle_c");
+		r.check(rifle_c != nullptr && rifle_c->good.identifier == "rifle_c", "equipment: the id of the good is the id of the weapon by default");
+
+		// The load order does not depend on the file system: the base, then the mod, the files of a root sorted
+		memory::vector<std::string> order;
+		for (fs::path const& file : loader.lookup_files_in_dir_load_order("common/ov_equipment", ".txt", true)) {
+			order.push_back(fs::relative(file, temp).generic_string());
+		}
+		const std::size_t base_files = std::count_if(order.begin(), order.end(), [](std::string const& f) { return f.starts_with("base/"); });
+		const bool sorted_per_root = std::is_sorted(order.begin(), order.begin() + base_files) && std::is_sorted(order.begin() + base_files, order.end());
+		r.check(order.size() == 9 && sorted_per_root && order.back().starts_with("mod/"), "equipment: the files are loaded in a fixed order, the mod last",
+			fmt::format("{} files", order.size()));
+
+		auto const line_equipment = manager.get_line_equipment("rifle");
+		r.check(
+			line_equipment.size() == 3 && line_equipment[0]->tier == 1 && line_equipment[1]->tier == 2 && line_equipment[2]->tier == 3,
+			"equipment: the weapons of a line come the lowest generation first"
+		);
+
+		fs::remove_all(temp, ec);
+	}
+
+	// The weapons that come with the game (ov_data), if the data folder is found
+	void test_equipment_data(Results& r, GameManager& game_manager) {
+		if (game_manager.get_builtin_data_path().empty()) {
+			fmt::println("TEST INFO equipment: no ov_data folder, the weapons of the game are not checked");
+			return;
+		}
+		EquipmentManager const& manager = game_manager.get_definition_manager().get_military_manager().get_equipment_manager();
+		r.check(manager.get_lines().size() >= 2, "equipment: the lines of the game are loaded", std::to_string(manager.get_lines().size()));
+		for (std::string_view line : { "rifle", "field_artillery" }) {
+			auto const generations = manager.get_line_equipment(line);
+			bool ok = generations.size() >= 4;
+			for (std::size_t i = 0; ok && i < generations.size(); i++) {
+				ok = generations[i]->tier == i + 1;
+			}
+			r.check(ok, fmt::format("equipment: the line {} has the generations 1 to 4", line), std::to_string(generations.size()));
+		}
+		EquipmentDefinition const* const rifle_3 = manager.find_equipment("rifle_3");
+		r.check(
+			rifle_3 != nullptr && rifle_3->rof == fixed_point_t(7) && rifle_3->range == fixed_point_t(500)
+				&& rifle_3->accuracy == fixed_point_t(65) / 100 && rifle_3->has_flag("breech_loading") && !rifle_3->has_flag("magazine"),
+			"equipment: rifle_3 has the values of the table (rof 7, range 500, accuracy 0.65, breech loading)"
+		);
+		EquipmentDefinition const* const rifle_1 = manager.find_equipment("rifle_1");
+		r.check(
+			rifle_1 != nullptr && rifle_1->good.replaces == "small_arms" && rifle_1->good.base_price == fixed_point_t(37),
+			"equipment: rifle_1 is the old small arms (replaces the good, price 37)"
+		);
+		EquipmentDefinition const* const gun_4 = manager.find_equipment("field_gun_4");
+		r.check(
+			gun_4 != nullptr && gun_4->has_flag("indirect_fire") && gun_4->rof == fixed_point_t(17) && gun_4->good.base_price == fixed_point_t(185),
+			"equipment: field_gun_4 is the quick-firing gun (rof 17, indirect fire, price 185)"
+		);
+		EquipmentDefinition const* const gun_1 = manager.find_equipment("field_gun_1");
+		r.check(
+			gun_1 != nullptr && gun_1->canister_range == fixed_point_t(300) && gun_1->has_flag("canister"),
+			"equipment: field_gun_1 has canister (range 300)"
+		);
+		bool prices_grow = true;
+		for (std::string_view line : { "rifle", "field_artillery" }) {
+			auto const generations = manager.get_line_equipment(line);
+			for (std::size_t i = 1; i < generations.size(); i++) {
+				prices_grow &= generations[i]->good.base_price > generations[i - 1]->good.base_price;
+			}
+		}
+		r.check(prices_grow, "equipment: the base price grows with the generation");
+	}
 
 	struct Game {
 		GameManager& game_manager;
@@ -1618,6 +1773,7 @@ namespace {
 	}
 
 	void test_game(Results& r, Game& game) {
+		test_equipment_data(r, game.game_manager);
 		constexpr int FIRST_DAYS = 40;
 		constexpr int MORE_DAYS = 20;
 
@@ -1833,6 +1989,7 @@ bool OpenVic::run_pure_selftests() {
 	test_replay(r);
 	test_save_header(r);
 	test_credit_pure(r);
+	test_equipment_pure(r);
 	r.summary();
 	return r.failed == 0;
 }

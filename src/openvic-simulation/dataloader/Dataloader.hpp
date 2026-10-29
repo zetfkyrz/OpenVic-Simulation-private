@@ -18,6 +18,7 @@ namespace OpenVic {
 
 	struct DefinitionManager;
 	struct GameRulesManager;
+	struct EquipmentManager;
 	class UIManager;
 
 	class Dataloader {
@@ -112,6 +113,12 @@ namespace OpenVic {
 		fs::path lookup_image_file(std::string_view path) const;
 		path_vector_t lookup_files_in_dir(std::string_view path, fs::path const& extension) const;
 		path_vector_t lookup_files_in_dir_recursive(std::string_view path, fs::path const& extension) const;
+		/* The files of a folder in the order they are loaded: the base game first, then the built-in data of OpenVic, then the mods (the
+		 * last one wins); the files of one root are sorted by their path, so the order does not depend on the file system. */
+		path_vector_t lookup_files_in_dir_load_order(std::string_view path, fs::path const& extension, bool recursive) const;
+		/* The weapons of the army (common/ov_equipment, see docs/EQUIPMENT_MODDING.md). A broken file is skipped with a warning.
+		 * Returns the number of weapons loaded. */
+		std::size_t load_equipment_files(EquipmentManager& equipment_manager) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir(std::string_view path, fs::path const& extension) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir_recursive(
 			std::string_view path, fs::path const& extension

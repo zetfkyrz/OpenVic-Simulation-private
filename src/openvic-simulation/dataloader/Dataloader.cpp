@@ -198,6 +198,82 @@ Dataloader::path_vector_t Dataloader::lookup_files_in_dir_recursive(std::string_
 	return _lookup_files_in_dir<fs::recursive_directory_iterator>(path, extension, std::identity {});
 }
 
+Dataloader::path_vector_t Dataloader::lookup_files_in_dir_load_order(
+	std::string_view path, fs::path const& extension, const bool recursive
+) const {
+	path_vector_t files = recursive ? lookup_files_in_dir_recursive(path, extension) : lookup_files_in_dir(path, extension);
+
+	// The roots are stored with the last mod first and the base game last. The rank of a file: 0 for the base game, up for the later roots
+	// (a mod root lies inside the base folder, so the longest root that starts the path is the one the file belongs to)
+	const auto rank_of = [this](fs::path const& file) -> std::size_t {
+		const std::string text = file.string();
+		std::size_t best_length = 0;
+		std::size_t best_rank = 0;
+		for (std::size_t i = 0; i < roots.size(); i++) {
+			const std::string root_text = roots[i].string();
+			if (root_text.size() >= best_length && text.size() > root_text.size() && text.compare(0, root_text.size(), root_text) == 0) {
+				best_length = root_text.size();
+				best_rank = roots.size() - 1 - i;
+			}
+		}
+		return best_rank;
+	};
+
+	memory::vector<std::pair<std::size_t, fs::path>> ranked;
+	ranked.reserve(files.size());
+	for (fs::path& file : files) {
+		const std::size_t rank = rank_of(file);
+		ranked.emplace_back(rank, std::move(file));
+	}
+	std::stable_sort(ranked.begin(), ranked.end(), [](auto const& a, auto const& b) {
+		if (a.first != b.first) {
+			return a.first < b.first;
+		}
+		return a.second.generic_string() < b.second.generic_string();
+	});
+
+	path_vector_t result;
+	result.reserve(ranked.size());
+	for (auto& entry : ranked) {
+		result.push_back(std::move(entry.second));
+	}
+	return result;
+}
+
+std::size_t Dataloader::load_equipment_files(EquipmentManager& equipment_manager) const {
+	static constexpr std::string_view equipment_directory = "common/ov_equipment";
+
+	std::size_t loaded = 0;
+
+	// The kinds of weapons first: a weapon needs its line
+	for (fs::path const& file : lookup_files_in_dir_load_order(equipment_directory, ".txt", false)) {
+		if (file.filename().string() != "lines.txt") {
+			continue;
+		}
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The equipment lines file {} is skipped, it has errors", file);
+			continue;
+		}
+		equipment_manager.load_lines_file(file.string(), parser.get_file_node());
+	}
+
+	// The weapons: every file in a folder of ov_equipment (rifles/, artillery/, a folder of a new line...), not the files next to lines.txt
+	for (fs::path const& file : lookup_files_in_dir_load_order(equipment_directory, ".txt", true)) {
+		if (file.parent_path().filename() == "ov_equipment") {
+			continue;
+		}
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The weapon file {} is skipped, it has errors", file);
+			continue;
+		}
+		loaded += equipment_manager.load_equipment_file(file.string(), parser.get_file_node());
+	}
+
+	return loaded;
+}
+
 static std::string_view _extract_basic_identifier_prefix_from_path(std::string_view path) {
 	return extract_basic_identifier_prefix(get_filename(path));
 };
@@ -995,6 +1071,12 @@ bool Dataloader::load_defines(
 	if (!_load_goods(definition_manager)) {
 		spdlog::critical_s("Failed to load goods!");
 		ret = false;
+	}
+	{
+		// The weapons of the army: optional (a missing folder is only a message), a broken file is skipped with a warning
+		EquipmentManager& equipment_manager = definition_manager.get_military_manager().get_equipment_manager();
+		const std::size_t equipment_count = load_equipment_files(equipment_manager);
+		SPDLOG_INFO("Loaded {} weapons in {} equipment lines", equipment_count, equipment_manager.get_lines().size());
 	}
 	if (!definition_manager.get_pop_manager().get_culture_manager().load_graphical_culture_type_file(
 		parse_defines(lookup_file(graphical_culture_type_file)).get_file_node()
