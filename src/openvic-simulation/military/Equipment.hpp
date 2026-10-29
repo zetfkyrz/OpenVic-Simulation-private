@@ -86,6 +86,8 @@ namespace OpenVic {
 			return equipment;
 		}
 		[[nodiscard]] EquipmentLine const* find_line(std::string_view identifier) const;
+		// The line of weapons a regiment type uses (the line that names it in unit_types), nullptr if it has none
+		[[nodiscard]] EquipmentLine const* find_line_of_unit_type(std::string_view unit_type_identifier) const;
 		[[nodiscard]] EquipmentDefinition const* find_equipment(std::string_view identifier) const;
 		// The weapons of a line, the lowest generation first
 		[[nodiscard]] memory::vector<EquipmentDefinition const*> get_line_equipment(std::string_view line_identifier) const;

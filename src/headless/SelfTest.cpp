@@ -973,6 +973,173 @@ namespace {
 		im.force_tick_and_update();
 	}
 
+	// ---- the weapons of the regiments (CountryInstance::update_regiment_equipment)
+
+	void test_regiment_equipment(Results& r, InstanceManager& im) {
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		if (equipment.get_equipment().empty()) {
+			fmt::println("TEST INFO regiment equipment: no ov_data folder, not checked");
+			return;
+		}
+		GoodDefinition const* const rifle_2_good = goods.get_good_definition_by_identifier("rifle_2");
+		GoodDefinition const* const rifle_3_good = goods.get_good_definition_by_identifier("rifle_3");
+		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
+		EquipmentDefinition const* const rifle_2 = equipment.find_equipment("rifle_2");
+		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
+		if (rifle_2_good == nullptr || rifle_3_good == nullptr || rifle_1 == nullptr || rifle_2 == nullptr || rifle_3 == nullptr) {
+			r.check(false, "regiment equipment: the rifles and their goods exist");
+			return;
+		}
+
+		// A country with a few regiments of infantry
+		CountryInstance* country = nullptr;
+		std::vector<RegimentInstance*> infantry;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_at_war()) {
+				continue;
+			}
+			std::vector<RegimentInstance*> found;
+			for (ArmyInstance& army : candidate.get_armies()) {
+				for (RegimentInstance& regiment : army.get_regiment_instances()) {
+					if (regiment.get_regiment_type().get_identifier() == "infantry") {
+						found.push_back(&regiment);
+					}
+				}
+			}
+			if (found.size() >= 4) {
+				country = &candidate;
+				infantry = std::move(found);
+				break;
+			}
+		}
+		r.check(country != nullptr, "regiment equipment: a country with four regiments of infantry exists");
+		if (country == nullptr) {
+			return;
+		}
+		const auto pieces_of = [&](RegimentInstance const& regiment) -> fixed_point_t {
+			for (auto const& [good, quantity] : regiment.get_regiment_type().get_build_cost()) {
+				if (good->get_identifier() == "rifle_1") {
+					return quantity;
+				}
+			}
+			return fixed_point_t::_0;
+		};
+		const fixed_point_t pieces = pieces_of(*infantry.front());
+		r.check(pieces > fixed_point_t::_0, "regiment equipment: a regiment of infantry is built from rifles (the pieces of its weapon)");
+
+		const std::vector<memory::string> keys_before { country->get_unlock_keys().begin(), country->get_unlock_keys().end() };
+		const fixed_point_t stock_2_before = country->get_good_data(*rifle_2_good).stockpile_amount;
+		const fixed_point_t stock_3_before = country->get_good_data(*rifle_3_good).stockpile_amount;
+
+		// ---- at the start every regiment has the weapon it was made with
+		bool all_first = true;
+		for (RegimentInstance* const regiment : infantry) {
+			all_first &= regiment->get_weapon() == nullptr && regiment->get_weapon_attack_ratio() == fixed_point_t::_1;
+		}
+		r.check(all_first, "regiment equipment: at the start the regiments have the weapon of the first generation (ratio 1)");
+
+		// ---- the country gets the third generation, the stock has the rifles: one regiment a day is given the weapon, the stock is used
+		country->grant_unlock("equipment:rifle_2");
+		country->grant_unlock("equipment:rifle_3");
+		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t(1000);
+		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t::_0;
+		im.force_tick_and_update();
+		std::size_t with_rifle_3 = 0;
+		RegimentInstance* equipped = nullptr;
+		for (RegimentInstance* const regiment : infantry) {
+			if (regiment->get_weapon() == rifle_3) {
+				with_rifle_3++;
+				equipped = regiment;
+			}
+		}
+		r.check(
+			with_rifle_3 == static_cast<std::size_t>(war.equipment_upgrades_per_day) && equipped != nullptr && equipped->get_weapon_good() == rifle_3_good,
+			"regiment equipment: a day gives the weapon of the best generation to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says",
+			fmt::format("{} regiments", with_rifle_3)
+		);
+		if (equipped != nullptr) {
+			r.check(
+				near(equipped->get_weapon_attack_ratio(), rifle_3->attack / rifle_1->attack, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defence / rifle_1->defence, fixed_point_t(1) / 100),
+				"regiment equipment: its attack and defence are worth the points of the new weapon against the first generation",
+				fmt::format("{} {}", dbl(equipped->get_weapon_attack_ratio()), dbl(equipped->get_weapon_defence_ratio()))
+			);
+			r.check(
+				country->get_good_data(*rifle_3_good).army_needs > fixed_point_t::_0,
+				"regiment equipment: the supplies of the regiment are of its weapon (the rifles of the third generation, not the first)"
+			);
+		}
+		r.check(
+			country->get_good_data(*rifle_3_good).stockpile_amount < fixed_point_t(1000),
+			"regiment equipment: the weapons come out of the national stockpile (they are not made from the air)"
+		);
+
+		// ---- a regiment that is behind the best generation loses a part of its attack and defence
+		RegimentInstance* behind = nullptr;
+		for (RegimentInstance* const regiment : infantry) {
+			if (regiment->get_weapon() == nullptr) {
+				behind = regiment;
+			}
+		}
+		if (behind != nullptr) {
+			const fixed_point_t expected = fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * 2;
+			r.check(
+				near(behind->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
+				"regiment equipment: a regiment two generations behind the best loses the penalty twice",
+				fmt::format("{} against {}", dbl(behind->get_weapon_attack_ratio()), dbl(expected))
+			);
+		}
+
+		// ---- there are no rifles of the third generation, only of the second: the best the stock allows, with the penalty
+		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t::_0;
+		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t(1000);
+		im.force_tick_and_update();
+		RegimentInstance* second_generation = nullptr;
+		for (RegimentInstance* const regiment : infantry) {
+			if (regiment->get_weapon() == rifle_2) {
+				second_generation = regiment;
+			}
+		}
+		r.check(second_generation != nullptr, "regiment equipment: when the stock lacks the best generation the regiment is given the best one the stock has");
+		if (second_generation != nullptr) {
+			const fixed_point_t expected = rifle_2->attack / rifle_1->attack * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
+			r.check(
+				near(second_generation->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
+				"regiment equipment: the weapon of a worse generation than the best comes with the penalty",
+				fmt::format("{} against {}", dbl(second_generation->get_weapon_attack_ratio()), dbl(expected))
+			);
+		}
+
+		// ---- no stock at all: the government wants to buy the rifles of the best generation (they come from the market)
+		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t::_0;
+		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t::_0;
+		im.force_tick_and_update();
+		r.check(
+			country->get_good_data(*rifle_3_good).government_needs >= pieces,
+			"regiment equipment: without the rifles in the stockpile the government needs them (it buys them at the market)",
+			fmt::format("needs {}", dbl(country->get_good_data(*rifle_3_good).government_needs))
+		);
+
+		// ---- put the country back
+		for (RegimentInstance* const regiment : infantry) {
+			regiment->set_weapon(nullptr);
+			regiment->set_weapon_base_good(nullptr);
+			regiment->set_weapon_good(nullptr);
+			regiment->set_weapon_attack_ratio(fixed_point_t::_1);
+			regiment->set_weapon_defence_ratio(fixed_point_t::_1);
+		}
+		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
+			country->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			country->grant_unlock(key);
+		}
+		country->get_good_data(*rifle_2_good).stockpile_amount = stock_2_before;
+		country->get_good_data(*rifle_3_good).stockpile_amount = stock_3_before;
+	}
+
 	struct Game {
 		GameManager& game_manager;
 		Bookmark const& bookmark;
@@ -2640,6 +2807,7 @@ namespace {
 		test_unlocks(r, *im);
 		test_division_stats(r, *im);
 		test_production_types(r, *im);
+		test_regiment_equipment(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

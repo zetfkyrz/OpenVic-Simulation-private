@@ -2,6 +2,8 @@
 
 #include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/military/Equipment.hpp"
+#include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 
@@ -75,7 +77,7 @@ namespace {
 	template<typename Callback>
 	void for_each_daily_supply(
 		UnitType const& unit_type, const bool is_army, CountryInstance::supply_state_t const& state, const fixed_point_t scale,
-		Callback&& callback
+		Callback&& callback, RegimentInstance const* regiment = nullptr
 	) {
 		OpenVicEconomyDefines const& defines = *CountryInstance::openvic_economy_defines;
 		for (UnitType::supply_item_t const& item : unit_type.get_supply_items()) {
@@ -94,7 +96,12 @@ namespace {
 			}
 			const fixed_point_t amount =
 				share->of(item.construction_amount) * multiplier * unit_type.supply_consumption * scale / defines.supply_days_per_month;
-			callback(*item.good, amount);
+			// A regiment with a better weapon uses the good of that weapon instead of the good of the first generation of its line
+			callback(
+				regiment != nullptr && regiment->get_weapon_good() != nullptr && item.good == regiment->get_weapon_base_good()
+					? *regiment->get_weapon_good() : *item.good,
+				amount
+			);
 		}
 	}
 }
@@ -2252,6 +2259,111 @@ void CountryInstance::country_tick_before_map(
 	 	= 0;
 }
 
+void CountryInstance::update_regiment_equipment() {
+	if (equipment_manager == nullptr || good_definition_manager == nullptr || openvic_war_defines == nullptr
+		|| equipment_manager->get_equipment().empty()) {
+		return;
+	}
+	OpenVicWarDefines const& war = *openvic_war_defines;
+	std::int32_t upgrades_left = war.equipment_upgrades_per_day;
+	std::int32_t needs_left = war.equipment_upgrades_per_day; // the regiments whose weapons the government buys the goods of today
+
+	// What a regiment type needs, found once a day for every type (the line of its weapons, the generations, the best one the country has)
+	struct type_cache_t {
+		bool looked_up = false;
+		memory::vector<EquipmentDefinition const*> generations;
+		EquipmentDefinition const* first = nullptr;
+		EquipmentDefinition const* best = nullptr;
+		GoodDefinition const* base_good = nullptr;
+		fixed_point_t pieces = fixed_point_t::_0;
+	};
+	std::array<type_cache_t, 32> caches;
+
+	for (ArmyInstance& army : armies) {
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			RegimentType const& regiment_type = regiment.get_regiment_type();
+			const std::size_t kind = static_cast<std::size_t>(type_safe::get(regiment_type.index));
+			if (kind >= caches.size()) {
+				continue;
+			}
+			type_cache_t& cache = caches[kind];
+			if (!cache.looked_up) {
+				cache.looked_up = true;
+				if (EquipmentLine const* const line = equipment_manager->find_line_of_unit_type(regiment_type.get_identifier()); line != nullptr) {
+					cache.generations = equipment_manager->get_line_equipment(line->identifier);
+					if (!cache.generations.empty()) {
+						cache.first = cache.generations.front();
+						for (EquipmentDefinition const* const candidate : cache.generations) {
+							if (has_unlock(candidate->unlock_key)) {
+								cache.best = candidate;
+							}
+						}
+						cache.base_good = good_definition_manager->get_good_definition_by_identifier(cache.first->good.identifier);
+						// The pieces of the weapon a regiment needs: what its construction took of the good of the first generation
+						for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+							if (good == cache.base_good) {
+								cache.pieces = quantity;
+							}
+						}
+					}
+				}
+			}
+			if (cache.first == nullptr || cache.best == nullptr) {
+				continue;
+			}
+			EquipmentDefinition const* const first = cache.first;
+			EquipmentDefinition const* const best = cache.best;
+			const std::uint32_t current_tier = regiment.get_weapon() != nullptr ? regiment.get_weapon()->tier : first->tier;
+
+			if (current_tier < best->tier && cache.base_good != nullptr && cache.pieces > fixed_point_t::_0) {
+				if (upgrades_left > 0) {
+					// The best generation the stockpile can give
+					for (std::size_t i = cache.generations.size(); i-- > 0;) {
+						EquipmentDefinition const* const candidate = cache.generations[i];
+						if (candidate->tier <= current_tier || candidate->tier > best->tier || !has_unlock(candidate->unlock_key)) {
+							continue;
+						}
+						GoodDefinition const* const good = good_definition_manager->get_good_definition_by_identifier(candidate->good.identifier);
+						if (good == nullptr) {
+							continue;
+						}
+						good_data_t& good_data = get_good_data(*good);
+						if (good_data.stockpile_amount < cache.pieces) {
+							continue;
+						}
+						good_data.stockpile_amount -= cache.pieces;
+						good_data.stockpile_change_yesterday -= cache.pieces;
+						regiment.set_weapon(candidate);
+						regiment.set_weapon_base_good(cache.base_good);
+						regiment.set_weapon_good(good);
+						upgrades_left--;
+						break;
+					}
+				}
+				// The goods of the next regiments are bought at the market
+				if ((regiment.get_weapon() == nullptr || regiment.get_weapon()->tier < best->tier) && needs_left > 0) {
+					if (GoodDefinition const* const good = good_definition_manager->get_good_definition_by_identifier(best->good.identifier);
+						good != nullptr) {
+						good_data_t& good_data = get_good_data(*good);
+						good_data.government_needs += cache.pieces;
+						good_data.max_government_consumption += cache.pieces;
+					}
+					needs_left--;
+				}
+			}
+
+			// What the weapon is worth in the battle: the points of the weapon against the first generation, less for the generations it is behind
+			EquipmentDefinition const* const equipped = regiment.get_weapon() != nullptr ? regiment.get_weapon() : first;
+			const std::uint32_t behind = best->tier > equipped->tier ? best->tier - equipped->tier : 0;
+			const fixed_point_t keep = std::max(
+				fixed_point_t::_0, fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * static_cast<std::int32_t>(behind)
+			);
+			regiment.set_weapon_attack_ratio(first->attack > fixed_point_t::_0 ? equipped->attack / first->attack * keep : keep);
+			regiment.set_weapon_defence_ratio(first->defence > fixed_point_t::_0 ? equipped->defence / first->defence * keep : keep);
+		}
+	}
+}
+
 void CountryInstance::calculate_government_good_needs(const Date today) {
 	// Days of supplies the government tries to keep in the national stockpile
 	const int32_t DAYS_OF_SUPPLY = openvic_economy_defines->supply_reserve_days;
@@ -2270,7 +2382,8 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	//		max_government_consumption += remainder
 	// Every unit uses its supplies every day. What the stockpile is kept ready for and what is used up today is the same
 	const auto add_unit_needs = [this](
-		UnitInstance const& unit, supply_state_t const& state, const fixed_point_t scale, const bool is_army
+		UnitInstance const& unit, supply_state_t const& state, const fixed_point_t scale, const bool is_army,
+		RegimentInstance const* regiment = nullptr
 	) -> void {
 		if (scale <= fixed_point_t::_0) {
 			return;
@@ -2279,8 +2392,10 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 			good_data_t& good_data = goods_data.at_index(good.index);
 			(is_army ? good_data.army_needs : good_data.navy_needs) += daily_need;
 			(is_army ? good_data.army_due : good_data.navy_due) += daily_need;
-		});
+		}, regiment);
 	};
+
+	update_regiment_equipment();
 
 	const fixed_point_t army_slider = army_spending_slider_value.get_value_untracked();
 	const fixed_point_t navy_slider = navy_spending_slider_value.get_value_untracked();
@@ -2296,10 +2411,10 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 			if (regiment.get_supply_reserve() < fixed_point_t::_0) {
 				regiment.set_supply_reserve(reserve_capacity); // the units come supplied
 			}
-			add_unit_needs(regiment, state, army_slider * army.get_supply_send_multiplier(), true);
+			add_unit_needs(regiment, state, army_slider * army.get_supply_send_multiplier(), true, &regiment);
 			if (full_delivery && regiment.get_supply_reserve() < reserve_capacity) {
 				const fixed_point_t refill = std::min(reserve_refill, reserve_capacity - regiment.get_supply_reserve());
-				add_unit_needs(regiment, state, army_slider * refill, true);
+				add_unit_needs(regiment, state, army_slider * refill, true, &regiment);
 			}
 		}
 	}

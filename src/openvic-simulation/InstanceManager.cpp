@@ -169,6 +169,10 @@ InstanceManager::InstanceManager(
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 	CountryInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
+	CountryInstance::set_equipment(
+		definition_manager.get_military_manager().get_equipment_manager(), definition_manager.get_economy_manager().get_good_definition_manager(),
+		definition_manager.get_define_manager().get_openvic_defines().war
+	);
 	ProvinceInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
 	SupplyContext::set(country_instance_manager, war_manager);
 	Pop::set_openvic_population_defines(definition_manager.get_define_manager().get_openvic_defines().population);

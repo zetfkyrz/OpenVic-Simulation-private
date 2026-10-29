@@ -42,6 +42,9 @@
 #include "openvic-simulation/utility/reactive/MutableState.hpp"
 
 namespace OpenVic {
+	struct CountryInstance;
+	struct EquipmentManager;
+	struct GoodDefinitionManager;
 	struct BaseIssue;
 	struct BuildingType;
 	struct BuyResult;
@@ -122,6 +125,17 @@ namespace OpenVic {
 		static inline OpenVicTradeDefines const* openvic_trade_defines = nullptr;
 		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
 			openvic_trade_defines = &defines;
+		}
+		// The weapons and the goods (set by the InstanceManager, they belong to the definitions): the regiments are given the weapons of the line
+		static inline EquipmentManager const* equipment_manager = nullptr;
+		static inline GoodDefinitionManager const* good_definition_manager = nullptr;
+		static inline OpenVicWarDefines const* openvic_war_defines = nullptr;
+		static void set_equipment(
+			EquipmentManager const& new_equipment_manager, GoodDefinitionManager const& new_good_definition_manager, OpenVicWarDefines const& war_defines
+		) {
+			equipment_manager = &new_equipment_manager;
+			good_definition_manager = &new_good_definition_manager;
+			openvic_war_defines = &war_defines;
 		}
 		static inline OpenVicSupplyDefines const* openvic_supply_defines = nullptr;
 		static void set_openvic_supply_defines(OpenVicSupplyDefines const& defines) {
@@ -860,6 +874,11 @@ namespace OpenVic {
 		void set_provisional_unlock_steps_applied(const std::uint32_t steps) {
 			provisional_unlock_steps_applied = steps;
 		}
+		// The weapons of the regiments (every day, in calculate_government_good_needs): a regiment that is behind the best generation of its line the
+		// country has gets a weapon of a better one out of the national stockpile (the best the stock allows, at most ov_war.EQUIPMENT_UPGRADES_PER_DAY
+		// regiments a day), the government buys the goods of the next ones at the market (its needs), and a regiment behind the best generation
+		// loses ov_war.EQUIPMENT_SHORTFALL_PENALTY of its attack and defence for each generation it lacks
+		void update_regiment_equipment();
 		// Days of the reserve of supplies a regiment of this country keeps
 		[[nodiscard]] fixed_point_t get_supply_reserve_capacity() const;
 		// What the supplies of the army and the navy cost per day at the prices of the market (at 100 percent of the slider)

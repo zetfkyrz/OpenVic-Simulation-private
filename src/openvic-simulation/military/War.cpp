@@ -130,9 +130,10 @@ namespace {
 					organisation_factor = min_org_factor;
 				}
 
-				side.power += (regiment.get_regiment_type().attack + fixed_point_t::_1) * strength_factor * organisation_factor
+				// The weapon of the regiment: a better generation attacks and defends better (CountryInstance::update_regiment_equipment)
+				side.power += (regiment.get_regiment_type().attack * regiment.get_weapon_attack_ratio() + fixed_point_t::_1) * strength_factor * organisation_factor
 					* attack_multiplier * supply_level;
-				defence_sum += (regiment.get_regiment_type().defence + fixed_point_t::_1) * defence_multiplier * supply_level;
+				defence_sum += (regiment.get_regiment_type().defence * regiment.get_weapon_defence_ratio() + fixed_point_t::_1) * defence_multiplier * supply_level;
 				morale_sum += morale_multiplier;
 				side.organisation += regiment.get_organisation();
 				side.max_organisation += max_organisation;

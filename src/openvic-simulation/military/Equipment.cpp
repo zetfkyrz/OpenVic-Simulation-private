@@ -222,6 +222,15 @@ EquipmentLine const* EquipmentManager::find_line(std::string_view identifier) co
 	return it == line_index_by_identifier.end() ? nullptr : &lines[it->second];
 }
 
+EquipmentLine const* EquipmentManager::find_line_of_unit_type(std::string_view unit_type_identifier) const {
+	for (EquipmentLine const& line : lines) {
+		if (std::find(line.unit_types.begin(), line.unit_types.end(), unit_type_identifier) != line.unit_types.end()) {
+			return &line;
+		}
+	}
+	return nullptr;
+}
+
 EquipmentDefinition const* EquipmentManager::find_equipment(std::string_view identifier) const {
 	const auto it = equipment_index_by_identifier.find(identifier);
 	return it == equipment_index_by_identifier.end() ? nullptr : &equipment[it->second];

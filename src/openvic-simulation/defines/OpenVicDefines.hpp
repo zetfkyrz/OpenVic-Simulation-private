@@ -295,6 +295,11 @@ namespace OpenVic {
 	INT(TEMPLATE_OCCUPATION_INSTANT_PERCENT, template_occupation_instant_percent, 1000, 100, 1000000) \
 	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \
 	/* halves the damage, the damage added by the density of the formation per point of density */ \
+	/* The weapons of the regiments (military/RegimentEquipment in CountryInstance.cpp): how many regiments a day get a weapon of a better */ \
+	/* generation out of the national stockpile (the government buys the goods for them), and the share of the attack and of the defence a regiment */ \
+	/* loses for every generation it is behind the best one the country has */ \
+	INT(EQUIPMENT_UPGRADES_PER_DAY, equipment_upgrades_per_day, 1, 0, 1000) \
+	RATE(EQUIPMENT_SHORTFALL_PENALTY, equipment_shortfall_penalty, Rate(3, 100), 0, 1) \
 	FIXED(BATTLE_DAMAGE_PER_ATTACK, battle_damage_per_attack, fixed_point_t::_0_10, 0, 1000) \
 	FIXED(BATTLE_DEFENCE_REFERENCE, battle_defence_reference, fixed_point_t(20), 1, 100000) \
 	RATE(BATTLE_DENSITY_DAMAGE, battle_density_damage, Rate(2, 100), 0, 1) \

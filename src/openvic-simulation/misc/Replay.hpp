@@ -36,7 +36,9 @@ namespace OpenVic {
 		// 22: the weapons are goods (rifle_1..4, field_gun_1..4; small_arms and artillery are rifle_1 and field_gun_1), ov_data/common/ov_equipment
 		// 23: a factory of weapons makes the generation that is chosen (set_factory_production_type), the recipes of ov_data/common/ov_production_types, the AI
 		//     takes the newest generation the country has
-		inline constexpr int SIMULATION_VERSION = 23;
+		// 24: regiments have a weapon of a generation (taken out of the national stockpile, bought by the government), use its goods as supplies and fight with
+		//     its attack and defence
+		inline constexpr int SIMULATION_VERSION = 24;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
