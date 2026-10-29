@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <map>
 #include <filesystem>
 #include <span>
 #include <fstream>
@@ -30,6 +31,8 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/military/BattleFormulas.hpp>
+#include <openvic-simulation/military/DivisionStats.hpp>
 #include <openvic-simulation/modifier/ModifierManager.hpp>
 #include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
@@ -204,6 +207,9 @@ namespace {
 	}
 
 	// ---------------------------------------------------------------- tests on a real game
+
+	double dbl(fixed_point_t x);
+	bool near(fixed_point_t a, fixed_point_t b, fixed_point_t tolerance);
 
 	// ---- the weapons (docs/EQUIPMENT_MODDING.md)
 
@@ -530,6 +536,228 @@ namespace {
 		country->set_provisional_unlock_steps_applied(applied_before);
 		(void)keys_before;
 		(void)modifiers_before;
+		refresh();
+	}
+
+	// ---- what a template is worth (military/DivisionStats.cpp, military/BattleFormulas.cpp)
+
+	void test_division_stats(Results& r, InstanceManager& im) {
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		ProvisionalUnlocks const& provisional = im.definition_manager.get_military_manager().get_provisional_unlocks();
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		if (equipment.get_equipment().empty() || provisional.get_steps().empty()) {
+			fmt::println("TEST INFO division stats: no ov_data folder, not checked");
+			return;
+		}
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+
+		// The weights of the rows
+		using battle_formulas::row_weight;
+		r.check(
+			row_weight(0, 0) == fixed_point_t::_1 && row_weight(1, 0) == fixed_point_t::_0_50 && row_weight(2, 0) == fixed_point_t::_1 / 4
+				&& row_weight(3, 0) == fixed_point_t::_1 / 8,
+			"battle: the weights of the rows are 1, 1/2, 1/4, 1/8"
+		);
+		r.check(
+			row_weight(0, 1) == fixed_point_t::_1 && row_weight(1, 1) == fixed_point_t::_1 && row_weight(2, 1) == fixed_point_t::_0_50
+				&& row_weight(3, 1) == fixed_point_t::_1 / 4,
+			"battle: with the formation of the technologies the weights of the rows are 1, 1, 1/2, 1/4"
+		);
+
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && candidate.has_army_organisation()) {
+				country = &candidate;
+			}
+		}
+		RegimentType const* const infantry = unit_types.get_regiment_type_by_identifier("infantry");
+		RegimentType const* const cavalry = unit_types.get_regiment_type_by_identifier("cavalry");
+		RegimentType const* const artillery = unit_types.get_regiment_type_by_identifier("artillery");
+		r.check(country != nullptr && infantry != nullptr && cavalry != nullptr && artillery != nullptr, "division stats: a country and the regiment types to test with");
+		if (country == nullptr || infantry == nullptr || cavalry == nullptr || artillery == nullptr) {
+			return;
+		}
+		StaticModifierCache const& static_modifier_cache = im.definition_manager.get_modifier_manager().get_static_modifier_cache();
+		const auto refresh = [&]() {
+			country->update_modifier_sum(im.get_today(), static_modifier_cache);
+		};
+		const auto cell = [](RegimentType const& regiment_type) -> std::uint8_t {
+			return static_cast<std::uint8_t>(get_division_slot_kind(regiment_type) + 1);
+		};
+		const auto make_template = [](DivisionGrid const& grid) -> DivisionTemplate {
+			DivisionTemplate division_template;
+			division_template.cells = grid;
+			division_template.rebuild_counts();
+			return division_template;
+		};
+		const auto grid_with = [&cell](RegimentType const& regiment_type, const std::size_t ranks, const std::size_t rows) -> DivisionGrid {
+			DivisionGrid grid {};
+			for (std::size_t rank = 0; rank < ranks; ++rank) {
+				for (std::size_t row = 0; row < rows; ++row) {
+					grid[DivisionTemplate::cell_index(rank, row)] = cell(regiment_type);
+				}
+			}
+			return grid;
+		};
+
+		// The state to put back
+		std::vector<memory::string> keys_before { country->get_unlock_keys().begin(), country->get_unlock_keys().end() };
+		const std::uint32_t applied_before = country->get_provisional_unlock_steps_applied();
+		refresh();
+
+		// ---- the standard template
+		const DivisionTemplate standard = make_template(make_standard_division_grid(unit_types));
+		const DivisionStats standard_stats = compute_division_stats(im, *country, standard);
+		// The first row weighs 1 and the second 1/2: every regiment counts 1.5
+		const fixed_point_t expected_attack = (infantry->attack * 2 + cavalry->attack) * 3 / 2;
+		const fixed_point_t expected_defence = (infantry->defence * 2 + cavalry->defence) * 3 / 2;
+		r.check(
+			standard_stats.regiments == 6 && standard_stats.width == 3 && standard_stats.depth == fixed_point_t(2),
+			"division stats: the standard template has 6 regiments, a front of 3 ranks and a depth of 2",
+			fmt::format("{} regiments, width {}, depth {}", standard_stats.regiments, standard_stats.width, dbl(standard_stats.depth))
+		);
+		r.check(
+			near(standard_stats.attack, expected_attack, fixed_point_t(1) / 100) && near(standard_stats.defence, expected_defence, fixed_point_t(1) / 100),
+			"division stats: the attack and the defence add up the regiments by the weights of their rows (the weapons of the first generation change nothing)",
+			fmt::format("attack {} of {}, defence {} of {}", dbl(standard_stats.attack), dbl(expected_attack), dbl(standard_stats.defence), dbl(expected_defence))
+		);
+		r.check(
+			standard_stats.men == infantry->max_strength * 4000 + cavalry->max_strength * 2000
+				|| near(standard_stats.men, (infantry->max_strength * 4 + cavalry->max_strength * 2) * war.template_men_per_strength, fixed_point_t(1)),
+			"division stats: the men are the strength of the regiments times the men of a strength point"
+		);
+		r.check(
+			standard_stats.speed == std::min(infantry->maximum_speed, cavalry->maximum_speed) && standard_stats.weight > fixed_point_t::_0
+				&& standard_stats.organisation > fixed_point_t::_0,
+			"division stats: the speed is the one of the slowest regiment, the weight and the organisation are there"
+		);
+		r.check(!standard_stats.cost.empty() && !standard_stats.supply_per_day.empty(), "division stats: the cost and the supplies of the regiments are listed");
+
+		// ---- the width: a division twice as wide deals twice the damage at the same depth
+		const DivisionStats narrow = compute_division_stats(im, *country, make_template(grid_with(*infantry, 1, 2)));
+		const DivisionStats wide = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 2)));
+		r.check(wide.width == 2 * narrow.width && wide.depth == narrow.depth, "division stats: twice the ranks, the same depth");
+		r.check(
+			near(wide.attack, narrow.attack * 2, fixed_point_t(1) / 100) && near(wide.defence, narrow.defence * 2, fixed_point_t(1) / 100),
+			"division stats: the attack and the defence are in proportion to the width at the same depth"
+		);
+		const DivisionStats target = compute_division_stats(im, *country, standard);
+		const fixed_point_t damage_narrow = battle_formulas::damage_per_day(war, narrow, target);
+		const fixed_point_t damage_wide = battle_formulas::damage_per_day(war, wide, target);
+		r.check(
+			damage_narrow > fixed_point_t::_0 && near(damage_wide, damage_narrow * 2, fixed_point_t(1) / 100),
+			"battle: a division half as wide deals half the damage at the same depth",
+			fmt::format("{} and {}", dbl(damage_narrow), dbl(damage_wide))
+		);
+
+		// ---- the depth is the durability: more rows last longer, a rank of one row and a rank of two give a depth of 1.5
+		const DivisionStats shallow = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 1)));
+		const DivisionStats deep = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 2)));
+		r.check(
+			deep.durability == shallow.durability * 2
+				&& battle_formulas::days_to_destroy(deep.durability, damage_narrow) == battle_formulas::days_to_destroy(shallow.durability, damage_narrow) * 2,
+			"division stats: twice the depth, twice the durability, twice the days to destroy"
+		);
+		DivisionGrid uneven = grid_with(*infantry, 1, 2);
+		uneven[DivisionTemplate::cell_index(1, 0)] = cell(*infantry);
+		const DivisionStats uneven_stats = compute_division_stats(im, *country, make_template(uneven));
+		r.check(uneven_stats.depth == fixed_point_t(3) / 2 && uneven_stats.width == 2, "division stats: the depth is the average of the ranks (1.5 for 2 and 1)");
+		r.check(
+			narrow.density > fixed_point_t::_0 && wide.density == narrow.density,
+			"division stats: the density is the strength per rank (the same for the same ranks)"
+		);
+
+		// ---- the weapons of a better generation: the attack, the defence and the goods change
+		const DivisionTemplate infantry_template = make_template(grid_with(*infantry, 2, 2));
+		const DivisionStats first_generation = compute_division_stats(im, *country, infantry_template);
+		country->grant_unlock("equipment:rifle_3");
+		const DivisionStats third_generation = compute_division_stats(im, *country, infantry_template);
+		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
+		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
+		if (rifle_1 != nullptr && rifle_3 != nullptr) {
+			const fixed_point_t ratio = rifle_3->attack / rifle_1->attack;
+			r.check(
+				near(third_generation.attack, first_generation.attack * ratio, fixed_point_t(1) / 50),
+				"division stats: a rifle of the third generation gives the attack in proportion to its points",
+				fmt::format("{} against {} x {}", dbl(third_generation.attack), dbl(first_generation.attack), dbl(ratio))
+			);
+			r.check(third_generation.defence > first_generation.defence && third_generation.durability > first_generation.durability,
+				"division stats: a better rifle gives more defence and a more durable division");
+			const auto has_good = [](memory::vector<DivisionGoodAmount> const& list, std::string_view good) -> bool {
+				return std::any_of(list.begin(), list.end(), [good](DivisionGoodAmount const& entry) { return entry.good == good && entry.amount > fixed_point_t::_0; });
+			};
+			r.check(
+				has_good(third_generation.cost, "rifle_3") && !has_good(third_generation.cost, "rifle_1") && !has_good(third_generation.cost, "small_arms")
+					&& has_good(first_generation.cost, "rifle_1") && !has_good(first_generation.cost, "rifle_3"),
+				"division stats: the cost lists the rifles of the generation (the old small arms are the first generation)"
+			);
+			r.check(has_good(third_generation.supply_per_day, "rifle_3") && has_good(third_generation.ammo_per_day, "ammunition"),
+				"division stats: the supplies of the regiments and the use of ammunition list the rifles of the generation");
+			// A division that has the weapon in half: in between
+			const DivisionStats half_equipped = compute_division_stats(im, *country, infantry_template, fixed_point_t::_0_50);
+			r.check(
+				half_equipped.attack > first_generation.attack && half_equipped.attack < third_generation.attack
+					&& half_equipped.reliability == fixed_point_t::_0_50,
+				"division stats: a division with half of the weapons has the attack between the two generations and a reliability of one half"
+			);
+		}
+		country->revoke_unlock("equipment:rifle_3");
+
+		// ---- the artillery has its supplies too (the guns of the generation, canned food)
+		const DivisionStats artillery_first = compute_division_stats(im, *country, make_template(grid_with(*artillery, 1, 1)));
+		country->grant_unlock("equipment:field_gun_3");
+		const DivisionStats artillery_third = compute_division_stats(im, *country, make_template(grid_with(*artillery, 1, 1)));
+		const auto amount_of = [](memory::vector<DivisionGoodAmount> const& list, std::string_view good) -> fixed_point_t {
+			for (DivisionGoodAmount const& entry : list) {
+				if (entry.good == good) {
+					return entry.amount;
+				}
+			}
+			return fixed_point_t::_0;
+		};
+		r.check(
+			amount_of(artillery_first.supply_per_day, "field_gun_1") > fixed_point_t::_0 && amount_of(artillery_first.supply_per_day, "canned_food") > fixed_point_t::_0,
+			"division stats: the supplies of artillery are listed (the guns and the food)",
+			fmt::format("{} supply entries, field_gun_1 {}, canned_food {}, regiments {}", artillery_first.supply_per_day.size(),
+				dbl(amount_of(artillery_first.supply_per_day, "field_gun_1")), dbl(amount_of(artillery_first.supply_per_day, "canned_food")), artillery_first.regiments)
+		);
+		r.check(
+			amount_of(artillery_third.supply_per_day, "field_gun_3") == amount_of(artillery_first.supply_per_day, "field_gun_1")
+				&& amount_of(artillery_third.supply_per_day, "field_gun_1") == fixed_point_t::_0
+				&& artillery_third.attack > artillery_first.attack,
+			"division stats: with a gun of the third generation the supplies are of this gun and the attack is more"
+		);
+		country->revoke_unlock("equipment:field_gun_3");
+
+		// ---- the effects of the technologies: the shift of the rows and the durability
+		Modifier const* shift_modifier = nullptr;
+		for (ProvisionalUnlockStep const& step : provisional.get_steps()) {
+			if (step.modifier.has_value() && step.year == 1895) {
+				shift_modifier = &*step.modifier;
+			}
+		}
+		if (shift_modifier != nullptr) {
+			country->add_unlock_modifier(*shift_modifier);
+			refresh();
+			const DivisionStats shifted = compute_division_stats(im, *country, make_template(grid_with(*infantry, 1, 2)));
+			// the second row weighs as the first: (1 + 1) against (1 + 1/2)
+			r.check(
+				near(shifted.attack * 3, narrow.attack * 4, fixed_point_t(1) / 50),
+				"division stats: the formation of the technologies (row_weight_shift) makes the second row weigh as the first",
+				fmt::format("{} against {}", dbl(shifted.attack), dbl(narrow.attack))
+			);
+			country->remove_unlock_modifier(*shift_modifier);
+			refresh();
+		}
+
+		// ---- put the country back
+		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
+			country->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			country->grant_unlock(key);
+		}
+		country->set_provisional_unlock_steps_applied(applied_before);
 		refresh();
 	}
 
@@ -1345,6 +1573,24 @@ namespace {
 		}
 	}
 
+	// The kind (index) of a regiment type by its identifier, SIZE_MAX if the game has none
+	std::size_t regiment_kind(InstanceManager& im, std::string_view identifier) {
+		RegimentType const* const regiment_type =
+			im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_type_by_identifier(identifier);
+		return regiment_type != nullptr ? get_division_slot_kind(*regiment_type) : SIZE_MAX;
+	}
+
+	// A grid of the cells filled one after another (two rows to a rank): first_count of the first kind, then second_count of the second
+	DivisionGrid make_test_grid(const std::size_t first_kind, const std::size_t first_count, const std::size_t second_kind, const std::size_t second_count) {
+		DivisionGrid grid {};
+		std::size_t cell = 0;
+		for (std::size_t i = 0; i < first_count + second_count; ++i, ++cell) {
+			const std::size_t kind = i < first_count ? first_kind : second_kind;
+			grid[DivisionTemplate::cell_index(cell / 2, cell % 2)] = static_cast<std::uint8_t>(kind + 1);
+		}
+		return grid;
+	}
+
 	// Divisions and templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 4): the civilised countries have armies of divisions (the regiments of the start
 	// are out of the template), the others have groups of regiments only and no generals; templates and reforming
 	void test_divisions(Results& r, InstanceManager& im) {
@@ -1391,7 +1637,32 @@ namespace {
 		r.check(plain_with_division == 0 && plain_with_template == 0, "divisions: a country without the technology has no divisions and no templates");
 		r.check(plain_leaders == 0, "divisions: the armies of a country without the technology have no general");
 
-		// The standard template: three regiments of infantry and one of cavalry
+		// The standard template: four regiments of infantry (2 x 2) and two of cavalry (1 x 2)
+		const std::size_t kind_infantry = regiment_kind(im, "infantry");
+		const std::size_t kind_named_cavalry = regiment_kind(im, "cavalry");
+		// The cavalry of the tests: the cavalry type that most regiments of the civilised countries are of
+		std::size_t kind_cavalry = kind_named_cavalry;
+		{
+			std::map<std::size_t, std::size_t> cavalry_regiments;
+			for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+				if (candidate.exists() && candidate.has_army_organisation()) {
+					for (ArmyInstance& candidate_army : candidate.get_armies()) {
+						for (RegimentInstance const& regiment : candidate_army.get_regiment_instances()) {
+							if (regiment.get_regiment_type().unit_category == UnitType::unit_category_t::CAVALRY) {
+								cavalry_regiments[get_division_slot_kind(regiment.get_regiment_type())]++;
+							}
+						}
+					}
+				}
+			}
+			std::size_t best = 0;
+			for (auto const& [kind, count] : cavalry_regiments) {
+				if (count > best) {
+					best = count;
+					kind_cavalry = kind;
+				}
+			}
+		}
 		CountryInstance* country = nullptr;
 		ArmyInstance* army = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
@@ -1401,8 +1672,8 @@ namespace {
 			for (ArmyInstance& candidate_army : candidate.get_armies()) {
 				std::size_t infantry = 0, cavalry = 0;
 				for (RegimentInstance const& regiment : candidate_army.get_regiment_instances()) {
-					infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
-					cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+					infantry += get_division_slot_kind(regiment.get_regiment_type()) == kind_infantry;
+					cavalry += get_division_slot_kind(regiment.get_regiment_type()) == kind_cavalry;
 				}
 				if (infantry >= 2 && cavalry >= 2 && !candidate_army.is_in_combat()) {
 					country = &candidate;
@@ -1419,8 +1690,17 @@ namespace {
 			return;
 		}
 		DivisionTemplate const* const standard = country->find_division_template(1);
-		r.check(standard != nullptr && standard->slots[0] == 3 && standard->slots[1] == 1 && standard->slots[2] == 0 && standard->slots[3] == 0,
-			"divisions: the standard template has three regiments of infantry and one of cavalry");
+		r.check(standard != nullptr && kind_infantry < DIVISION_MAX_TYPES && kind_named_cavalry < DIVISION_MAX_TYPES
+				&& standard->counts[kind_infantry] == 4 && standard->counts[kind_named_cavalry] == 2 && standard->get_total_slots() == 6,
+			"divisions: the standard template has four regiments of infantry (2 x 2) and two of cavalry (1 x 2)");
+		DivisionGrid expected_standard {};
+		for (std::size_t row = 0; row < 2; ++row) {
+			expected_standard[DivisionTemplate::cell_index(0, row)] = static_cast<std::uint8_t>(kind_infantry + 1);
+			expected_standard[DivisionTemplate::cell_index(1, row)] = static_cast<std::uint8_t>(kind_infantry + 1);
+			expected_standard[DivisionTemplate::cell_index(2, row)] = static_cast<std::uint8_t>(kind_named_cavalry + 1);
+		}
+		const bool standard_shape = standard != nullptr && standard->cells == expected_standard;
+		r.check(standard_shape, "divisions: the standard template is 2 ranks of 2 rows of infantry and 1 rank of 2 rows of cavalry");
 
 		const auto count_templated = [&army](const std::uint32_t template_id) -> std::size_t {
 			std::size_t count = 0;
@@ -1442,13 +1722,13 @@ namespace {
 			return count;
 		};
 
-		// The standard template: one whole division for every three regiments of infantry (with a regiment of cavalry for each)
+		// The standard template: one whole division for every four regiments of infantry (with two regiments of cavalry for each)
 		std::size_t standard_infantry = 0, standard_cavalry = 0;
 		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
-			standard_infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
-			standard_cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+			standard_infantry += get_division_slot_kind(regiment.get_regiment_type()) == kind_infantry;
+			standard_cavalry += get_division_slot_kind(regiment.get_regiment_type()) == kind_named_cavalry;
 		}
-		const std::size_t standard_expected = std::min(standard_infantry / 3, standard_cavalry);
+		const std::size_t standard_expected = std::min(standard_infantry / 4, standard_cavalry / 2);
 		const std::size_t standard_regiments = army->get_unit_count();
 		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), std::uint32_t(1));
 		im.force_tick_and_update();
@@ -1463,22 +1743,31 @@ namespace {
 
 		// A new template: one regiment of infantry and one of cavalry
 		const std::size_t templates_before = country->get_division_templates().size();
-		im.queue_game_action<create_division_template_argument_t>(
-			country->index, std::uint32_t(1), std::uint32_t(1), std::uint32_t(0), std::uint32_t(0)
-		);
+		im.queue_game_action<create_division_template_argument_t>(country->index, make_test_grid(kind_infantry, 1, kind_cavalry, 1));
 		im.force_tick_and_update();
 		r.check(country->get_division_templates().size() == templates_before + 1, "divisions: a template can be made");
 		const std::uint32_t pair_id = country->get_division_templates().back().id;
-		im.queue_game_action<create_division_template_argument_t>(
-			country->index, std::uint32_t(0), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
-		);
+		im.queue_game_action<create_division_template_argument_t>(country->index, DivisionGrid {});
 		im.force_tick_and_update();
-		r.check(country->get_division_templates().size() == templates_before + 1, "divisions: a template without slots is refused");
+		r.check(country->get_division_templates().size() == templates_before + 1, "divisions: a template without cells is refused");
+		// More ranks or rows than the country may use: refused
+		DivisionGrid too_wide {};
+		too_wide[DivisionTemplate::cell_index(5, 0)] = static_cast<std::uint8_t>(kind_infantry + 1);
+		im.queue_game_action<create_division_template_argument_t>(country->index, too_wide);
+		DivisionGrid too_deep {};
+		too_deep[DivisionTemplate::cell_index(0, 3)] = static_cast<std::uint8_t>(kind_infantry + 1);
+		im.queue_game_action<create_division_template_argument_t>(country->index, too_deep);
+		DivisionGrid not_a_type {};
+		not_a_type[DivisionTemplate::cell_index(0, 0)] = static_cast<std::uint8_t>(DIVISION_MAX_TYPES);
+		im.queue_game_action<create_division_template_argument_t>(country->index, not_a_type);
+		im.force_tick_and_update();
+		r.check(country->get_division_templates().size() == templates_before + 1,
+			"divisions: a template with more ranks or rows than the limits give, or with a cell that is no regiment type, is refused");
 
 		std::size_t infantry = 0, cavalry = 0;
 		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
-			infantry += get_division_slot_kind(regiment.get_regiment_type()) == 0;
-			cavalry += get_division_slot_kind(regiment.get_regiment_type()) == 1;
+			infantry += get_division_slot_kind(regiment.get_regiment_type()) == kind_infantry;
+			cavalry += get_division_slot_kind(regiment.get_regiment_type()) == kind_cavalry;
 		}
 		const std::size_t expected_divisions = std::min(infantry, cavalry);
 		const std::size_t regiments = army->get_unit_count();
@@ -1486,16 +1775,14 @@ namespace {
 		im.force_tick_and_update();
 		r.check(count_templated(pair_id) == expected_divisions && expected_divisions >= 2, "divisions: the regiments make as many whole divisions as they can",
 			fmt::format("{} of {}", count_templated(pair_id), expected_divisions));
-		r.check(count_in_templates(0) == expected_divisions && count_in_templates(1) == expected_divisions,
+		r.check(count_in_templates(kind_infantry) == expected_divisions && count_in_templates(kind_cavalry) == expected_divisions,
 			"divisions: every division of the template has one regiment of infantry and one of cavalry");
 		r.check(army->get_unit_count() == regiments, "divisions: reforming does not lose regiments");
 
 		// Changing the template changes the divisions: two regiments of infantry and none of cavalry (the cavalry goes to the reserve)
-		im.queue_game_action<update_division_template_argument_t>(
-			country->index, pair_id, std::uint32_t(2), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
-		);
+		im.queue_game_action<update_division_template_argument_t>(country->index, pair_id, make_test_grid(kind_infantry, 2, kind_cavalry, 0));
 		im.force_tick_and_update();
-		r.check(count_in_templates(1) == 0, "divisions: when the template changes the regiments that do not fit leave the divisions");
+		r.check(count_in_templates(kind_cavalry) == 0, "divisions: when the template changes the regiments that do not fit leave the divisions");
 		std::size_t out_of_template = 0, in_divisions = 0;
 		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
 			bool templated = false;
@@ -1536,9 +1823,7 @@ namespace {
 			}
 		}
 		if (plain != nullptr) {
-			im.queue_game_action<create_division_template_argument_t>(
-				plain->index, std::uint32_t(1), std::uint32_t(0), std::uint32_t(0), std::uint32_t(0)
-			);
+			im.queue_game_action<create_division_template_argument_t>(plain->index, make_test_grid(kind_infantry, 1, kind_infantry, 0));
 			im.force_tick_and_update();
 			r.check(plain->get_division_templates().empty(), "divisions: a country without the technology cannot make templates");
 			LeaderInstance const& general = plain->get_leaders<unit_branch_t::LAND>().front();
@@ -2141,6 +2426,7 @@ namespace {
 		test_supply_delivery(r, *im);
 		test_fronts(r, *im);
 		test_unlocks(r, *im);
+		test_division_stats(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

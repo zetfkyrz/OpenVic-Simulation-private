@@ -101,8 +101,11 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		}
 		for (DivisionTemplate const& division_template : country.get_division_templates()) {
 			hasher.add(static_cast<std::uint64_t>(division_template.id));
-			for (const std::uint32_t slot : division_template.slots) {
-				hasher.add(static_cast<std::uint64_t>(slot));
+			for (const std::uint8_t cell : division_template.cells) {
+				hasher.add(static_cast<std::uint64_t>(cell));
+			}
+			for (const std::uint8_t company : division_template.companies) {
+				hasher.add(static_cast<std::uint64_t>(company));
 			}
 		}
 		for (memory::string const& key : country.get_unlock_keys()) {

@@ -31,7 +31,9 @@ namespace OpenVic {
 		// 19: fronts spread the divisions of their armies over the line (an army of its own for every province of the line)
 		// 20: unlocks of the country (equipment:/formation:/support_company: keys and the modifiers they give, in the state hash), the provisional
 		//     layer of the year, the limits of the division templates (ov_war.TEMPLATE_*)
-		inline constexpr int SIMULATION_VERSION = 20;
+		// 21: the division template is a grid (ranks x rows of regiment types, slots of companies), the standard template is 4 infantry 2x2 and 2 cavalry
+		//     1x2, a regiment fills a cell of its own type; create/update_division_template carry the grid
+		inline constexpr int SIMULATION_VERSION = 21;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

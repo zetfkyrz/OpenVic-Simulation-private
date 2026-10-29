@@ -29,6 +29,9 @@
 #include <openvic-simulation/politics/PoliticsManager.hpp>
 #include <openvic-simulation/country/CountryParty.hpp>
 #include <openvic-simulation/military/UnitInstanceGroup.hpp>
+#include <openvic-simulation/military/BattleFormulas.hpp>
+#include <openvic-simulation/military/DivisionStats.hpp>
+#include <openvic-simulation/defines/OpenVicDefines.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
@@ -994,6 +997,9 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    -V : Verify every day that the sums kept by the provinces and by the countries are the sums of the pops (slower, a difference fails the run).");
 	fmt::println(file, "    -F : With -e: print the times of the parts of the tick ('PROFILE' lines, the same scopes as the F12 debugger).");
 	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
+	fmt::println(file, "    --ov-data <folder> : The folder with the data of OpenVic (default: OPENVIC_DATA_PATH, else ov_data found near the executable or in the current folder).");
+	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
+	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
 	fmt::println(file, "    -b : Use the following path as the base directory (instead of searching for one).");
@@ -1155,6 +1161,71 @@ static fs::path find_builtin_data_path(char const* program) {
 }
 
 static size_t info_count = 0, warning_count = 0, error_count = 0, critical_count = 0;
+
+// --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
+static bool dump_templates = false, dump_battles = false;
+
+static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
+	std::string text;
+	for (DivisionGoodAmount const& entry : goods) {
+		text += fmt::format("{}{}={:.3f}", text.empty() ? "" : ",", entry.good, static_cast<double>(entry.amount));
+	}
+	return text.empty() ? "-" : text;
+}
+
+static void print_template_line(std::string_view tag, CountryInstance const& country, DivisionTemplate const& division_template, DivisionStats const& stats) {
+	fmt::println(
+		"{} country={} template={} regiments={} width={} depth={:.2f} density={:.2f} attack={:.2f} defence={:.2f} durability={:.2f} organisation={:.1f} "
+		"fortification={:.2f} weight={:.0f} speed={:.2f} reconnaissance={:.2f} occupation_speed={:.2f}{} reliability={:.2f} men={:.0f}",
+		tag, country.get_identifier(), division_template.id, stats.regiments, stats.width, static_cast<double>(stats.depth), static_cast<double>(stats.density),
+		static_cast<double>(stats.attack), static_cast<double>(stats.defence), static_cast<double>(stats.durability), static_cast<double>(stats.organisation),
+		static_cast<double>(stats.fortification), static_cast<double>(stats.weight), static_cast<double>(stats.speed), static_cast<double>(stats.reconnaissance),
+		static_cast<double>(stats.occupation_speed), stats.occupation_instant ? "(instant)" : "", static_cast<double>(stats.reliability), static_cast<double>(stats.men)
+	);
+	fmt::println("{}_COST country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.cost));
+	fmt::println("{}_SUPPLY_PER_DAY country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.supply_per_day));
+	fmt::println("{}_AMMO_PER_DAY country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.ammo_per_day));
+}
+
+static void run_template_battle_dump(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& war = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
+	std::size_t printed = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.has_army_organisation() || country.get_division_templates().empty() || printed >= 3) {
+			continue;
+		}
+		printed++;
+		for (DivisionTemplate const& division_template : country.get_division_templates()) {
+			const DivisionStats stats = compute_division_stats(instance_manager, country, division_template);
+			if (dump_templates) {
+				print_template_line("TEMPLATE", country, division_template, stats);
+			}
+			if (dump_battles) {
+				// The template against a division that is a rank of the infantry-like cells of it: the damage a day each way and the days to destroy
+				DivisionTemplate narrow = division_template;
+				for (std::size_t rank = 1; rank < DIVISION_MAX_RANKS; ++rank) {
+					for (std::size_t row = 0; row < DIVISION_MAX_DEPTH; ++row) {
+						narrow.cells[DivisionTemplate::cell_index(rank, row)] = 0;
+					}
+				}
+				narrow.rebuild_counts();
+				const DivisionStats narrow_stats = compute_division_stats(instance_manager, country, narrow);
+				const auto line = [&](std::string_view label, DivisionStats const& a, DivisionStats const& b) {
+					const fixed_point_t damage = battle_formulas::damage_per_day(war, a, b);
+					fmt::println(
+						"BATTLE country={} template={} {} attacker_width={} defender_width={} damage_per_day={:.3f} defender_durability={:.2f} days_to_destroy={:.1f}",
+						country.get_identifier(), division_template.id, label, a.width, b.width, static_cast<double>(damage), static_cast<double>(b.durability),
+						static_cast<double>(battle_formulas::days_to_destroy(b.durability, damage))
+					);
+				};
+				line("full_vs_full", stats, stats);
+				line("full_vs_one_rank", stats, narrow_stats);
+				line("one_rank_vs_full", narrow_stats, stats);
+			}
+		}
+	}
+}
+
 static bool run_headless(fs::path const& root, memory::vector<memory::string>& mods, bool run_tests) {
 	bool ret = true;
 	Dataloader::path_vector_t roots = { root };
@@ -1408,6 +1479,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && (dump_templates || dump_battles)) {
+		run_template_battle_dump(*game_manager.get_instance_manager());
+	}
+
 	if (ret && run_army_test) {
 		SPDLOG_INFO("===== Army test... =====");
 		ret &= test_armies(*game_manager.get_instance_manager(), game_manager.get_definition_manager());
@@ -1628,6 +1703,10 @@ int main(int argc, char const* argv[]) {
 				return -1;
 			}
 			economy_report_days = static_cast<size_t>(std::max(0, std::atoi(argv[argn])));
+		} else if (strcmp(arg, "--dump-template") == 0) {
+			dump_templates = true;
+		} else if (strcmp(arg, "--dump-battle") == 0) {
+			dump_battles = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");

@@ -948,15 +948,15 @@ bool GameActionManager::VariantVisitor::operator() (set_army_supply_priority_arg
 // The priority of the armies of a country that have no priority of their own
 // Templates of the divisions: the number of regiments of the kinds infantry, cavalry, support, special
 bool GameActionManager::VariantVisitor::operator() (create_division_template_argument_t const& argument) const {
-	const auto [country_index, infantry, cavalry, support, special] = argument;
+	const auto [country_index, grid] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	return create_division_template(country, { infantry, cavalry, support, special });
+	return create_division_template(instance_manager, country, grid);
 }
 
 bool GameActionManager::VariantVisitor::operator() (update_division_template_argument_t const& argument) const {
-	const auto [country_index, template_id, infantry, cavalry, support, special] = argument;
+	const auto [country_index, template_id, grid] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	return update_division_template(instance_manager, country, template_id, { infantry, cavalry, support, special });
+	return update_division_template(instance_manager, country, template_id, grid);
 }
 
 bool GameActionManager::VariantVisitor::operator() (delete_division_template_argument_t const& argument) const {

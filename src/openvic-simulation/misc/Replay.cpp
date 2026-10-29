@@ -1,5 +1,6 @@
 #include "Replay.hpp"
 
+#include <array>
 #include <cstdio>
 #include <sstream>
 #include <string>
@@ -12,6 +13,8 @@ namespace OpenVic {
 		template<typename T> struct is_pair : std::false_type {};
 		template<typename A, typename B> struct is_pair<std::pair<A, B>> : std::true_type {};
 		template<typename T> struct is_tuple : std::false_type {};
+		template<typename T> struct is_array : std::false_type {};
+		template<typename A, std::size_t N> struct is_array<std::array<A, N>> : std::true_type {};
 		template<typename... A> struct is_tuple<std::tuple<A...>> : std::true_type {};
 
 		template<typename T>
@@ -25,6 +28,10 @@ namespace OpenVic {
 				os << ' ' << static_cast<std::int64_t>(value);
 			} else if constexpr (std::is_integral_v<T>) {
 				os << ' ' << value;
+			} else if constexpr (is_array<T>::value) {
+				for (auto const& element : value) {
+					write_value(os, static_cast<unsigned>(element));
+				}
 			} else if constexpr (is_pair<T>::value) {
 				write_value(os, value.first);
 				write_value(os, value.second);
@@ -62,6 +69,15 @@ namespace OpenVic {
 				return true;
 			} else if constexpr (std::is_integral_v<T>) {
 				return static_cast<bool>(is >> value);
+			} else if constexpr (is_array<T>::value) {
+				for (auto& element : value) {
+					unsigned raw = 0;
+					if (!(is >> raw)) {
+						return false;
+					}
+					element = static_cast<std::remove_reference_t<decltype(element)>>(raw);
+				}
+				return true;
 			} else if constexpr (is_pair<T>::value) {
 				return read_value(is, value.first) && read_value(is, value.second);
 			} else if constexpr (is_tuple<T>::value) {

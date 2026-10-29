@@ -42,6 +42,10 @@ namespace OpenVic {
 		ModifierEffect const* PROPERTY(max_company_slots, nullptr);
 		ModifierEffect const* PROPERTY(density_reduction, nullptr);
 		ModifierEffect const* PROPERTY(row_weight_shift, nullptr);
+		ModifierEffect const* PROPERTY(fortification, nullptr);
+		ModifierEffect const* PROPERTY(occupation_speed, nullptr);
+		ModifierEffect const* PROPERTY(division_durability, nullptr);
+		ModifierEffect const* PROPERTY(division_reconnaissance, nullptr);
 		ModifierEffect const* PROPERTY(plurality, nullptr);
 		ModifierEffect const* PROPERTY(pop_growth, nullptr);
 		ModifierEffect const* PROPERTY(prestige_gain_multiplier, nullptr);

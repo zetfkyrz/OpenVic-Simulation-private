@@ -211,6 +211,18 @@ bool ModifierManager::setup_modifier_effects() {
 		modifier_effect_cache.row_weight_shift, "row_weight_shift", FORMAT_x1_0DP_POS, "ROW_WEIGHT_SHIFT_TECH"
 	);
 	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.fortification, "fortification", FORMAT_x1_1DP_POS, "FORTIFICATION_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.occupation_speed, "occupation_speed", FORMAT_x100_1DP_PC_POS, "OCCUPATION_SPEED_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.division_durability, "division_durability", FORMAT_x100_1DP_PC_POS, "DIVISION_DURABILITY_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.division_reconnaissance, "division_reconnaissance", FORMAT_x1_1DP_POS, "DIVISION_RECONNAISSANCE_TECH"
+	);
+	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.separatism, "seperatism", FORMAT_x100_1DP_PC_NEG, "SEPARATISM_TECH" // paradox typo
 	);
 	ret &= register_technology_modifier_effect(

@@ -287,6 +287,17 @@ namespace OpenVic {
 	/* 1: the provisional unlocks of the year (ov_data/common/ov_equipment/provisional_unlocks.txt) give the weapons and the limits of the */ \
 	/* templates by the year of the game; 0 when the new system of technologies gives them (TEMPORARY, docs/PENDING_PLANS.md) */ \
 	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 1, 0, 1) \
+	/* What a template is worth (military/DivisionStats.cpp): the men of a strength point of a regiment, the kit and the men weigh this many */ \
+	/* kilograms per strength point, the occupation speed 1 is the base (technologies add to it, from this percent it is instant) */ \
+	INT(TEMPLATE_MEN_PER_STRENGTH, template_men_per_strength, 1000, 1, 100000) \
+	INT(TEMPLATE_KIT_WEIGHT_PER_STRENGTH, template_kit_weight_per_strength, 100000, 0, 10000000) \
+	FIXED(OCCUPATION_SPEED_BASE, occupation_speed_base, fixed_point_t::_1, 0, 100) \
+	INT(TEMPLATE_OCCUPATION_INSTANT_PERCENT, template_occupation_instant_percent, 1000, 100, 1000000) \
+	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \
+	/* halves the damage, the damage added by the density of the formation per point of density */ \
+	FIXED(BATTLE_DAMAGE_PER_ATTACK, battle_damage_per_attack, fixed_point_t::_0_10, 0, 1000) \
+	FIXED(BATTLE_DEFENCE_REFERENCE, battle_defence_reference, fixed_point_t(20), 1, 100000) \
+	RATE(BATTLE_DENSITY_DAMAGE, battle_density_damage, Rate(2, 100), 0, 1) \
 	RATE(ATTRITION_BASE, attrition_base, Rate(2, 1000), 0, 1) \
 	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
 	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \

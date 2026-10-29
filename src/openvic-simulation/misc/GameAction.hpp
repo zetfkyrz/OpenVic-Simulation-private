@@ -10,6 +10,7 @@
 #include <type_safe/strong_typedef.hpp>
 
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/population/PopIdInProvince.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 #include "openvic-simulation/types/UniqueId.hpp"
@@ -125,8 +126,8 @@ X(split_regiment, unique_id_t) \
 X(merge_armies, unique_id_t, unique_id_t) \
 X(set_army_leader, unique_id_t, unique_id_t) \
 X(set_army_supply_priority, unique_id_t, std::uint32_t) \
-X(create_division_template, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) \
-X(update_division_template, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) \
+X(create_division_template, country_index_t, DivisionGrid) \
+X(update_division_template, country_index_t, std::uint32_t, DivisionGrid) \
 X(delete_division_template, country_index_t, std::uint32_t) \
 X(reform_army_to_template, unique_id_t, std::uint32_t, std::uint32_t) \
 X(create_army_group, country_index_t) \
