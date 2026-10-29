@@ -28,7 +28,8 @@ namespace OpenVic {
 		//     is paid after the market has run, see docs/BUGS_FIXED.md
 		// 14: world trade (routes by land and sea with freight and capacity, the workers keep part of the output), the unemployed who are hungry
 		//     for a month emigrate or die, see docs/TRADE.md
-		inline constexpr int SIMULATION_VERSION = 18;
+		// 19: fronts spread the divisions of their armies over the line (an army of its own for every province of the line)
+		inline constexpr int SIMULATION_VERSION = 19;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

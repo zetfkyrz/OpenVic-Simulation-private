@@ -1340,6 +1340,111 @@ namespace {
 
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
+	// Fronts (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 5): the divisions of the armies of a front spread over its line, one army for every province
+	// of the line, and a division keeps its template when it leaves its army
+	void test_fronts(Results& r, InstanceManager& im) {
+		OpenVicWarDefines& war_defines = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		const auto chunk_before = war_defines.front_spread_chunk_size;
+		const auto splits_before = war_defines.front_spread_max_splits_per_day;
+		war_defines.front_spread_chunk_size = 1;
+		war_defines.front_spread_max_splits_per_day = 10;
+
+		CountryInstance* country = nullptr;
+		ArmyInstance* army = nullptr;
+		std::vector<ProvinceInstance*> line;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || !candidate.has_army_organisation() || candidate.is_at_war()) {
+				continue;
+			}
+			line.clear();
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				if (!province->province_definition.is_water() && province->get_controller() == &candidate && line.size() < 3) {
+					line.push_back(province);
+				}
+			}
+			if (line.size() < 3) {
+				continue;
+			}
+			for (ArmyInstance& candidate_army : candidate.get_armies()) {
+				if (candidate_army.get_unit_count() >= 8 && !candidate_army.is_in_combat() && !candidate_army.is_moving()) {
+					country = &candidate;
+					army = &candidate_army;
+					break;
+				}
+			}
+			if (army != nullptr) {
+				break;
+			}
+		}
+		r.check(army != nullptr, "fronts: a civilised country with an army of eight regiments and three provinces exists");
+		if (army == nullptr) {
+			war_defines.front_spread_chunk_size = chunk_before;
+			war_defines.front_spread_max_splits_per_day = splits_before;
+			return;
+		}
+
+		// Whole divisions of the standard template, so that the split has divisions of a template to keep
+		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), std::uint32_t(1));
+		im.force_tick_and_update();
+		std::size_t templated_before = 0;
+		for (DivisionInstance const& division : army->get_divisions()) {
+			templated_before += division.template_id == 1;
+		}
+		const std::size_t regiments_before = army->get_unit_count();
+		const unique_id_t army_id = army->unique_id;
+
+		WarManager& war_manager = im.get_war_manager();
+		const std::uint32_t front_id = war_manager.create_front(im, *country, nullptr);
+		r.check(front_id != 0, "fronts: an empty front can be made");
+		for (ProvinceInstance* province : line) {
+			war_manager.toggle_front_province(*country, front_id, *province);
+		}
+		r.check(war_manager.set_front_army(im, *country, front_id, army_id, true), "fronts: an army can be assigned to the front");
+		r.check(war_manager.get_front_by_id(front_id) != nullptr && war_manager.get_front_by_id(front_id)->provinces.size() == 3,
+			"fronts: the line has the three provinces");
+
+		im.force_tick_and_update();
+		Front const* const front = war_manager.get_front_by_id(front_id);
+		r.check(front != nullptr && front->army_ids.size() == 3, "fronts: the divisions spread over the line, one army for every province",
+			fmt::format("{}", front != nullptr ? front->army_ids.size() : 0));
+		std::size_t regiments_after = 0, templated_after = 0, unknown_division = 0;
+		bool same_country = true;
+		if (front != nullptr) {
+			for (const unique_id_t id : front->army_ids) {
+				ArmyInstance* const spread_army = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(id));
+				if (spread_army == nullptr) {
+					continue;
+				}
+				same_country = same_country && &spread_army->get_country() == country;
+				regiments_after += spread_army->get_unit_count();
+				for (DivisionInstance const& division : spread_army->get_divisions()) {
+					templated_after += division.template_id == 1;
+				}
+				for (RegimentInstance const& regiment : spread_army->get_regiment_instances()) {
+					bool found = regiment.get_division_id() == 0;
+					for (DivisionInstance const& division : spread_army->get_divisions()) {
+						found = found || division.id == regiment.get_division_id();
+					}
+					unknown_division += !found;
+				}
+			}
+		}
+		r.check(same_country && regiments_after == regiments_before, "fronts: spreading loses no regiments",
+			fmt::format("{} of {}", regiments_after, regiments_before));
+		r.check(templated_after == templated_before, "fronts: a division keeps its template when it leaves its army",
+			fmt::format("{} of {}", templated_after, templated_before));
+		r.check(unknown_division == 0, "fronts: every regiment is in a division of its own army");
+
+		// A day later nothing more is split (an army for every province already), the armies still exist
+		im.force_tick_and_update();
+		r.check(war_manager.get_front_by_id(front_id) != nullptr && war_manager.get_front_by_id(front_id)->army_ids.size() == 3,
+			"fronts: no more armies are split when every province has one");
+		r.check(war_manager.delete_front(*country, front_id), "fronts: a front can be deleted");
+
+		war_defines.front_spread_chunk_size = chunk_before;
+		war_defines.front_spread_max_splits_per_day = splits_before;
+	}
+
 	void test_trade_and_hunger(Results& r, InstanceManager& im) {
 		MoneyLedger& ledger = im.get_money_ledger();
 		ledger.enable(im);
@@ -1698,6 +1803,7 @@ namespace {
 		test_divisions(r, *im);
 		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
+		test_fronts(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

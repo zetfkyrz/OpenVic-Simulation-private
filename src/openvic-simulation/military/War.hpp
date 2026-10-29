@@ -163,6 +163,9 @@ namespace OpenVic {
 		void update_fronts(InstanceManager& instance_manager);
 		void update_auto_plan(InstanceManager& instance_manager);
 		void order_front_armies(InstanceManager& instance_manager, Front& front);
+		// Spreads the divisions of the armies of the front over its line: while the front has fewer armies than sectors (the provinces
+		// of the line, or the enemy provinces to attack), a division of the biggest idle army leaves it as an army of its own
+		void spread_front_divisions(InstanceManager& instance_manager, Front& front);
 
 		War* find_war(std::uint32_t id);
 		War* find_war_between(CountryInstance const& first, CountryInstance const& second);

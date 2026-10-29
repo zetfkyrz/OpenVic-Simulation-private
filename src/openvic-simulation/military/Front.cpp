@@ -7,6 +7,7 @@
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -23,6 +24,24 @@ namespace {
 			result.push_back(&map_instance.get_province_instance_by_definition(adjacency.get_to()));
 		}
 		return result;
+	}
+
+	// Enemy held provinces next to the line, the targets of the attack (empty in the DEFEND mode)
+	std::vector<ProvinceInstance*> get_front_targets(Front const& front, MapInstance& map_instance) {
+		std::vector<ProvinceInstance*> targets;
+		if (front.mode != Front::mode_t::ATTACK) {
+			return targets;
+		}
+		for (ProvinceInstance* line_province : front.provinces) {
+			for (ProvinceInstance* neighbour : get_land_neighbours(*line_province, map_instance)) {
+				CountryInstance const* const controller = neighbour->get_controller();
+				if (controller != nullptr && front.country->is_at_war_with(*controller)
+					&& std::find(targets.begin(), targets.end(), neighbour) == targets.end()) {
+					targets.push_back(neighbour);
+				}
+			}
+		}
+		return targets;
 	}
 
 	bool is_held_by(ProvinceInstance const& province, CountryInstance const& country) {
@@ -245,19 +264,7 @@ void WarManager::order_front_armies(InstanceManager& instance_manager, Front& fr
 		return;
 	}
 
-	// Enemy held provinces next to the line, the targets of the attack
-	std::vector<ProvinceInstance*> targets;
-	if (front.mode == Front::mode_t::ATTACK) {
-		for (ProvinceInstance* line_province : front.provinces) {
-			for (ProvinceInstance* neighbour : get_land_neighbours(*line_province, map_instance)) {
-				CountryInstance const* const controller = neighbour->get_controller();
-				if (controller != nullptr && country.is_at_war_with(*controller)
-					&& std::find(targets.begin(), targets.end(), neighbour) == targets.end()) {
-					targets.push_back(neighbour);
-				}
-			}
-		}
-	}
+	std::vector<ProvinceInstance*> const targets = get_front_targets(front, map_instance);
 
 	for (size_t i = 0; i < armies.size(); ++i) {
 		ArmyInstance& army = *armies[i];
@@ -281,6 +288,49 @@ void WarManager::order_front_armies(InstanceManager& instance_manager, Front& fr
 		if (destination != nullptr && destination != &army.get_location()) {
 			unit_manager.order_move(army, *destination, map_instance);
 		}
+	}
+}
+
+void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front& front) {
+	CountryInstance& country = *front.country;
+	OpenVicWarDefines const& defines = get_war_defines();
+	if (!country.has_army_organisation() || front.provinces.empty() || defines.front_spread_max_splits_per_day <= 0) {
+		return;
+	}
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	const std::vector<ProvinceInstance*> targets = get_front_targets(front, instance_manager.get_map_instance());
+	const size_t sectors = !targets.empty() ? targets.size() : front.provinces.size();
+
+	std::vector<ArmyInstance*> armies;
+	for (const unique_id_t army_id : front.army_ids) {
+		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		if (group != nullptr && group->branch == unit_branch_t::LAND && &group->get_country() == &country) {
+			armies.push_back(static_cast<ArmyInstance*>(group));
+		}
+	}
+
+	for (std::int32_t splits = 0; armies.size() < sectors && splits < defines.front_spread_max_splits_per_day; ++splits) {
+		ArmyInstance* biggest = nullptr;
+		size_t biggest_units = 1;
+		for (ArmyInstance* army : armies) {
+			if (army->is_in_combat() || army->is_moving() || army->empty()) {
+				continue;
+			}
+			const size_t units = count_division_units(*army, defines.front_spread_chunk_size);
+			if (units > biggest_units) {
+				biggest = army;
+				biggest_units = units;
+			}
+		}
+		if (biggest == nullptr) {
+			break;
+		}
+		ArmyInstance* const split_army = split_division_unit(unit_manager, *biggest, defines.front_spread_chunk_size);
+		if (split_army == nullptr) {
+			break;
+		}
+		front.army_ids.push_back(split_army->unique_id);
+		armies.push_back(split_army);
 	}
 }
 
@@ -375,6 +425,7 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 	});
 
 	for (Front& front : fronts) {
+		spread_front_divisions(instance_manager, front);
 		order_front_armies(instance_manager, front);
 	}
 }

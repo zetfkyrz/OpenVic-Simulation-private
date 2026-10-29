@@ -9,6 +9,7 @@
 namespace OpenVic {
 	struct CountryInstance;
 	struct InstanceManager;
+	struct UnitInstanceManager;
 
 	// Divisions and the templates of the divisions (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 4).
 	//
@@ -47,6 +48,13 @@ namespace OpenVic {
 	// divisions (new regiments fill the free slots of the divisions of the templates or wait in the reserve), the armies of the countries
 	// without it have no divisions and no generals; a country that has the technology for the first time gets the standard template
 	void update_all_divisions(InstanceManager& instance_manager);
+
+	// The units a front spreads over its line (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 5): a division of a template is one unit, the regiments out
+	// of the templates are counted in groups of chunk_size
+	[[nodiscard]] std::size_t count_division_units(ArmyInstance const& army, std::uint32_t chunk_size);
+	// Moves one unit (a division of a template, else chunk_size regiments out of the templates) out of the army into a new army in the same
+	// province; a division keeps its id and template. nullptr if the army has fewer than two units.
+	ArmyInstance* split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army, std::uint32_t chunk_size);
 
 	// The commands (false if nothing changed or the command is not allowed):
 	// a new template; changing the slots of a template changes all the divisions made of it (the regiments that do not fit go to the reserve

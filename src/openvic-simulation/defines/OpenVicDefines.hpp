@@ -273,6 +273,8 @@ namespace OpenVic {
 	RATE(NAVAL_ORGANISATION_DAMAGE, naval_organisation_damage, Rate(8, 100), 0, 100) \
 	INT(NAVAL_EVASION_DIVISOR, naval_evasion_divisor, 10, 1, 1000) \
 	INT(NAVAL_MAX_DAMAGE_RATIO, naval_max_damage_ratio, 6, 1, 1000) \
+	INT(FRONT_SPREAD_CHUNK_SIZE, front_spread_chunk_size, 4, 1, 40) \
+	INT(FRONT_SPREAD_MAX_SPLITS_PER_DAY, front_spread_max_splits_per_day, 4, 0, 100) \
 	RATE(ATTRITION_BASE, attrition_base, Rate(2, 1000), 0, 1) \
 	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
 	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \

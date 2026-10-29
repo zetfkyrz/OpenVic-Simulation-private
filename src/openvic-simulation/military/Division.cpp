@@ -142,6 +142,89 @@ void OpenVic::update_all_divisions(InstanceManager& instance_manager) {
 	}
 }
 
+std::size_t OpenVic::count_division_units(ArmyInstance const& army, const std::uint32_t chunk_size) {
+	std::size_t units = 0;
+	std::size_t loose_regiments = 0;
+	for (DivisionInstance const& division : army.get_divisions()) {
+		std::size_t in_division = 0;
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() == division.id) {
+				in_division++;
+			}
+		}
+		if (in_division == 0) {
+			continue;
+		}
+		if (division.template_id != 0) {
+			units++;
+		} else {
+			loose_regiments += in_division;
+		}
+	}
+	// Regiments that are in no division yet (they are put in the reserve the next day) are loose too
+	for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+		if (regiment.get_division_id() == 0 || find_division(army, regiment.get_division_id()) == nullptr) {
+			loose_regiments++;
+		}
+	}
+	const std::size_t chunk = std::max<std::size_t>(chunk_size, 1);
+	return units + (loose_regiments + chunk - 1) / chunk;
+}
+
+ArmyInstance* OpenVic::split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army, const std::uint32_t chunk_size) {
+	if (count_division_units(army, chunk_size) < 2) {
+		return nullptr;
+	}
+
+	// A division of a template goes as a whole, the last one first
+	DivisionInstance const* division_of_template = nullptr;
+	for (DivisionInstance const& division : army.get_divisions()) {
+		if (division.template_id != 0 && count_kind(army, division.id, 0) + count_kind(army, division.id, 1)
+				+ count_kind(army, division.id, 2) + count_kind(army, division.id, 3) > 0) {
+			division_of_template = &division;
+		}
+	}
+	const DivisionInstance moved_division = division_of_template != nullptr ? *division_of_template : DivisionInstance {};
+
+	std::vector<RegimentInstance*> moved;
+	for (RegimentInstance& regiment : army.get_regiment_instances()) {
+		if (division_of_template != nullptr) {
+			if (regiment.get_division_id() == moved_division.id) {
+				moved.push_back(&regiment);
+			}
+		} else if (moved.size() < std::max<std::size_t>(chunk_size, 1)) {
+			moved.push_back(&regiment);
+		}
+	}
+	if (moved.empty() || moved.size() >= army.get_unit_count()) {
+		return nullptr;
+	}
+
+	ArmyInstance* const new_army = unit_manager.split_regiment(army, *moved.front());
+	if (new_army == nullptr) {
+		return nullptr;
+	}
+	for (size_t i = 1; i < moved.size(); ++i) {
+		moved[i]->set_division_id(0);
+		if (army.remove_unit(*moved[i])) {
+			new_army->add_unit(*moved[i]);
+		}
+	}
+	if (division_of_template != nullptr) {
+		// The division keeps its id and its template in the new army
+		std::erase_if(army.get_mutable_divisions(), [&moved_division](DivisionInstance const& division) -> bool {
+			return division.id == moved_division.id;
+		});
+		new_army->get_mutable_divisions().push_back(moved_division);
+		for (RegimentInstance& regiment : new_army->get_regiment_instances()) {
+			regiment.set_division_id(moved_division.id);
+		}
+	}
+	army.update_gamestate();
+	new_army->update_gamestate();
+	return new_army;
+}
+
 bool OpenVic::create_division_template(CountryInstance& country, std::array<std::uint32_t, DIVISION_SLOT_KINDS> const& slots) {
 	if (!country.has_army_organisation() || !valid_slots(slots) || country.get_division_templates().size() >= MAX_DIVISION_TEMPLATES) {
 		return false;
