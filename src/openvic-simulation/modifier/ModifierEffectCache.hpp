@@ -36,6 +36,12 @@ namespace OpenVic {
 		/* Tech/inventions only */
 		ModifierEffect const* PROPERTY(cb_creation_speed, nullptr);
 		ModifierEffect const* PROPERTY(combat_width_additive, nullptr);
+		/* The limits and the formation of the division templates (military/Unlocks.hpp, get_template_limits) */
+		ModifierEffect const* PROPERTY(max_columns, nullptr);
+		ModifierEffect const* PROPERTY(max_rows, nullptr);
+		ModifierEffect const* PROPERTY(max_company_slots, nullptr);
+		ModifierEffect const* PROPERTY(density_reduction, nullptr);
+		ModifierEffect const* PROPERTY(row_weight_shift, nullptr);
 		ModifierEffect const* PROPERTY(plurality, nullptr);
 		ModifierEffect const* PROPERTY(pop_growth, nullptr);
 		ModifierEffect const* PROPERTY(prestige_gain_multiplier, nullptr);

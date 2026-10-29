@@ -105,6 +105,18 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				hasher.add(static_cast<std::uint64_t>(slot));
 			}
 		}
+		for (memory::string const& key : country.get_unlock_keys()) {
+			for (const char character : key) {
+				hasher.add(static_cast<std::uint64_t>(static_cast<unsigned char>(character)));
+			}
+			hasher.add(static_cast<std::uint64_t>(0));
+		}
+		for (Modifier const* const unlock_modifier : country.get_unlock_modifiers()) {
+			for (const char character : unlock_modifier->get_identifier()) {
+				hasher.add(static_cast<std::uint64_t>(static_cast<unsigned char>(character)));
+			}
+			hasher.add(static_cast<std::uint64_t>(0));
+		}
 		hasher.add(country.get_navy_supply_level());
 		hasher.add(country.is_at_war() ? 1 : 0);
 		if (CountryParty const* const ruling_party = country.get_ruling_party_untracked(); ruling_party != nullptr) {

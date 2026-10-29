@@ -481,6 +481,11 @@ namespace OpenVic {
 		memory::vector<DivisionTemplate> division_templates;
 		std::uint32_t next_division_template_id = 1;
 		bool division_templates_made = false;
+		// The unlocks of the country (military/Unlocks.hpp): sorted keys such as equipment:rifle_2, formation:<id>, support_company:<id>, and
+		// the modifiers that unlocks give (limits of the templates...); both are in the state hash
+		memory::vector<memory::string> unlock_keys;
+		memory::vector<Modifier const*> unlock_modifiers;
+		std::uint32_t provisional_unlock_steps_applied = 0;
 		// The groups of armies (military/ArmyGroup.hpp)
 		memory::vector<ArmyGroup> army_groups;
 		std::uint32_t next_army_group_id = 1;
@@ -834,6 +839,26 @@ namespace OpenVic {
 		}
 		void set_division_templates_made(const bool made) {
 			division_templates_made = made;
+		}
+		// The unlocks: a key is "<kind>:<id>" (equipment, formation, support_company, or a kind of a mod). The system of technologies, the
+		// provisional layer of the year and the commands call these; a key is held once. true if the set changed.
+		bool grant_unlock(std::string_view key);
+		bool revoke_unlock(std::string_view key);
+		[[nodiscard]] bool has_unlock(std::string_view key) const;
+		[[nodiscard]] std::span<const memory::string> get_unlock_keys() const {
+			return unlock_keys;
+		}
+		// A modifier that an unlock gives (it is added to the modifier sum of the country every day while it is held)
+		bool add_unlock_modifier(Modifier const& modifier);
+		bool remove_unlock_modifier(Modifier const& modifier);
+		[[nodiscard]] std::span<Modifier const* const> get_unlock_modifiers() const {
+			return unlock_modifiers;
+		}
+		[[nodiscard]] std::uint32_t get_provisional_unlock_steps_applied() const {
+			return provisional_unlock_steps_applied;
+		}
+		void set_provisional_unlock_steps_applied(const std::uint32_t steps) {
+			provisional_unlock_steps_applied = steps;
 		}
 		// Days of the reserve of supplies a regiment of this country keeps
 		[[nodiscard]] fixed_point_t get_supply_reserve_capacity() const;

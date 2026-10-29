@@ -29,7 +29,9 @@ namespace OpenVic {
 		// 14: world trade (routes by land and sea with freight and capacity, the workers keep part of the output), the unemployed who are hungry
 		//     for a month emigrate or die, see docs/TRADE.md
 		// 19: fronts spread the divisions of their armies over the line (an army of its own for every province of the line)
-		inline constexpr int SIMULATION_VERSION = 19;
+		// 20: unlocks of the country (equipment:/formation:/support_company: keys and the modifiers they give, in the state hash), the provisional
+		//     layer of the year, the limits of the division templates (ov_war.TEMPLATE_*)
+		inline constexpr int SIMULATION_VERSION = 20;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

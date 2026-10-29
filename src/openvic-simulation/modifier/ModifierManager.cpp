@@ -194,6 +194,22 @@ bool ModifierManager::setup_modifier_effects() {
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.colonial_migration, "colonial_migration", FORMAT_x100_1DP_PC_POS, "COLONIAL_MIGRATION_TECH"
 	);
+	// The division templates: the effects add to the default limits (ov_war.TEMPLATE_*), see military/Unlocks.hpp
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.max_columns, "max_columns", FORMAT_x1_0DP_POS, "MAX_COLUMNS_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.max_rows, "max_rows", FORMAT_x1_0DP_POS, "MAX_ROWS_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.max_company_slots, "max_company_slots", FORMAT_x1_0DP_POS, "MAX_COMPANY_SLOTS_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.density_reduction, "density_reduction", FORMAT_x100_1DP_PC_POS, "DENSITY_REDUCTION_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.row_weight_shift, "row_weight_shift", FORMAT_x1_0DP_POS, "ROW_WEIGHT_SHIFT_TECH"
+	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.separatism, "seperatism", FORMAT_x100_1DP_PC_NEG, "SEPARATISM_TECH" // paradox typo
 	);

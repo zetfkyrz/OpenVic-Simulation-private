@@ -1,6 +1,7 @@
 #include "CountryInstance.hpp"
 
 #include "openvic-simulation/misc/MoneyLedger.hpp"
+#include "openvic-simulation/military/Unlocks.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 
@@ -1876,6 +1877,10 @@ void CountryInstance::update_modifier_sum(Date today, StaticModifierCache const&
 		}
 	}
 
+	for (Modifier const* const unlock_modifier : unlock_modifiers) {
+		modifier_sum.add_modifier(*unlock_modifier);
+	}
+
 	// Erase expired event modifiers and add non-expired ones to the sum
 	std::erase_if(event_modifiers, [this, today](ModifierInstance const& modifier) -> bool {
 		if (today <= modifier.get_expiry_date()) {
@@ -1900,6 +1905,60 @@ void CountryInstance::make_room_for_province_modifier_sum(ModifierSum const& pro
 
 void CountryInstance::contribute_province_modifier_sum(ModifierSum const& province_modifier_sum) {
 	modifier_sum.add_modifier_sum(province_modifier_sum);
+}
+
+bool CountryInstance::grant_unlock(std::string_view key) {
+	if (!is_valid_unlock_key(key)) {
+		return false;
+	}
+	const auto it = std::lower_bound(
+		unlock_keys.begin(), unlock_keys.end(), key, [](memory::string const& held, std::string_view value) -> bool {
+			return std::string_view { held } < value;
+		}
+	);
+	if (it != unlock_keys.end() && std::string_view { *it } == key) {
+		return false;
+	}
+	unlock_keys.emplace(it, key);
+	return true;
+}
+
+bool CountryInstance::revoke_unlock(std::string_view key) {
+	const auto it = std::lower_bound(
+		unlock_keys.begin(), unlock_keys.end(), key, [](memory::string const& held, std::string_view value) -> bool {
+			return std::string_view { held } < value;
+		}
+	);
+	if (it == unlock_keys.end() || std::string_view { *it } != key) {
+		return false;
+	}
+	unlock_keys.erase(it);
+	return true;
+}
+
+bool CountryInstance::has_unlock(std::string_view key) const {
+	return std::binary_search(
+		unlock_keys.begin(), unlock_keys.end(), key, [](auto const& a, auto const& b) -> bool {
+			return std::string_view { a } < std::string_view { b };
+		}
+	);
+}
+
+bool CountryInstance::add_unlock_modifier(Modifier const& modifier) {
+	if (std::find(unlock_modifiers.begin(), unlock_modifiers.end(), &modifier) != unlock_modifiers.end()) {
+		return false;
+	}
+	unlock_modifiers.push_back(&modifier);
+	return true;
+}
+
+bool CountryInstance::remove_unlock_modifier(Modifier const& modifier) {
+	const auto it = std::find(unlock_modifiers.begin(), unlock_modifiers.end(), &modifier);
+	if (it == unlock_modifiers.end()) {
+		return false;
+	}
+	unlock_modifiers.erase(it);
+	return true;
 }
 
 fixed_point_t CountryInstance::get_modifier_effect_value(ModifierEffect const& effect) const {

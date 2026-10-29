@@ -240,6 +240,21 @@ Dataloader::path_vector_t Dataloader::lookup_files_in_dir_load_order(
 	return result;
 }
 
+std::size_t Dataloader::load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const {
+	static constexpr std::string_view provisional_unlocks_file = "common/ov_equipment/provisional_unlocks.txt";
+
+	const fs::path file = lookup_file(provisional_unlocks_file, false);
+	if (file.empty()) {
+		return 0;
+	}
+	const v2script::Parser parser = parse_defines(file);
+	if (parser.has_fatal_error() || parser.has_error()) {
+		spdlog::warn_s("The provisional unlocks file {} is skipped, it has errors", file);
+		return 0;
+	}
+	return provisional_unlocks.load_file(file.string(), parser.get_file_node(), modifier_manager);
+}
+
 std::size_t Dataloader::load_equipment_files(EquipmentManager& equipment_manager) const {
 	static constexpr std::string_view equipment_directory = "common/ov_equipment";
 
@@ -1077,6 +1092,12 @@ bool Dataloader::load_defines(
 		EquipmentManager& equipment_manager = definition_manager.get_military_manager().get_equipment_manager();
 		const std::size_t equipment_count = load_equipment_files(equipment_manager);
 		SPDLOG_INFO("Loaded {} weapons in {} equipment lines", equipment_count, equipment_manager.get_lines().size());
+	}
+	{
+		// The provisional layer of the unlocks by the year (TEMPORARY): optional
+		ProvisionalUnlocks& provisional_unlocks = definition_manager.get_military_manager().get_provisional_unlocks();
+		const std::size_t step_count = load_provisional_unlocks(provisional_unlocks, definition_manager.get_modifier_manager());
+		SPDLOG_INFO("Loaded {} provisional unlock steps", step_count);
 	}
 	if (!definition_manager.get_pop_manager().get_culture_manager().load_graphical_culture_type_file(
 		parse_defines(lookup_file(graphical_culture_type_file)).get_file_node()

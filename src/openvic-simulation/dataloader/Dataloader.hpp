@@ -19,6 +19,8 @@ namespace OpenVic {
 	struct DefinitionManager;
 	struct GameRulesManager;
 	struct EquipmentManager;
+	struct ProvisionalUnlocks;
+	struct ModifierManager;
 	class UIManager;
 
 	class Dataloader {
@@ -119,6 +121,8 @@ namespace OpenVic {
 		/* The weapons of the army (common/ov_equipment, see docs/EQUIPMENT_MODDING.md). A broken file is skipped with a warning.
 		 * Returns the number of weapons loaded. */
 		std::size_t load_equipment_files(EquipmentManager& equipment_manager) const;
+		/* The provisional unlocks by the year (common/ov_equipment/provisional_unlocks.txt, TEMPORARY). Returns the number of steps. */
+		std::size_t load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir(std::string_view path, fs::path const& extension) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir_recursive(
 			std::string_view path, fs::path const& extension

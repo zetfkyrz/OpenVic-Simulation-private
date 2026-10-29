@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <span>
 #include <fstream>
 #include <string>
 #include <utility>
@@ -28,6 +29,8 @@
 #include <openvic-simulation/military/Leader.hpp>
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
+#include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/modifier/ModifierManager.hpp>
 #include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
@@ -351,6 +354,175 @@ namespace {
 			}
 		}
 		r.check(prices_grow, "equipment: the base price grows with the generation");
+	}
+
+	// ---- the unlocks of a country (docs/EQUIPMENT_MODDING.md, section 6)
+
+	void test_unlocks(Results& r, InstanceManager& im) {
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		ProvisionalUnlocks const& provisional = im.definition_manager.get_military_manager().get_provisional_unlocks();
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		if (equipment.get_equipment().empty() || provisional.get_steps().empty()) {
+			fmt::println("TEST INFO unlocks: no ov_data folder, the unlocks are not checked");
+			return;
+		}
+
+		std::span<CountryInstance> countries = im.get_country_instance_manager().get_country_instances();
+		CountryInstance* country = nullptr;
+		CountryInstance* other = nullptr;
+		for (std::size_t i = countries.size(); i-- > 0;) {
+			if (countries[i].exists()) {
+				(country == nullptr ? country : other) = &countries[i];
+			}
+			if (other != nullptr) {
+				break;
+			}
+		}
+		r.check(country != nullptr && other != nullptr, "unlocks: two countries to test with");
+		if (country == nullptr || other == nullptr) {
+			return;
+		}
+		StaticModifierCache const& static_modifier_cache = im.definition_manager.get_modifier_manager().get_static_modifier_cache();
+		const auto refresh = [&]() {
+			country->update_modifier_sum(im.get_today(), static_modifier_cache);
+		};
+
+		EquipmentDefinition const* const rifle_2 = equipment.find_equipment("rifle_2");
+		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
+		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
+		if (rifle_1 == nullptr || rifle_2 == nullptr || rifle_3 == nullptr) {
+			r.check(false, "unlocks: the weapons rifle_1, rifle_2 and rifle_3 are loaded");
+			return;
+		}
+
+		// ---- the layer itself: keys and the state hash
+		const std::uint64_t hash_before = StateHash::compute(im);
+		const bool had_key = country->has_unlock("equipment:rifle_3");
+		r.check(!had_key && !is_equipment_unlocked(*country, *rifle_3), "unlocks: a weapon without its key is not available");
+		r.check(country->grant_unlock("equipment:rifle_3"), "unlocks: grant_unlock gives a new key");
+		r.check(country->has_unlock("equipment:rifle_3") && is_equipment_unlocked(*country, *rifle_3), "unlocks: with the key the weapon is available");
+		r.check(!is_equipment_unlocked(*other, *rifle_3), "unlocks: the key of one country does not open the weapon of another");
+		r.check(!country->grant_unlock("equipment:rifle_3"), "unlocks: a key is held once");
+		r.check(!country->grant_unlock("no_colon") && !country->grant_unlock(":x") && !country->grant_unlock("x:") && !country->grant_unlock("a b:c"),
+			"unlocks: a key must be <kind>:<id>");
+		EquipmentDefinition const* const best = get_best_equipment(equipment, *country, "rifle");
+		r.check(best != nullptr && best->tier >= 3, "unlocks: the best weapon of a line is the one of the highest generation the country has",
+			best != nullptr ? std::string(best->identifier) : std::string("none"));
+		country->grant_unlock("formation:test");
+		country->grant_unlock("support_company:test");
+		r.check(
+			country->has_unlock("formation:test") && country->has_unlock("support_company:test"),
+			"unlocks: the keys of formations and of companies are the same kind of thing"
+		);
+		const std::uint64_t hash_with_key = StateHash::compute(im);
+		r.check(hash_with_key != hash_before, "unlocks: the set of keys is in the state hash");
+		country->revoke_unlock("formation:test");
+		country->revoke_unlock("support_company:test");
+		r.check(country->revoke_unlock("equipment:rifle_3") && !country->has_unlock("equipment:rifle_3"), "unlocks: revoke_unlock takes the key away");
+		r.check(!country->revoke_unlock("equipment:rifle_3"), "unlocks: a key that is not held cannot be taken away");
+		r.check(StateHash::compute(im) == hash_before, "unlocks: the hash is back when the keys are");
+		const auto sorted_keys = country->get_unlock_keys();
+		r.check(std::is_sorted(sorted_keys.begin(), sorted_keys.end()), "unlocks: the keys are kept sorted (a fixed order for the hash)");
+
+		// ---- the provisional layer by the year: the first day of 1836 gave the first weapons and no modifier
+		r.check(
+			country->has_unlock("equipment:rifle_1") && country->has_unlock("equipment:field_gun_1") && !country->has_unlock("equipment:rifle_2"),
+			"unlocks: in 1836 the provisional layer gives rifle_1 and field_gun_1, not rifle_2"
+		);
+		refresh();
+		DivisionTemplateLimits limits = get_template_limits(im, *country);
+		r.check(
+			limits.ranks == static_cast<std::uint32_t>(war.template_ranks_default) && limits.depth == static_cast<std::uint32_t>(war.template_depth_default)
+				&& limits.company_slots == static_cast<std::uint32_t>(war.template_company_slots_default) && limits.row_weight_shift == 0,
+			"unlocks: a country at the start has the default limits (3 ranks, 2 rows, 1 slot)",
+			fmt::format("{} ranks, {} rows, {} slots", limits.ranks, limits.depth, limits.company_slots)
+		);
+
+		// ---- the later years (the same function the daily update calls, the year given)
+		const std::uint32_t applied_before = country->get_provisional_unlock_steps_applied();
+		const std::size_t keys_before = country->get_unlock_keys().size();
+		const std::size_t modifiers_before = country->get_unlock_modifiers().size();
+		apply_provisional_unlocks(im, 1870);
+		refresh();
+		limits = get_template_limits(im, *country);
+		r.check(
+			country->has_unlock("equipment:rifle_3") && country->has_unlock("equipment:field_gun_3") && !country->has_unlock("equipment:rifle_4"),
+			"unlocks: by 1870 the provisional layer has given the weapons of the third generation, not the fourth"
+		);
+		r.check(
+			limits.ranks == 5 && limits.depth == 3 && limits.company_slots == 2,
+			"unlocks: by 1870 the modifiers give 5 ranks, 3 rows and 2 company slots",
+			fmt::format("{} ranks, {} rows, {} slots", limits.ranks, limits.depth, limits.company_slots)
+		);
+		r.check(!is_equipment_unlocked(*other, *rifle_2) || other->has_unlock("equipment:rifle_2"), "unlocks: the other countries are not touched by the one");
+		apply_provisional_unlocks(im, 1900);
+		refresh();
+		limits = get_template_limits(im, *country);
+		r.check(
+			limits.ranks == 6 && limits.depth == 4 && limits.company_slots == 4 && limits.row_weight_shift == 1 && country->has_unlock("equipment:rifle_4"),
+			"unlocks: by 1900 the limits are the maximum (6 ranks, 4 rows, 4 slots), the weights of the rows are shifted, rifle_4 is there",
+			fmt::format("{} ranks, {} rows, {} slots, shift {}", limits.ranks, limits.depth, limits.company_slots, limits.row_weight_shift)
+		);
+		const auto best_late = get_best_equipment(equipment, *country, "rifle");
+		r.check(best_late != nullptr && best_late->identifier == "rifle_4", "unlocks: the best rifle of the late years is rifle_4");
+
+		// ---- the modifier max_columns changes the limit of the grid (one modifier of its own)
+		{
+			// Back to the start: no unlock modifiers
+			while (!country->get_unlock_modifiers().empty()) {
+				country->remove_unlock_modifier(*country->get_unlock_modifiers().front());
+			}
+			refresh();
+			const std::uint32_t ranks_without = get_template_limits(im, *country).ranks;
+			Modifier const* column_modifier = nullptr;
+			for (ProvisionalUnlockStep const& step : provisional.get_steps()) {
+				if (step.modifier.has_value() && step.year == 1845) {
+					column_modifier = &*step.modifier;
+				}
+			}
+			r.check(column_modifier != nullptr, "unlocks: the provisional file has the step of 1845 with max_columns");
+			if (column_modifier != nullptr) {
+				country->add_unlock_modifier(*column_modifier);
+				refresh();
+				r.check(
+					get_template_limits(im, *country).ranks == ranks_without + 1,
+					"unlocks: the modifier max_columns = 1 lets the grid have one more rank",
+					fmt::format("{} -> {}", ranks_without, get_template_limits(im, *country).ranks)
+				);
+				country->remove_unlock_modifier(*column_modifier);
+				refresh();
+				r.check(get_template_limits(im, *country).ranks == ranks_without, "unlocks: without the modifier the limit is the old one");
+			}
+		}
+
+		// ---- the switch: without the layer nothing is given
+		{
+			OpenVicWarDefines& mutable_war = const_cast<OpenVicWarDefines&>(war);
+			const auto enabled_before = mutable_war.provisional_unlocks_enabled;
+			mutable_war.provisional_unlocks_enabled = 0;
+			country->revoke_unlock("equipment:rifle_4");
+			country->set_provisional_unlock_steps_applied(0);
+			apply_provisional_unlocks(im, 1900);
+			r.check(
+				!country->has_unlock("equipment:rifle_4") && country->get_provisional_unlock_steps_applied() == 0,
+				"unlocks: with ov_war.PROVISIONAL_UNLOCKS_ENABLED = 0 the provisional layer gives nothing"
+			);
+			mutable_war.provisional_unlocks_enabled = enabled_before;
+		}
+
+		// ---- put the country back
+		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
+			country->revoke_unlock(key);
+		}
+		while (!country->get_unlock_modifiers().empty()) {
+			country->remove_unlock_modifier(*country->get_unlock_modifiers().front());
+		}
+		country->grant_unlock("equipment:rifle_1");
+		country->grant_unlock("equipment:field_gun_1");
+		country->set_provisional_unlock_steps_applied(applied_before);
+		(void)keys_before;
+		(void)modifiers_before;
+		refresh();
 	}
 
 	struct Game {
@@ -1960,6 +2132,7 @@ namespace {
 		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
 		test_fronts(r, *im);
+		test_unlocks(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

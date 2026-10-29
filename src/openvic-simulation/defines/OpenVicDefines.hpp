@@ -275,6 +275,18 @@ namespace OpenVic {
 	INT(NAVAL_MAX_DAMAGE_RATIO, naval_max_damage_ratio, 6, 1, 1000) \
 	INT(FRONT_SPREAD_CHUNK_SIZE, front_spread_chunk_size, 4, 1, 40) \
 	INT(FRONT_SPREAD_MAX_SPLITS_PER_DAY, front_spread_max_splits_per_day, 4, 0, 100) \
+	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
+	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
+	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \
+	INT(TEMPLATE_RANKS_DEFAULT, template_ranks_default, 3, 1, 12) \
+	INT(TEMPLATE_RANKS_MAX, template_ranks_max, 6, 1, 12) \
+	INT(TEMPLATE_DEPTH_DEFAULT, template_depth_default, 2, 1, 8) \
+	INT(TEMPLATE_DEPTH_MAX, template_depth_max, 4, 1, 8) \
+	INT(TEMPLATE_COMPANY_SLOTS_DEFAULT, template_company_slots_default, 1, 0, 8) \
+	INT(TEMPLATE_COMPANY_SLOTS_MAX, template_company_slots_max, 4, 0, 8) \
+	/* 1: the provisional unlocks of the year (ov_data/common/ov_equipment/provisional_unlocks.txt) give the weapons and the limits of the */ \
+	/* templates by the year of the game; 0 when the new system of technologies gives them (TEMPORARY, docs/PENDING_PLANS.md) */ \
+	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 1, 0, 1) \
 	RATE(ATTRITION_BASE, attrition_base, Rate(2, 1000), 0, 1) \
 	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
 	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \
