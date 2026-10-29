@@ -1,5 +1,7 @@
 #pragma once
 
+#include <span>
+
 #include <openvic-dataloader/v2script/Parser.hpp>
 
 #include "openvic-simulation/core/memory/Vector.hpp"
@@ -99,8 +101,16 @@ namespace OpenVic {
 		ProductionType(ProductionType&&) = default;
 	};
 
+	// A production type that a factory of a building can run instead of the one of the building (a generation of a weapon): the files of
+	// ov_data/common/ov_production_types, the key "building" names the building type
+	struct FactoryRecipe {
+		ProductionType const* production_type;
+		memory::string building;
+	};
+
 	struct ProductionTypeManager {
 	private:
+		memory::vector<FactoryRecipe> extra_recipes;
 		IdentifierRegistry<ProductionType> IDENTIFIER_REGISTRY(production_type);
 		pop_sprite_t PROPERTY(rgo_owner_sprite, 0);
 		OV_IFLATMAP_PROPERTY(GoodDefinition, ProductionType const*, good_to_rgo_production_type);
@@ -145,8 +155,13 @@ namespace OpenVic {
 			GameRulesManager const& game_rules_manager,
 			GoodDefinitionManager const& good_definition_manager,
 			PopManager const& pop_manager,
-			ovdl::v2script::Parser const& parser
+			ovdl::v2script::Parser const& parser,
+			std::span<ovdl::v2script::Parser const* const> extra_parsers = {}
 		);
+		// The production types of the files of ov_production_types: what a building can make besides its own type
+		[[nodiscard]] std::span<const FactoryRecipe> get_extra_recipes() const {
+			return extra_recipes;
+		}
 
 		bool parse_scripts(DefinitionManager const& definition_manager);
 	};

@@ -246,7 +246,8 @@ bool ProductionTypeManager::load_production_types_file(
 	GameRulesManager const& game_rules_manager,
 	GoodDefinitionManager const& good_definition_manager,
 	PopManager const& pop_manager,
-	ovdl::v2script::Parser const& parser
+	ovdl::v2script::Parser const& parser,
+	std::span<ovdl::v2script::Parser const* const> extra_parsers
 ) {
 	using namespace std::string_view_literals;
 	auto template_symbol = parser.find_intern("template"sv);
@@ -316,10 +317,20 @@ bool ProductionTypeManager::load_production_types_file(
 	/* Pass #3: actually load production types */
 	good_to_rgo_production_type = std::move(decltype(good_to_rgo_production_type){good_definition_manager.get_good_definitions()});
 
-	reserve_more_production_types(expected_types);
-	ret &= expect_dictionary(
-		[this, &game_rules_manager, &good_definition_manager, &pop_manager, &template_target_map, &template_node_map](
-			std::string_view key, ast::NodeCPtr node) -> bool {
+	// The room for all the types (the main file and the recipes) is made at once: pointers to the types are kept while loading
+	size_t extra_expected_types = 0;
+	for (ovdl::v2script::Parser const* const extra_parser : extra_parsers) {
+		ret &= expect_dictionary(
+			[&extra_expected_types](std::string_view, ast::NodeCPtr) -> bool {
+				extra_expected_types++;
+				return true;
+			}
+		)(extra_parser->get_file_node());
+	}
+	reserve_more_production_types(expected_types + extra_expected_types);
+	const auto load_type = [this, &game_rules_manager, &good_definition_manager, &pop_manager, &template_node_map](
+		ordered_map<std::string_view, std::string_view> const& template_target_map, std::string_view key, ast::NodeCPtr node
+	) -> bool {
 			using enum ProductionType::template_type_t;
 
 			if (template_node_map.contains(key)) {
@@ -335,6 +346,7 @@ bool ProductionTypeManager::load_production_types_file(
 			fixed_point_t base_output_quantity = 0;
 			memory::vector<ProductionType::bonus_t> bonuses;
 			bool is_coastal = false, is_farm = false, is_mine = false;
+			memory::string building;
 
 			bool ret = true;
 
@@ -374,12 +386,13 @@ bool ProductionTypeManager::load_production_types_file(
 				),
 				"is_coastal", ZERO_OR_ONE, expect_bool(assign_variable_callback(is_coastal)),
 				"farm", ZERO_OR_ONE, expect_bool(assign_variable_callback(is_farm)),
-				"mine", ZERO_OR_ONE, expect_bool(assign_variable_callback(is_mine))
+				"mine", ZERO_OR_ONE, expect_bool(assign_variable_callback(is_mine)),
+				"building", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(building))
 			);
 
 			/* Check if this ProductionType has a template, and if so parse it. */
 			{
-				const typename decltype(template_target_map)::const_iterator target_it = template_target_map.find(key);
+				const auto target_it = template_target_map.find(key);
 				if (target_it != template_target_map.end()) {
 					const std::string_view template_id = target_it->second;
 					const typename decltype(template_node_map)::const_iterator node_it = template_node_map.find(template_id);
@@ -398,16 +411,50 @@ bool ProductionTypeManager::load_production_types_file(
 			/* Parse the ProductionType's own entries, over those of its template if necessary. */
 			ret &= parse_node(node);
 
-			ret &= add_production_type(
+			const bool added = add_production_type(
 				game_rules_manager,
 				pop_manager.get_pop_types(),
 				key, std::move(owner), std::move(jobs), template_type, base_workforce_size, std::move(input_goods), output_good,
 				base_output_quantity, std::move(bonuses), std::move(maintenance_requirements), is_coastal, is_farm, is_mine
 			);
+			ret &= added;
+			if (added && !building.empty()) {
+				extra_recipes.push_back({ &production_types.back(), building });
+			}
 
 			return ret;
+	};
+	ret &= expect_dictionary(
+		[&load_type, &template_target_map](std::string_view key, ast::NodeCPtr node) -> bool {
+			return load_type(template_target_map, key, node);
 		}
 	)(parser.get_file_node());
+
+	// The recipes of the weapons (ov_data/common/ov_production_types): types of their own that use the templates of the file of the game
+	for (ovdl::v2script::Parser const* const extra_parser : extra_parsers) {
+		auto extra_template_symbol = extra_parser->find_intern("template"sv);
+		ordered_map<std::string_view, std::string_view> extra_template_targets;
+		size_t extra_types = 0;
+		ret &= expect_dictionary(
+			[&extra_template_targets, &extra_template_symbol, &extra_types](std::string_view key, ast::NodeCPtr value) -> bool {
+				extra_types++;
+				std::string_view template_id;
+				bool has_found_template = false;
+				if (extra_template_symbol) {
+					expect_key(extra_template_symbol, expect_identifier(assign_variable_callback(template_id)), &has_found_template)(value);
+				}
+				if (has_found_template) {
+					extra_template_targets.emplace(key, template_id);
+				}
+				return true;
+			}
+		)(extra_parser->get_file_node());
+		ret &= expect_dictionary(
+			[&load_type, &extra_template_targets](std::string_view key, ast::NodeCPtr node) -> bool {
+				return load_type(extra_template_targets, key, node);
+			}
+		)(extra_parser->get_file_node());
+	}
 
 	production_types.lock();
 

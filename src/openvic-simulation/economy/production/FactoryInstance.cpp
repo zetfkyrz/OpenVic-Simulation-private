@@ -37,9 +37,9 @@ FactoryInstance::FactoryInstance(
 	efficiency { fixed_point_t::_1 },
 	throttle { fixed_point_t::_1 },
 	building_type { new_building_type },
-	production_type { new_production_type } {
-	inputs.reserve(production_type.input_goods.size());
-	for (auto const& [good, quantity] : production_type.input_goods) {
+	production_type { &new_production_type } {
+	inputs.reserve(production_type->input_goods.size());
+	for (auto const& [good, quantity] : production_type->input_goods) {
 		inputs.emplace_back(*good, quantity);
 	}
 }
@@ -453,8 +453,8 @@ std::optional<pop_type_index_t> FactoryInstance::get_effective_owner_pop_type_in
 	if (owner_pop_type_index.has_value()) {
 		return owner_pop_type_index;
 	}
-	if (production_type.owner.has_value()) {
-		return production_type.owner->pop_type_index;
+	if (production_type->owner.has_value()) {
+		return production_type->owner->pop_type_index;
 	}
 	return std::nullopt;
 }
@@ -535,8 +535,8 @@ void FactoryInstance::pay_dividend(
 		if (owner_type.has_value()) {
 			count_owners(*owner_type);
 		}
-		if (total_owner_size <= 0 && production_type.owner.has_value() && owner_type != production_type.owner->pop_type_index) {
-			owner_type = production_type.owner->pop_type_index;
+		if (total_owner_size <= 0 && production_type->owner.has_value() && owner_type != production_type->owner->pop_type_index) {
+			owner_type = production_type->owner->pop_type_index;
 			count_owners(*owner_type);
 		}
 
@@ -632,10 +632,10 @@ void FactoryInstance::hire(State& state) {
 		return;
 	}
 
-	const int32_t workforce = static_cast<int32_t>(type_safe::get(production_type.base_workforce_size)) *
+	const int32_t workforce = static_cast<int32_t>(type_safe::get(production_type->base_workforce_size)) *
 		static_cast<int32_t>(type_safe::get(level));
 
-	for (Job const& job : production_type.get_jobs()) {
+	for (Job const& job : production_type->get_jobs()) {
 		const int32_t max_for_job = (job.amount * workforce).floor<int32_t>();
 		if (max_for_job <= 0) {
 			continue;
@@ -672,11 +672,33 @@ void FactoryInstance::hire(State& state) {
 	}
 }
 
+void FactoryInstance::apply_pending_production_type() {
+	ProductionType const* const new_production_type = pending_production_type;
+	pending_production_type = nullptr;
+	if (new_production_type == nullptr || new_production_type == production_type) {
+		return;
+	}
+	// New inputs; what the stockpile holds of a good that the new type uses stays
+	memory::vector<Input> new_inputs;
+	new_inputs.reserve(new_production_type->input_goods.size());
+	for (auto const& [good, quantity] : new_production_type->input_goods) {
+		Input& input = new_inputs.emplace_back(*good, quantity);
+		for (Input const& old_input : inputs) {
+			if (&old_input.good == good) {
+				input.stockpile = old_input.stockpile;
+			}
+		}
+	}
+	inputs.swap(new_inputs);
+	production_type = new_production_type;
+}
+
 void FactoryInstance::tick(State& state, MarketInstance& market_instance, const Date today) {
 	if (today.is_month_start()) {
 		close_month(today);
 	}
 	settle(state, market_instance);
+	apply_pending_production_type();
 	advance_construction(state, today, market_instance);
 
 	if (!is_funded && level > building_level_t(0)) {
@@ -686,8 +708,8 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		// A factory in a state without capitalists belongs to the state, otherwise to the capitalists
 		if (state_share < fixed_point_t::_1) {
 			int32_t capitalists = 0;
-			if (production_type.owner.has_value()) {
-				for (Pop const& pop : state.get_pops_cache_by_type()[production_type.owner->pop_type_index]) {
+			if (production_type->owner.has_value()) {
+				for (Pop const& pop : state.get_pops_cache_by_type()[production_type->owner->pop_type_index]) {
 					capitalists += type_safe::get(pop.get_size());
 				}
 			}
@@ -745,7 +767,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	const fixed_point_t tariff_rate = owner->effective_tariff_rate.get_untracked();
 	const fixed_point_t tariff_multiplier = tariff_rate > fixed_point_t::_0 ? fixed_point_t::_1 + tariff_rate : fixed_point_t::_1;
 
-	const fixed_point_t output = production_type.base_output_quantity * level_value * production_fraction * efficiency;
+	const fixed_point_t output = production_type->base_output_quantity * level_value * production_fraction * efficiency;
 	produced_quantity_pending = output;
 	consumed_value_pending = consumed_value;
 
@@ -754,7 +776,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		memory::vector<fixed_point_t> reusable_vector;
 		market_instance.place_market_sell_order(
 			{
-				production_type.output_good.index, country_index, output, this, after_sell,
+				production_type->output_good.index, country_index, output, this, after_sell,
 				state.get_capital() != nullptr ? state.get_capital()->get_freight_rate() : fixed_point_t::_0
 			}, reusable_vector
 		);

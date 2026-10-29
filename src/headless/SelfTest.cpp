@@ -19,6 +19,7 @@
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/economy/GoodInstance.hpp>
 #include <openvic-simulation/economy/GoodDefinition.hpp>
+#include <openvic-simulation/economy/production/ProductionType.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
 #include <openvic-simulation/economy/BuildingType.hpp>
 #include <openvic-simulation/economy/credit/Credit.hpp>
@@ -437,6 +438,38 @@ namespace {
 			country->update_modifier_sum(im.get_today(), static_modifier_cache);
 		};
 
+		// apply_provisional_unlocks gives the keys to every country: all of them are put back at the end
+		struct unlock_snapshot_t {
+			std::vector<memory::string> keys;
+			std::vector<Modifier const*> modifiers;
+			std::uint32_t applied = 0;
+		};
+		std::vector<unlock_snapshot_t> snapshots;
+		for (CountryInstance const& each : countries) {
+			snapshots.push_back({
+				{ each.get_unlock_keys().begin(), each.get_unlock_keys().end() },
+				{ each.get_unlock_modifiers().begin(), each.get_unlock_modifiers().end() }, each.get_provisional_unlock_steps_applied()
+			});
+		}
+		const auto restore_all = [&]() {
+			for (std::size_t i = 0; i < countries.size(); ++i) {
+				CountryInstance& each = countries[i];
+				for (memory::string const& key : std::vector<memory::string> { each.get_unlock_keys().begin(), each.get_unlock_keys().end() }) {
+					each.revoke_unlock(key);
+				}
+				for (memory::string const& key : snapshots[i].keys) {
+					each.grant_unlock(key);
+				}
+				while (!each.get_unlock_modifiers().empty()) {
+					each.remove_unlock_modifier(*each.get_unlock_modifiers().front());
+				}
+				for (Modifier const* const modifier : snapshots[i].modifiers) {
+					each.add_unlock_modifier(*modifier);
+				}
+				each.set_provisional_unlock_steps_applied(snapshots[i].applied);
+			}
+		};
+
 		EquipmentDefinition const* const rifle_2 = equipment.find_equipment("rifle_2");
 		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
 		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
@@ -572,6 +605,7 @@ namespace {
 		country->set_provisional_unlock_steps_applied(applied_before);
 		(void)keys_before;
 		(void)modifiers_before;
+		restore_all();
 		refresh();
 	}
 
@@ -795,6 +829,148 @@ namespace {
 		}
 		country->set_provisional_unlock_steps_applied(applied_before);
 		refresh();
+	}
+
+	// ---- the production types of the factories of weapons (ov_data/common/ov_production_types)
+
+	void test_production_types(Results& r, InstanceManager& im) {
+		BuildingTypeManager const& building_types = im.definition_manager.get_economy_manager().get_building_type_manager();
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		if (equipment.get_equipment().empty()) {
+			fmt::println("TEST INFO production types: no ov_data folder, not checked");
+			return;
+		}
+		BuildingType const* const rifle_building = building_types.get_building_type_by_identifier("small_arms_factory");
+		BuildingType const* const gun_building = building_types.get_building_type_by_identifier("artillery_factory");
+		r.check(rifle_building != nullptr && gun_building != nullptr, "production types: the factories of rifles and of guns exist");
+		if (rifle_building == nullptr || gun_building == nullptr) {
+			return;
+		}
+
+		// ---- the options of the buildings: a type for every generation, from the files
+		const auto rifle_options = get_factory_production_options(im, *rifle_building);
+		const auto gun_options = get_factory_production_options(im, *gun_building);
+		bool ordered = rifle_options.size() == 4 && gun_options.size() == 4;
+		for (std::size_t i = 0; ordered && i < 4; ++i) {
+			ordered = rifle_options[i].tier == i + 1 && gun_options[i].tier == i + 1
+				&& rifle_options[i].production_type->output_good.get_identifier() == fmt::format("rifle_{}", i + 1)
+				&& gun_options[i].production_type->output_good.get_identifier() == fmt::format("field_gun_{}", i + 1);
+		}
+		r.check(ordered, "production types: a factory of rifles and a factory of guns have a type for each of the four generations, the lowest first",
+			fmt::format("{} and {} options", rifle_options.size(), gun_options.size()));
+		r.check(
+			rifle_options.size() == 4 && rifle_options[0].production_type == rifle_building->production_type,
+			"production types: the first generation is the type of the building (the old small arms recipe)"
+		);
+		bool recipes_cost_more = rifle_options.size() == 4 && gun_options.size() == 4;
+		for (std::size_t i = 1; recipes_cost_more && i < 4; ++i) {
+			const auto input_value = [&im](ProductionType const& production_type) -> fixed_point_t {
+				fixed_point_t value = fixed_point_t::_0;
+				for (auto const& [good, quantity] : production_type.input_goods) {
+					value += quantity * good->base_price;
+				}
+				return value;
+			};
+			recipes_cost_more = input_value(*rifle_options[i].production_type) > input_value(*rifle_options[i - 1].production_type)
+				&& input_value(*gun_options[i].production_type) > input_value(*gun_options[i - 1].production_type);
+		}
+		r.check(recipes_cost_more, "production types: the recipe of a newer generation needs dearer inputs");
+
+		// ---- what a country can choose follows its unlocks
+		CountryInstance* const owner = [&im, rifle_building]() -> CountryInstance* {
+			for (StateSet const& state_set : im.get_map_instance().get_state_manager().get_state_sets()) {
+				for (State const& state : state_set.get_states()) {
+					if (state.get_owner() != nullptr && state.get_capital() != nullptr && state.find_factory(*rifle_building) != nullptr) {
+						return state.get_owner();
+					}
+				}
+			}
+			return nullptr;
+		}();
+		r.check(owner != nullptr, "production types: a country with a factory of rifles exists");
+		if (owner == nullptr) {
+			return;
+		}
+		State* state = nullptr;
+		for (State* const candidate : owner->get_states()) {
+			if (candidate->get_capital() != nullptr && candidate->find_factory(*rifle_building) != nullptr) {
+				state = candidate;
+				break;
+			}
+		}
+		if (state == nullptr) {
+			return;
+		}
+		const std::vector<memory::string> keys_before { owner->get_unlock_keys().begin(), owner->get_unlock_keys().end() };
+		const std::uint32_t applied_before = owner->get_provisional_unlock_steps_applied();
+
+		ProductionType const* best = get_best_production_type(im, *owner, *rifle_building);
+		r.check(best == rifle_options[0].production_type, "production types: in 1836 only the first generation is available",
+			best != nullptr ? std::string(best->get_identifier()) : std::string("none"));
+		r.check(
+			is_production_option_available(*owner, rifle_options[0]) && !is_production_option_available(*owner, rifle_options[1])
+				&& !is_production_option_available(*owner, rifle_options[3]),
+			"production types: a type is available when the country has the unlock of its weapon"
+		);
+		owner->grant_unlock("equipment:rifle_3");
+		best = get_best_production_type(im, *owner, *rifle_building);
+		r.check(best == rifle_options[2].production_type, "production types: with the third generation the best type is the one of rifle_3");
+
+		// ---- the command: switching a factory takes one tick and costs nothing
+		const province_index_t province = state->get_capital()->index;
+		const building_type_index_t type = rifle_building->index;
+		FactoryInstance* factory = state->find_factory(*rifle_building);
+		const fixed_point_t efficiency_before = factory->get_efficiency();
+		const bool had_machine_parts_before = std::any_of(factory->get_inputs().begin(), factory->get_inputs().end(), [](FactoryInstance::Input const& input) {
+			return input.good.get_identifier() == "machine_parts";
+		});
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(3));
+		im.force_tick_and_update();
+		factory = state->find_factory(*rifle_building);
+		r.check(factory->production_type == rifle_options[0].production_type, "production types: a type whose weapon the country does not have is refused");
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(2));
+		im.force_tick_and_update();
+		factory = state->find_factory(*rifle_building);
+		r.check(
+			factory->production_type == rifle_options[2].production_type && factory->get_pending_production_type() == nullptr,
+			"production types: the factory makes the type that was chosen after one tick"
+		);
+		const bool machine_parts_now = std::any_of(factory->get_inputs().begin(), factory->get_inputs().end(), [](FactoryInstance::Input const& input) {
+			return input.good.get_identifier() == "machine_parts";
+		});
+		r.check(!had_machine_parts_before && machine_parts_now && factory->get_inputs().size() == rifle_options[2].production_type->input_goods.size(),
+			"production types: the inputs of the factory are the ones of the new recipe");
+		r.check(factory->get_efficiency() >= efficiency_before * 9 / 10, "production types: the switch costs no efficiency (no retooling)");
+		const std::uint64_t hash_switched = StateHash::compute(im);
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(0));
+		im.force_tick_and_update();
+		r.check(
+			state->find_factory(*rifle_building)->production_type == rifle_options[0].production_type,
+			"production types: an old generation stays available while the country has its unlock (it is switched back by hand)"
+		);
+		r.check(StateHash::compute(im) != hash_switched, "production types: the type of a factory is in the state hash");
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(99));
+		im.force_tick_and_update();
+		r.check(state->find_factory(*rifle_building)->production_type == rifle_options[0].production_type, "production types: an option that does not exist is refused");
+
+		// ---- the simple choice of the AI: the newest generation the country has
+		choose_ai_production_types(im, *owner);
+		im.force_tick_and_update();
+		r.check(
+			state->find_factory(*rifle_building)->production_type == rifle_options[2].production_type,
+			"production types: the AI puts the factories of weapons on the newest generation the country has"
+		);
+
+		// ---- put the country back
+		for (memory::string const& key : std::vector<memory::string> { owner->get_unlock_keys().begin(), owner->get_unlock_keys().end() }) {
+			owner->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			owner->grant_unlock(key);
+		}
+		owner->set_provisional_unlock_steps_applied(applied_before);
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(0));
+		im.force_tick_and_update();
 	}
 
 	struct Game {
@@ -2463,6 +2639,7 @@ namespace {
 		test_fronts(r, *im);
 		test_unlocks(r, *im);
 		test_division_stats(r, *im);
+		test_production_types(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

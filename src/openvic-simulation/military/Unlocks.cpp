@@ -3,6 +3,10 @@
 #include <algorithm>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/economy/production/FactoryInstance.hpp"
+#include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
@@ -164,4 +168,74 @@ EquipmentDefinition const* OpenVic::get_best_equipment(
 		}
 	}
 	return best;
+}
+
+memory::vector<FactoryProductionOption> OpenVic::get_factory_production_options(
+	InstanceManager const& instance_manager, BuildingType const& building_type
+) {
+	memory::vector<FactoryProductionOption> options;
+	if (building_type.production_type == nullptr) {
+		return options;
+	}
+	DefinitionManager const& definitions = instance_manager.definition_manager;
+	EquipmentManager const& equipment_manager = definitions.get_military_manager().get_equipment_manager();
+
+	const auto make_option = [&equipment_manager](ProductionType const& production_type) -> FactoryProductionOption {
+		FactoryProductionOption option;
+		option.production_type = &production_type;
+		for (EquipmentDefinition const& equipment : equipment_manager.get_equipment()) {
+			if (equipment.good.identifier == production_type.output_good.get_identifier()) {
+				option.unlock_key = equipment.unlock_key;
+				option.tier = equipment.tier;
+				break;
+			}
+		}
+		return option;
+	};
+
+	options.push_back(make_option(*building_type.production_type));
+	for (FactoryRecipe const& recipe : definitions.get_economy_manager().get_production_type_manager().get_extra_recipes()) {
+		if (recipe.building == building_type.get_identifier() && recipe.production_type != building_type.production_type) {
+			options.push_back(make_option(*recipe.production_type));
+		}
+	}
+	// The lowest generation first, the order of loading for the same generation
+	std::stable_sort(options.begin(), options.end(), [](FactoryProductionOption const& a, FactoryProductionOption const& b) {
+		return a.tier < b.tier;
+	});
+	return options;
+}
+
+bool OpenVic::is_production_option_available(CountryInstance const& country, FactoryProductionOption const& option) {
+	return option.unlock_key.empty() || country.has_unlock(option.unlock_key);
+}
+
+ProductionType const* OpenVic::get_best_production_type(
+	InstanceManager const& instance_manager, CountryInstance const& country, BuildingType const& building_type
+) {
+	ProductionType const* best = building_type.production_type;
+	std::uint32_t best_tier = 0;
+	for (FactoryProductionOption const& option : get_factory_production_options(instance_manager, building_type)) {
+		if (is_production_option_available(country, option) && option.tier >= best_tier) {
+			best = option.production_type;
+			best_tier = option.tier;
+		}
+	}
+	return best;
+}
+
+void OpenVic::choose_ai_production_types(InstanceManager& instance_manager, CountryInstance& country) {
+	for (State* const state : country.get_states()) {
+		for (FactoryInstance& factory : state->get_mutable_factories()) {
+			if (factory.building_type.production_type == nullptr) {
+				continue;
+			}
+			ProductionType const* const best = get_best_production_type(instance_manager, country, factory.building_type);
+			ProductionType const* const current = factory.get_pending_production_type() != nullptr
+				? factory.get_pending_production_type() : factory.production_type;
+			if (best != nullptr && best != current) {
+				factory.request_production_type(*best);
+			}
+		}
+	}
 }

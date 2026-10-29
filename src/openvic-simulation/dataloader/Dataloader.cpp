@@ -1134,10 +1134,26 @@ bool Dataloader::load_defines(
 			openvic_economy.pop_timber_need, openvic_economy.pop_lumber_need
 		);
 	}
+	// The recipes of the weapons, a file each (ov_data/common/ov_production_types): a broken file is skipped with a warning
+	const path_vector_t recipe_files = lookup_files_in_dir_load_order("common/ov_production_types", ".txt", false);
+	memory::vector<v2script::Parser> recipe_parsers;
+	recipe_parsers.reserve(recipe_files.size());
+	memory::vector<v2script::Parser const*> recipe_parser_pointers;
+	for (fs::path const& recipe_file : recipe_files) {
+		v2script::Parser parser = parse_defines(recipe_file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The recipe file {} is skipped, it has errors", recipe_file);
+			continue;
+		}
+		recipe_parsers.push_back(std::move(parser));
+		recipe_parser_pointers.push_back(&recipe_parsers.back());
+	}
+	SPDLOG_INFO("Loaded {} recipes of weapons", recipe_parsers.size());
 	if (!definition_manager.get_economy_manager().load_production_types_file(
 		game_rules_manager,
 		definition_manager.get_pop_manager(),
-		parse_defines_cached(lookup_file(production_types_file))
+		parse_defines_cached(lookup_file(production_types_file)),
+		recipe_parser_pointers
 	)) {
 		spdlog::critical_s("Failed to load production types!");
 		ret = false;

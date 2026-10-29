@@ -14,8 +14,10 @@
 #include "openvic-simulation/modifier/Modifier.hpp"
 
 namespace OpenVic {
+	struct BuildingType;
 	struct CountryInstance;
 	struct EquipmentDefinition;
+	struct ProductionType;
 	struct EquipmentManager;
 	struct InstanceManager;
 	struct ModifierManager;
@@ -83,4 +85,24 @@ namespace OpenVic {
 	[[nodiscard]] EquipmentDefinition const* get_best_equipment(
 		EquipmentManager const& manager, CountryInstance const& country, std::string_view line
 	);
+
+	// What a factory of a building can make: the production type of the building and the types of ov_data/common/ov_production_types that name the
+	// building (a type for every generation of a weapon), the lowest generation first. A type is available to a country when it has the unlock of the
+	// weapon the type makes (the type of a good that is no weapon is always available).
+	struct FactoryProductionOption {
+		ProductionType const* production_type = nullptr;
+		memory::string unlock_key; // empty: always available
+		std::uint32_t tier = 0; // the generation of the weapon, 0 for a good that is no weapon
+	};
+	[[nodiscard]] memory::vector<FactoryProductionOption> get_factory_production_options(
+		InstanceManager const& instance_manager, BuildingType const& building_type
+	);
+	[[nodiscard]] bool is_production_option_available(CountryInstance const& country, FactoryProductionOption const& option);
+	// The type of the highest generation the country has (the type of the building if it has none of them)
+	[[nodiscard]] ProductionType const* get_best_production_type(
+		InstanceManager const& instance_manager, CountryInstance const& country, BuildingType const& building_type
+	);
+	// TODO: a simple choice for the AI: every factory of a weapon makes the newest generation the country has. The AI should choose by the demand, the
+	// price and the margin of the types (docs/PENDING_PLANS.md).
+	void choose_ai_production_types(InstanceManager& instance_manager, CountryInstance& country);
 }

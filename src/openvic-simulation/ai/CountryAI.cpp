@@ -1,5 +1,7 @@
 #include "CountryAI.hpp"
 
+#include "openvic-simulation/military/Unlocks.hpp"
+
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
@@ -240,6 +242,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 		}
 
 		build_factory(instance_manager, country);
+		choose_ai_production_types(instance_manager, country);
 		colonise(instance_manager, country);
 
 		if (country.is_at_war()) {

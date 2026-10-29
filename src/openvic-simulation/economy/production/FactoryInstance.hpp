@@ -87,6 +87,9 @@ namespace OpenVic {
 		std::optional<Date> PROPERTY(construction_start);
 		std::optional<Date> PROPERTY(construction_end);
 
+		ProductionType const* pending_production_type = nullptr;
+		void apply_pending_production_type();
+
 		fixed_point_t PROPERTY(efficiency);
 		fixed_point_t PROPERTY(throttle);
 		fixed_point_t PROPERTY(budget);
@@ -175,7 +178,8 @@ namespace OpenVic {
 
 	public:
 		BuildingType const& building_type;
-		ProductionType const& production_type;
+		// What the factory makes now (a building of weapons has a type for every generation, see military/Unlocks.hpp)
+		ProductionType const* production_type;
 
 		FactoryInstance(BuildingType const& new_building_type, ProductionType const& new_production_type, building_level_t new_level);
 		FactoryInstance(FactoryInstance&&) = delete;
@@ -214,6 +218,14 @@ namespace OpenVic {
 		// Quantity of the good used up on a day when the construction is worked
 		[[nodiscard]] fixed_point_t get_daily_construction_goods(GoodDefinition const& good) const;
 		void set_open(const bool new_open);
+		// The factory switches to another production type of its building: at once, with no loss of efficiency (the change is made in the next tick,
+		// after the results of the market are settled; the goods in the stockpile that the new type uses stay)
+		void request_production_type(ProductionType const& new_production_type) {
+			pending_production_type = &new_production_type;
+		}
+		[[nodiscard]] ProductionType const* get_pending_production_type() const {
+			return pending_production_type;
+		}
 
 		// What the whole factory is worth: its yearly profit times the payback years of the defines, but not less than a share of the cost of
 		// building it again

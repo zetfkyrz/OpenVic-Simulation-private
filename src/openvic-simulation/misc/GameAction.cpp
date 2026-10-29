@@ -1,4 +1,6 @@
 #include "GameAction.hpp"
+
+#include "openvic-simulation/military/Unlocks.hpp"
 #include <algorithm>
 
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
@@ -583,6 +585,12 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 
 	if (factory == nullptr) {
 		factory = state.add_factory(building_type, building_level_t(0));
+		if (factory != nullptr) {
+			// A new factory of weapons makes the newest generation the country has (it can be changed)
+			if (ProductionType const* const best = get_best_production_type(instance_manager, country, building_type); best != nullptr) {
+				factory->request_production_type(*best);
+			}
+		}
 		if (factory == nullptr) {
 			return false;
 		}
@@ -837,6 +845,33 @@ bool GameActionManager::VariantVisitor::operator() (set_factory_priority_argumen
 	}
 
 	factory->set_priority(priority);
+	return true;
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_factory_production_type_argument_t const& argument) const {
+	const auto [country_index, province_index, building_type_index, option_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+
+	const FactoryActionTarget target = find_factory_action_target(instance_manager, country, province_index, building_type_index);
+	if (target.state == nullptr) {
+		return false;
+	}
+
+	FactoryInstance* factory = target.state->find_factory(*target.building_type);
+	if (factory == nullptr) {
+		return false;
+	}
+
+	// The options of the building (what it can make) and the ones the country has the unlocks for
+	const memory::vector<FactoryProductionOption> options = get_factory_production_options(instance_manager, *target.building_type);
+	if (option_index >= options.size() || !is_production_option_available(country, options[option_index])) {
+		return false;
+	}
+	ProductionType const* const wanted = options[option_index].production_type;
+	if (wanted == factory->production_type && factory->get_pending_production_type() == nullptr) {
+		return false;
+	}
+	factory->request_production_type(*wanted);
 	return true;
 }
 

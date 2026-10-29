@@ -34,7 +34,9 @@ namespace OpenVic {
 		// 21: the division template is a grid (ranks x rows of regiment types, slots of companies), the standard template is 4 infantry 2x2 and 2 cavalry
 		//     1x2, a regiment fills a cell of its own type; create/update_division_template carry the grid
 		// 22: the weapons are goods (rifle_1..4, field_gun_1..4; small_arms and artillery are rifle_1 and field_gun_1), ov_data/common/ov_equipment
-		inline constexpr int SIMULATION_VERSION = 22;
+		// 23: a factory of weapons makes the generation that is chosen (set_factory_production_type), the recipes of ov_data/common/ov_production_types, the AI
+		//     takes the newest generation the country has
+		inline constexpr int SIMULATION_VERSION = 23;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
