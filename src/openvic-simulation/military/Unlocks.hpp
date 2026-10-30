@@ -27,7 +27,7 @@ namespace OpenVic {
 	//
 	//  - keys: "<kind>:<id>", for example equipment:rifle_2, formation:<id>, support_company:<id>.
 	//    CountryInstance::grant_unlock / revoke_unlock / has_unlock, the keys are in the state hash.
-	//  - numbers: the effects max_columns, max_rows, max_company_slots, density_reduction and row_weight_shift are ordinary modifier effects
+	//  - numbers: the effects max_columns, max_rows, max_company_slots and row_weight_shift are ordinary modifier effects
 	//    (a technology, an event modifier, a unlock modifier can give them); the modifier sum of the country adds them up by the rules of the project.
 	//    A modifier that an unlock gives: CountryInstance::add_unlock_modifier.
 
@@ -95,7 +95,6 @@ namespace OpenVic {
 		std::uint32_t depth = 0; // rows of the grid
 		std::uint32_t company_slots = 0; // support company slots of a rank
 		std::int32_t row_weight_shift = 0; // 0: the weights of the rows are 1, 1/2, 1/4, 1/8; 1: 1, 1, 1/2, 1/4
-		fixed_point_t density_reduction = fixed_point_t::_0; // 0..1
 	};
 	[[nodiscard]] DivisionTemplateLimits get_template_limits(InstanceManager const& instance_manager, CountryInstance const& country);
 

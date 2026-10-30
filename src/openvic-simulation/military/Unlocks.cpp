@@ -186,7 +186,6 @@ DivisionTemplateLimits OpenVic::get_template_limits(InstanceManager const& insta
 		war.template_company_slots_max
 	);
 	limits.row_weight_shift = std::clamp(effect_value(cache.get_row_weight_shift()).floor<std::int32_t>(), 0, 3);
-	limits.density_reduction = std::clamp(effect_value(cache.get_density_reduction()), fixed_point_t::_0, fixed_point_t::_1);
 	return limits;
 }
 

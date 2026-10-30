@@ -725,9 +725,12 @@ namespace {
 			"division stats: the standard template has 6 regiments, a front of 3 ranks and a depth of 2",
 			fmt::format("{} regiments, width {}, depth {}", standard_stats.regiments, standard_stats.width, dbl(standard_stats.depth))
 		);
+		// the density changes them (the standard template: 2 x 2 / 3 = 1.33, dense: the attack grows)
+		const battle_formulas::DensityEffect standard_density = battle_formulas::density_effect(war, standard_stats.density);
 		r.check(
-			near(standard_stats.attack, expected_attack, fixed_point_t(1) / 100) && near(standard_stats.defence, expected_defence, fixed_point_t(1) / 100),
-			"division stats: the attack and the defence add up the regiments by the weights of their rows and the multipliers of their weapons",
+			near(standard_stats.attack, expected_attack * standard_density.attack_mult, fixed_point_t(1) / 100)
+				&& near(standard_stats.defence, expected_defence * standard_density.defence_mult, fixed_point_t(1) / 100),
+			"division stats: the attack and the defence add up the regiments by the weights of their rows and the multipliers of their weapons (and the density)",
 			fmt::format("attack {} of {}, defence {} of {}", dbl(standard_stats.attack), dbl(expected_attack), dbl(standard_stats.defence), dbl(expected_defence))
 		);
 		r.check(
@@ -746,16 +749,22 @@ namespace {
 		const DivisionStats narrow = compute_division_stats(im, *country, make_template(grid_with(*infantry, 1, 2)));
 		const DivisionStats wide = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 2)));
 		r.check(wide.width == 2 * narrow.width && wide.depth == narrow.depth, "division stats: twice the ranks, the same depth");
+		// without the density (which depends on the width) the attack and the defence are in proportion to the width
+		const auto without_density = [&](DivisionStats const& stats, const bool attack) -> fixed_point_t {
+			const battle_formulas::DensityEffect effect = battle_formulas::density_effect(war, stats.density);
+			return attack ? stats.attack / effect.attack_mult : stats.defence / effect.defence_mult;
+		};
 		r.check(
-			near(wide.attack, narrow.attack * 2, fixed_point_t(1) / 100) && near(wide.defence, narrow.defence * 2, fixed_point_t(1) / 100),
-			"division stats: the attack and the defence are in proportion to the width at the same depth"
+			near(without_density(wide, true), without_density(narrow, true) * 2, fixed_point_t(1) / 100)
+				&& near(without_density(wide, false), without_density(narrow, false) * 2, fixed_point_t(1) / 100),
+			"division stats: the attack and the defence (before the density) are in proportion to the width at the same depth"
 		);
 		const DivisionStats target = compute_division_stats(im, *country, standard);
 		const fixed_point_t damage_narrow = battle_formulas::damage_per_day(war, narrow, target);
 		const fixed_point_t damage_wide = battle_formulas::damage_per_day(war, wide, target);
 		r.check(
-			damage_narrow > fixed_point_t::_0 && near(damage_wide, damage_narrow * 2, fixed_point_t(1) / 100),
-			"battle: a division half as wide deals half the damage at the same depth",
+			damage_narrow > fixed_point_t::_0 && near(damage_wide / wide.attack, damage_narrow / narrow.attack, fixed_point_t(1) / 1000),
+			"battle: the damage a division deals is in proportion to its attack (so to its width, its density counted)",
 			fmt::format("{} and {}", dbl(damage_narrow), dbl(damage_wide))
 		);
 
@@ -771,9 +780,11 @@ namespace {
 		uneven[DivisionTemplate::cell_index(1, 0)] = cell(*infantry);
 		const DivisionStats uneven_stats = compute_division_stats(im, *country, make_template(uneven));
 		r.check(uneven_stats.depth == fixed_point_t(3) / 2 && uneven_stats.width == 2, "division stats: the depth is the average of the ranks (1.5 for 2 and 1)");
+		// the density: 2 x depth / width (a width twice the depth is 1.0), the standard template 6 regiments in 3 ranks of depth 2 is 4/3
 		r.check(
-			narrow.density > fixed_point_t::_0 && wide.density == narrow.density,
-			"division stats: the density is the strength per rank (the same for the same ranks)"
+			near(standard_stats.raw_density, fixed_point_t(4) / 3, fixed_point_t(1) / 1000) && near(battle_formulas::raw_density(war, 8, 4), fixed_point_t::_1, fixed_point_t(1) / 1000)
+				&& near(narrow.raw_density, fixed_point_t(4), fixed_point_t(1) / 1000),
+			"division stats: the density is 2 x depth / width (a width twice the depth is 1.0)", fmt::format("{} {}", dbl(standard_stats.raw_density), dbl(narrow.raw_density))
 		);
 
 		// ---- the weapons of a better generation: the attack, the defence and the goods change
@@ -1690,6 +1701,129 @@ namespace {
 		for (memory::string const& key : keys_before) {
 			civilised->grant_unlock(key);
 		}
+	}
+
+	// ---- the density and the breakthrough (military/BattleFormulas.*)
+
+	void test_battle_rules(Results& r, InstanceManager& im) {
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		using namespace battle_formulas;
+		const fixed_point_t eps = fixed_point_t(1) / 10000;
+
+		// The density: 1.00 is 100 %, 0.75 is 68.75 % (x^2 + x with x = 0.25)
+		const DensityEffect even = density_effect(war, fixed_point_t::_1);
+		const DensityEffect thin = density_effect(war, fixed_point_t(3) / 4);
+		const DensityEffect thin_90 = density_effect(war, fixed_point_t(9) / 10);
+		r.check(even.defence_mult == fixed_point_t::_1 && even.breakthrough_mult == fixed_point_t::_1 && even.casualties_mult == fixed_point_t::_1 && even.attack_mult == fixed_point_t::_1,
+			"battle: a density of 1.00 changes nothing");
+		r.check(near(thin.defence_mult, fixed_point_t(6875) / 10000, eps) && near(thin.breakthrough_mult, fixed_point_t(6875) / 10000, eps) && thin.casualties_mult == fixed_point_t::_1 && thin.attack_mult == fixed_point_t::_1,
+			"battle: a density of 0.75 leaves 68.75 % of the defence and of the breakthrough (1 - (x^2 + x))", fmt::format("{}", dbl(thin.defence_mult)));
+		r.check(near(thin_90.defence_mult, fixed_point_t(89) / 100, eps),
+			"battle: a density of 0.90 leaves 89 % by the formula (x = 0.1: 1 - 0.11; the example 98 % of the owner does not follow from the formula, see the report)");
+		const DensityEffect dense = density_effect(war, fixed_point_t(125) / 100);
+		r.check(near(dense.casualties_mult, fixed_point_t(13125) / 10000, eps) && near(dense.breakthrough_mult, fixed_point_t(13125) / 10000, eps)
+				&& near(dense.attack_mult, fixed_point_t(115625) / 100000, eps) && dense.defence_mult == fixed_point_t::_1,
+			"battle: a density of 1.25 gives 131.25 % of the casualties and the breakthrough and 115.625 % of the attack (half the rate)",
+			fmt::format("{} {} {}", dbl(dense.casualties_mult), dbl(dense.breakthrough_mult), dbl(dense.attack_mult)));
+		const DensityEffect dense_110 = density_effect(war, fixed_point_t(11) / 10);
+		r.check(near(dense_110.casualties_mult, fixed_point_t(111) / 100, eps), "battle: a density of 1.10 gives 111 % of the casualties by the formula (x = 0.1)");
+
+		// The technologies of the scattered order: 1.2 x 0.9 = 1.08, the excess over 1.0 less by 15 %: 1.068; nothing under 1.0 is changed; not under 1.0 from above
+		r.check(near(effective_density(fixed_point_t(12) / 10, fixed_point_t(9) / 10, fixed_point_t(15) / 100), fixed_point_t(1068) / 1000, eps), "battle: the density 1.2 with the coefficient 0.9 and the excess cut by 15 % is 1.068");
+		r.check(effective_density(fixed_point_t(8) / 10, fixed_point_t(9) / 10, fixed_point_t(15) / 100) == fixed_point_t(8) / 10 && effective_density(fixed_point_t(105) / 100, fixed_point_t(8) / 10, fixed_point_t::_0) == fixed_point_t::_1,
+			"battle: a density under 1.0 is not changed by the technologies and a density over 1.0 does not fall under it");
+
+		// The breakthrough: R = the breakthrough of the attacker / the effective defence of the defender (the fortification counts)
+		DivisionStats attacker, defender;
+		attacker.breakthrough = fixed_point_t(30);
+		defender.defence = fixed_point_t(10);
+		r.check(breakthrough_ratio(war, attacker, defender) == fixed_point_t(3), "battle: R is the breakthrough over the defence");
+		defender.fortification = fixed_point_t(2);
+		r.check(near(breakthrough_ratio(war, attacker, defender), fixed_point_t(30) / (fixed_point_t(10) * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t(2)))), eps),
+			"battle: the fortification (5 % of the defence a level) and the bonus of the terrain are in the effective defence");
+		r.check(effective_defence(war, defender, fixed_point_t(1) / 10) == defender.defence * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t(2)) + fixed_point_t(1) / 10), "battle: the bonus of the terrain is added");
+
+		BreakthroughCounter counter;
+		r.check(breakthrough_day(war, fixed_point_t(3), counter), "battle: R of 3 in one day makes the defence retreat");
+		counter = {};
+		bool retreated = false;
+		for (int day = 1; day <= 6; ++day) {
+			retreated |= breakthrough_day(war, fixed_point_t(2), counter);
+		}
+		r.check(!retreated && counter.days == 6, "battle: R of 2 for six days is not enough");
+		r.check(breakthrough_day(war, fixed_point_t(2), counter), "battle: R of 2 for the seventh day in a row makes the defence retreat");
+		counter = {};
+		for (int day = 1; day <= 6; ++day) {
+			breakthrough_day(war, fixed_point_t(2), counter);
+		}
+		const bool after_drop = breakthrough_day(war, fixed_point_t(3) / 2, counter);
+		r.check(!after_drop && counter.days == 0, "battle: R of 2 for six days and then R of 1.5 gives no retreat (the counter goes back)");
+		bool later = false;
+		for (int day = 1; day <= 6; ++day) {
+			later |= breakthrough_day(war, fixed_point_t(2), counter);
+		}
+		r.check(!later, "battle: after the counter went back six more days of R = 2 are still not enough");
+		r.check(!breakthrough_day(war, fixed_point_t(199) / 100, counter) && counter.days == 0, "battle: R just under 2 is nothing");
+
+		// The attacker's defence does not soften the damage it takes (ATTACKER_DEFENSE_FACTOR = 0), the defender's defence does
+		DivisionStats strong;
+		strong.attack = fixed_point_t(20);
+		strong.defence = fixed_point_t(40);
+		DivisionStats weak;
+		weak.attack = fixed_point_t(20);
+		weak.defence = fixed_point_t(0);
+		const fixed_point_t to_defender = damage_per_day(war, strong, strong);
+		const fixed_point_t to_attacker = damage_per_day(war, strong, strong, true);
+		r.check(to_attacker > to_defender && to_attacker == damage_per_day(war, strong, weak, true), "battle: the defence of the attacker does not soften the damage it takes, the defence of the defender does");
+		DivisionStats casualties = strong;
+		casualties.casualties_mult = fixed_point_t(2);
+		r.check(near(damage_per_day(war, strong, casualties), damage_per_day(war, strong, strong) * 2, eps), "battle: the casualties of the one who takes the damage multiply it");
+
+		// The modifiers of the country count in the attack, the defence and the breakthrough of a template (percents are summed)
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && !candidate.get_division_templates().empty()) {
+				country = &candidate;
+			}
+		}
+		if (country == nullptr) {
+			return;
+		}
+		namespace fs = std::filesystem;
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_battle";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		write_test_file(temp / "m.txt",
+			"step = { year = 1836 modifier = { attack_mult = { all = 0.10 } defense_mult = { all = 0.20 } breakthrough_mult = { all = 0.30 } casualties_taken_mult = { all = 0.5 }\n"
+			" density_coefficient_mult = 0.5 density_excess_reduction = 0.5 } }\n");
+		ProvisionalUnlocks modifiers;
+		const ovdl::v2script::Parser parser = Dataloader::parse_defines(temp / "m.txt");
+		modifiers.load_file("m.txt", parser.get_file_node(), im.definition_manager.get_modifier_manager());
+		fs::remove_all(temp, ec);
+		if (modifiers.get_steps().size() != 1) {
+			r.check(false, "battle: the test modifier is loaded");
+			return;
+		}
+		const DivisionTemplate division_template = country->get_division_templates().front();
+		const DivisionStats before = compute_division_stats(im, *country, division_template);
+		country->add_unlock_modifier(*modifiers.get_steps()[0].modifier);
+		country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache());
+		const DivisionStats after = compute_division_stats(im, *country, division_template);
+		const DensityEffect before_effect = density_effect(war, before.density);
+		const DensityEffect after_effect = density_effect(war, after.density);
+		const fixed_point_t raw_before = before.raw_density;
+		r.check(near(after.density, effective_density(raw_before, fixed_point_t(1) / 2, fixed_point_t(1) / 2), eps) && after.raw_density == raw_before,
+			"battle: the modifiers density_coefficient_mult and density_excess_reduction change the density of a template", fmt::format("{} -> {}", dbl(before.density), dbl(after.density)));
+		r.check(
+			near(after.attack / after_effect.attack_mult, before.attack / before_effect.attack_mult * fixed_point_t(11) / 10, fixed_point_t(1) / 100)
+				&& near(after.defence / after_effect.defence_mult, before.defence / before_effect.defence_mult * fixed_point_t(12) / 10, fixed_point_t(1) / 100)
+				&& near(after.breakthrough / after_effect.breakthrough_mult, before.breakthrough / before_effect.breakthrough_mult * fixed_point_t(13) / 10, fixed_point_t(1) / 100),
+			"battle: attack_mult, defense_mult and breakthrough_mult of the modifiers (+10 %, +20 %, +30 %) count in the template"
+		);
+		r.check(near(after.casualties_mult / after_effect.casualties_mult, before.casualties_mult / before_effect.casualties_mult / 2, eps),
+			"battle: casualties_taken_mult of the modifiers counts in the casualties of the template");
+		country->remove_unlock_modifier(*modifiers.get_steps()[0].modifier);
+		country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache());
 	}
 
 	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
@@ -3840,6 +3974,7 @@ namespace {
 		test_unit_types(r, *im);
 		test_army_technologies(r, *im);
 		test_army_research(r, *im);
+		test_battle_rules(r, *im);
 		test_unlock_gates(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);

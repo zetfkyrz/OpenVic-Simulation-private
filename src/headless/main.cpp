@@ -1229,12 +1229,15 @@ static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods)
 
 static void print_template_line(std::string_view tag, CountryInstance const& country, DivisionTemplate const& division_template, DivisionStats const& stats) {
 	fmt::println(
-		"{} country={} template={} regiments={} width={} depth={:.2f} density={:.2f} attack={:.2f} defence={:.2f} durability={:.2f} organisation={:.1f} "
-		"fortification={:.2f} weight={:.0f} speed={:.2f} reconnaissance={:.2f} occupation_speed={:.2f}{} reliability={:.2f} men={:.0f}",
-		tag, country.get_identifier(), division_template.id, stats.regiments, stats.width, static_cast<double>(stats.depth), static_cast<double>(stats.density),
-		static_cast<double>(stats.attack), static_cast<double>(stats.defence), static_cast<double>(stats.durability), static_cast<double>(stats.organisation),
+		"{} country={} template={} regiments={} width={} depth={:.2f} raw_density={:.3f} density={:.3f} attack={:.2f} defence={:.2f} breakthrough={:.2f} casualties={:.3f} "
+		"durability={:.2f} organisation={:.1f} fortification={:.2f} weight={:.0f} speed={:.2f} reconnaissance={:.2f} occupation_speed={:.2f}{} reliability={:.2f} men={:.0f} "
+		"companies={}",
+		tag, country.get_identifier(), division_template.id, stats.regiments, stats.width, static_cast<double>(stats.depth), static_cast<double>(stats.raw_density),
+		static_cast<double>(stats.density), static_cast<double>(stats.attack), static_cast<double>(stats.defence), static_cast<double>(stats.breakthrough),
+		static_cast<double>(stats.casualties_mult), static_cast<double>(stats.durability), static_cast<double>(stats.organisation),
 		static_cast<double>(stats.fortification), static_cast<double>(stats.weight), static_cast<double>(stats.speed), static_cast<double>(stats.reconnaissance),
-		static_cast<double>(stats.occupation_speed), stats.occupation_instant ? "(instant)" : "", static_cast<double>(stats.reliability), static_cast<double>(stats.men)
+		static_cast<double>(stats.occupation_speed), stats.occupation_instant ? "(instant)" : "", static_cast<double>(stats.reliability), static_cast<double>(stats.men),
+		stats.companies
 	);
 	fmt::println("{}_COST country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.cost));
 	fmt::println("{}_SUPPLY_PER_DAY country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.supply_per_day));
@@ -1416,11 +1419,17 @@ static void run_template_battle_dump(InstanceManager& instance_manager) {
 				narrow.rebuild_counts();
 				const DivisionStats narrow_stats = compute_division_stats(instance_manager, country, narrow);
 				const auto line = [&](std::string_view label, DivisionStats const& a, DivisionStats const& b) {
+					// a attacks b: a deals the damage to b (the defence of b softens it), b deals the damage back (the defence of a softens it only by ATTACKER_DEFENSE_FACTOR);
+					// R = the breakthrough of a over the effective defence of b: R of BREAK_RATIO_DAY in a day, or of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days, and b retreats
 					const fixed_point_t damage = battle_formulas::damage_per_day(war, a, b);
+					const fixed_point_t damage_back = battle_formulas::damage_per_day(war, b, a, true);
+					const fixed_point_t ratio = battle_formulas::breakthrough_ratio(war, a, b);
 					fmt::println(
-						"BATTLE country={} template={} {} attacker_width={} defender_width={} damage_per_day={:.3f} defender_durability={:.2f} days_to_destroy={:.1f}",
-						country.get_identifier(), division_template.id, label, a.width, b.width, static_cast<double>(damage), static_cast<double>(b.durability),
-						static_cast<double>(battle_formulas::days_to_destroy(b.durability, damage))
+						"BATTLE country={} template={} {} attacker_width={} defender_width={} damage_per_day={:.3f} damage_back={:.3f} defender_durability={:.2f} days_to_destroy={:.1f} "
+						"R={:.2f} retreat={}",
+						country.get_identifier(), division_template.id, label, a.width, b.width, static_cast<double>(damage), static_cast<double>(damage_back),
+						static_cast<double>(b.durability), static_cast<double>(battle_formulas::days_to_destroy(b.durability, damage)), static_cast<double>(ratio),
+						ratio >= war.break_ratio_day ? "day" : ratio >= war.break_ratio_week ? fmt::format("{}_days", war.break_week_days) : "no"
 					);
 				};
 				line("full_vs_full", stats, stats);

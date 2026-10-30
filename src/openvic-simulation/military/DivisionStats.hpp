@@ -33,7 +33,9 @@ namespace OpenVic {
 		fixed_point_t breakthrough; // the third parameter of the battle: how fast the attacker breaks a defence (counted the same way)
 		std::uint32_t width = 0; // ranks that have a regiment
 		fixed_point_t depth; // regiments per rank, the average (1.5 for ranks of 1 and 2)
-		fixed_point_t density; // strength points per rank, less by the density_reduction
+		fixed_point_t density; // the density after the technologies (battle_formulas::effective_density); its effect is in the attack, the defence and the breakthrough
+		fixed_point_t raw_density; // 2 x depth / width
+		fixed_point_t casualties_mult = fixed_point_t::_1; // the casualties taken: the density over 1 and the modifiers casualties_taken_mult
 		fixed_point_t fortification;
 		fixed_point_t reliability; // the share of the best weapons the division really has (1 for a template)
 		// The support companies (military/Companies.hpp): their number and what they add to the attack, the defence, the breakthrough (shares) and the

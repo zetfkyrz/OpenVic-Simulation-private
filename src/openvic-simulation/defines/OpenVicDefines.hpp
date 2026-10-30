@@ -304,7 +304,20 @@ namespace OpenVic {
 	RATE(FORTIFICATION_PER_LEVEL, fortification_per_level, Rate(5, 100), 0, 10) \
 	FIXED(BATTLE_DAMAGE_PER_ATTACK, battle_damage_per_attack, fixed_point_t::_0_10, 0, 1000) \
 	FIXED(BATTLE_DEFENCE_REFERENCE, battle_defence_reference, fixed_point_t(20), 1, 100000) \
-	RATE(BATTLE_DENSITY_DAMAGE, battle_density_damage, Rate(2, 100), 0, 1) \
+	/* The density of a division (military/BattleFormulas.cpp): density = DENSITY_DEPTH_FACTOR x depth / width (a width twice the depth is 1.0); x = |1 - density|; */ \
+	/* the penalty is DENSITY_LINEAR x x + DENSITY_QUADRATIC x x^2 (the rule of the owner is x^2 + x). Below 1 the defence and the breakthrough fall by the penalty; */ \
+	/* above 1 the casualties and the breakthrough grow by it and the attack by DENSITY_ATTACK_SHARE of it */ \
+	FIXED(DENSITY_DEPTH_FACTOR, density_depth_factor, fixed_point_t(2), 0.01, 100) \
+	FIXED(DENSITY_LINEAR, density_linear, fixed_point_t::_1, 0, 10) \
+	FIXED(DENSITY_QUADRATIC, density_quadratic, fixed_point_t::_1, 0, 10) \
+	RATE(DENSITY_ATTACK_SHARE, density_attack_share, Rate(1, 2), 0, 1) \
+	/* The breakthrough (R = the breakthrough of the attacker / the effective defence of the defender): R of BREAK_RATIO_DAY in one day, or R of */ \
+	/* BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days in a row, makes the defence retreat. The defence of the attacker softens the damage it takes by */ \
+	/* ATTACKER_DEFENSE_FACTOR (0: not at all) */ \
+	RATE(ATTACKER_DEFENSE_FACTOR, attacker_defense_factor, Rate(0, 100), 0, 1) \
+	FIXED(BREAK_RATIO_DAY, break_ratio_day, fixed_point_t(3), 0, 1000) \
+	FIXED(BREAK_RATIO_WEEK, break_ratio_week, fixed_point_t(2), 0, 1000) \
+	INT(BREAK_WEEK_DAYS, break_week_days, 7, 1, 365) \
 	RATE(ATTRITION_BASE, attrition_base, Rate(2, 1000), 0, 1) \
 	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
 	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \

@@ -62,6 +62,7 @@ DivisionStats OpenVic::compute_division_stats(
 	const memory::vector<std::uint32_t> company_counts = count_template_companies(company_types, division_template);
 	const std::uint32_t company_width = get_template_width(division_template);
 	fixed_point_t company_men = fixed_point_t::_0;
+	fixed_point_t casualties_sum = fixed_point_t::_0; // the casualties_taken_mult of the regiments, to be averaged
 	const std::span<const CompanyState> company_states = country.get_company_states();
 	const auto company_buff = [&](const scoped_effect_t effect, std::span<const ScopeWeight> weights) -> fixed_point_t {
 		return get_company_buff(company_types, company_states, company_counts, company_width, cache, effect, weights);
@@ -109,9 +110,14 @@ DivisionStats OpenVic::compute_division_stats(
 			stats.regiments++;
 			cells_in_rank[rank]++;
 			memory::vector<ScopeWeight> const& weights = scope_weights_of(*regiment_type);
-			const fixed_point_t attack_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::ATTACK_MULT, weights);
-			const fixed_point_t defence_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::DEFENSE_MULT, weights);
-			const fixed_point_t breakthrough_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::BREAKTHROUGH_MULT, weights);
+			// The percents of the modifiers of the country and of the companies are summed (docs/WAR_ASSUMPTIONS.md, section 5)
+			const fixed_point_t attack_factor = fixed_point_t::_1 + get_scoped_sum(country, cache, scoped_effect_t::ATTACK_MULT, weights)
+				+ company_buff(scoped_effect_t::ATTACK_MULT, weights);
+			const fixed_point_t defence_factor = fixed_point_t::_1 + get_scoped_sum(country, cache, scoped_effect_t::DEFENSE_MULT, weights)
+				+ company_buff(scoped_effect_t::DEFENSE_MULT, weights);
+			const fixed_point_t breakthrough_factor = fixed_point_t::_1 + get_scoped_sum(country, cache, scoped_effect_t::BREAKTHROUGH_MULT, weights)
+				+ company_buff(scoped_effect_t::BREAKTHROUGH_MULT, weights);
+			casualties_sum += get_scoped_product(country, cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, weights);
 			stats.attack += regiment_type->attack * attack_ratio * attack_factor * row_weight;
 			stats.defence += regiment_type->defence * defence_ratio * defence_factor * row_weight;
 			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * breakthrough_factor * row_weight;
@@ -193,7 +199,19 @@ DivisionStats OpenVic::compute_division_stats(
 	}
 	stats.speed = speed;
 	stats.durability = durability_sum * (fixed_point_t::_1 + effect_value(cache.get_division_durability()));
-	stats.density = battle_formulas::density(strength_sum, stats.width, limits.density_reduction);
+	// The density: depth over width, changed by the technologies, its effect is on the attack, the defence, the breakthrough and the casualties
+	stats.raw_density = battle_formulas::raw_density(defines.war, stats.regiments, stats.width);
+	stats.density = battle_formulas::effective_density(
+		stats.raw_density, stats.regiments > 0 ? get_effect_product(country, cache.get_density_coefficient_mult()) : fixed_point_t::_1,
+		effect_value(cache.get_density_excess_reduction())
+	);
+	if (stats.regiments > 0) {
+		const battle_formulas::DensityEffect density = battle_formulas::density_effect(defines.war, stats.density);
+		stats.attack = stats.attack * density.attack_mult;
+		stats.defence = stats.defence * density.defence_mult;
+		stats.breakthrough = stats.breakthrough * density.breakthrough_mult;
+		stats.casualties_mult = casualties_sum / static_cast<std::int32_t>(stats.regiments) * density.casualties_mult;
+	}
 	stats.fortification = fortification_sum / static_cast<std::int32_t>(std::max<std::uint32_t>(stats.regiments, 1));
 	stats.reconnaissance += effect_value(cache.get_division_reconnaissance());
 	stats.occupation_speed = defines.war.occupation_speed_base * (fixed_point_t::_1 + effect_value(cache.get_occupation_speed_pct()))
