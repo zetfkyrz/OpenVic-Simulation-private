@@ -1,5 +1,12 @@
 #pragma once
 
+#include <array>
+#include <span>
+#include <string_view>
+
+#include "openvic-simulation/core/memory/String.hpp"
+#include "openvic-simulation/core/memory/Vector.hpp"
+
 #include "openvic-simulation/core/memory/FixedVector.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 #include "openvic-simulation/types/UnitBranchType.hpp"
@@ -32,18 +39,50 @@ namespace OpenVic {
 		friend struct TechnologyManager;
 		friend struct TerrainTypeManager;
 
+	public:
+		/* The modifiers of the army with a scope (military/UnitModifiers.hpp): an effect for every scope (all, infantry, cavalry, artillery, the id of every
+		 * regiment type), registered when the unit types are known */
+		static constexpr std::size_t NO_SCOPE = static_cast<std::size_t>(-1);
+		static constexpr std::size_t SCOPED_EFFECTS = 6;
+		[[nodiscard]] std::size_t find_unit_scope(std::string_view scope) const {
+			for (std::size_t i = 0; i < unit_scopes.size(); ++i) {
+				if (unit_scopes[i] == scope) {
+					return i;
+				}
+			}
+			return NO_SCOPE;
+		}
+		[[nodiscard]] ModifierEffect const* get_scoped_effect(const std::size_t effect, const std::size_t scope) const {
+			return effect < SCOPED_EFFECTS && scope < scoped_effects[effect].size() ? scoped_effects[effect][scope] : nullptr;
+		}
+		[[nodiscard]] std::span<const memory::string> get_unit_scopes() const {
+			return unit_scopes;
+		}
+
 	private:
+		memory::vector<memory::string> unit_scopes;
+		std::array<memory::vector<ModifierEffect const*>, SCOPED_EFFECTS> scoped_effects;
+
 		/* Tech/inventions only */
 		ModifierEffect const* PROPERTY(cb_creation_speed, nullptr);
 		ModifierEffect const* PROPERTY(combat_width_additive, nullptr);
 		/* The limits and the formation of the division templates (military/Unlocks.hpp, get_template_limits) */
-		ModifierEffect const* PROPERTY(max_columns, nullptr);
+		ModifierEffect const* PROPERTY(max_columns_add, nullptr);
 		ModifierEffect const* PROPERTY(max_rows, nullptr);
 		ModifierEffect const* PROPERTY(max_company_slots, nullptr);
 		ModifierEffect const* PROPERTY(density_reduction, nullptr);
 		ModifierEffect const* PROPERTY(row_weight_shift, nullptr);
-		ModifierEffect const* PROPERTY(fortification, nullptr);
-		ModifierEffect const* PROPERTY(occupation_speed, nullptr);
+		ModifierEffect const* PROPERTY(occupation_speed_pct, nullptr);
+		ModifierEffect const* PROPERTY(occupation_speed_mult, nullptr);
+		ModifierEffect const* PROPERTY(mobilisation_speed_pct, nullptr);
+		ModifierEffect const* PROPERTY(mobilisation_speed_mult, nullptr);
+		ModifierEffect const* PROPERTY(mobilisation_size_pct, nullptr);
+		ModifierEffect const* PROPERTY(supply_national_pct, nullptr);
+		ModifierEffect const* PROPERTY(supply_army_pct, nullptr);
+		ModifierEffect const* PROPERTY(supply_days_add, nullptr);
+		ModifierEffect const* PROPERTY(railway_supply_per_level, nullptr);
+		ModifierEffect const* PROPERTY(density_coefficient_mult, nullptr);
+		ModifierEffect const* PROPERTY(density_excess_reduction, nullptr);
 		ModifierEffect const* PROPERTY(division_durability, nullptr);
 		ModifierEffect const* PROPERTY(division_reconnaissance, nullptr);
 		ModifierEffect const* PROPERTY(plurality, nullptr);

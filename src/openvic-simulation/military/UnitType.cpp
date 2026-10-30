@@ -425,6 +425,45 @@ bool UnitTypeManager::generate_modifiers(ModifierManager& modifier_manager) cons
 		generate_stat_modifiers(regiment_type_effects[regiment_type.index], regiment_type.get_identifier());
 	}
 
+	// The modifiers with a scope: attack_mult = { infantry = 0.1 }, see military/UnitModifiers.hpp
+	{
+		using enum ModifierEffect::format_t;
+		ModifierEffectCache& effect_cache = modifier_manager.modifier_effect_cache;
+		effect_cache.unit_scopes.clear();
+		for (std::string_view const scope : { "all", "infantry", "cavalry", "artillery" }) {
+			effect_cache.unit_scopes.emplace_back(scope);
+		}
+		for (RegimentType const& regiment_type : get_regiment_types()) {
+			const std::string_view identifier = regiment_type.get_identifier();
+			if (effect_cache.find_unit_scope(identifier) == ModifierEffectCache::NO_SCOPE) {
+				effect_cache.unit_scopes.emplace_back(identifier);
+			}
+		}
+		struct scoped_effect_info_t {
+			std::string_view name;
+			ModifierEffect::format_t format;
+			std::string_view localisation_key;
+		};
+		static constexpr scoped_effect_info_t infos[ModifierEffectCache::SCOPED_EFFECTS] = {
+			{ "attack_mult", FORMAT_x100_1DP_PC_POS, "ATTACK_MULT_TECH" },
+			{ "defense_mult", FORMAT_x100_1DP_PC_POS, "DEFENSE_MULT_TECH" },
+			{ "breakthrough_mult", FORMAT_x100_1DP_PC_POS, "BREAKTHROUGH_MULT_TECH" },
+			{ "fortification", FORMAT_x1_1DP_POS, "FORTIFICATION_TECH" },
+			{ "casualties_taken_mult", FORMAT_x1_2DP_POS, "CASUALTIES_TAKEN_MULT_TECH" },
+			{ "organisation_regain", FORMAT_x100_1DP_PC_POS, "ORGANISATION_REGAIN_TECH" },
+		};
+		for (std::size_t effect = 0; effect < ModifierEffectCache::SCOPED_EFFECTS; ++effect) {
+			ret &= modifier_manager.register_complex_modifier(infos[effect].name);
+			effect_cache.scoped_effects[effect].assign(effect_cache.unit_scopes.size(), nullptr);
+			for (std::size_t scope = 0; scope < effect_cache.unit_scopes.size(); ++scope) {
+				ret &= modifier_manager.register_technology_modifier_effect(
+					effect_cache.scoped_effects[effect][scope], ModifierManager::get_flat_identifier(infos[effect].name, effect_cache.unit_scopes[scope]),
+					infos[effect].format, infos[effect].localisation_key
+				);
+			}
+		}
+	}
+
 	generate_stat_modifiers(modifier_manager.modifier_effect_cache.navy_base_effects, "navy_base");
 
 	memory::FixedVector<ModifierEffectCache::ship_type_effects_t, ship_type_index_t>& ship_type_effects =

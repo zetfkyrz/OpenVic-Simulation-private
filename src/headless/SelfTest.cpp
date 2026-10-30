@@ -33,6 +33,8 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/military/UnitModifiers.hpp>
+#include <openvic-simulation/modifier/ModifierEffectCache.hpp>
 #include <openvic-simulation/military/BattleFormulas.hpp>
 #include <openvic-simulation/military/DivisionStats.hpp>
 #include <openvic-simulation/modifier/ModifierManager.hpp>
@@ -1167,6 +1169,115 @@ namespace {
 		}
 		country->get_good_data(*rifle_2_good).stockpile_amount = stock_2_before;
 		country->get_good_data(*rifle_3_good).stockpile_amount = stock_3_before;
+	}
+
+	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
+
+	void test_scoped_modifiers(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		ModifierManager const& modifier_manager = im.definition_manager.get_modifier_manager();
+		ModifierEffectCache const& cache = modifier_manager.get_modifier_effect_cache();
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		RegimentType const* const infantry = unit_types.get_regiment_type_by_identifier("infantry");
+		RegimentType const* const cavalry = unit_types.get_regiment_type_by_identifier("cavalry");
+		RegimentType const* const artillery = unit_types.get_regiment_type_by_identifier("artillery");
+		r.check(
+			cache.find_unit_scope("all") != ModifierEffectCache::NO_SCOPE && cache.find_unit_scope("infantry") != ModifierEffectCache::NO_SCOPE
+				&& cache.find_unit_scope("cavalry") != ModifierEffectCache::NO_SCOPE && cache.find_unit_scope("artillery") != ModifierEffectCache::NO_SCOPE
+				&& infantry != nullptr && cavalry != nullptr && artillery != nullptr,
+			"modifiers: the scopes all, infantry, cavalry, artillery and the ids of the unit types are registered"
+		);
+		if (infantry == nullptr || cavalry == nullptr || artillery == nullptr) {
+			return;
+		}
+
+		// Two modifiers from a file (the form of the files of the technologies)
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_scoped";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		write_test_file(temp / "good.txt",
+			"step = { year = 1836 modifier = { attack_mult = { all = 0.05 infantry = 0.10 } casualties_taken_mult = { all = 0.8 } occupation_speed_pct = 0.25\n"
+			" occupation_speed_mult = 2.0 fortification = { infantry = 1 } } }\n"
+			"step = { year = 1836 modifier = { attack_mult = { cavalry = 0.02 } casualties_taken_mult = { all = 0.9 } occupation_speed_pct = 0.10 occupation_speed_mult = 1.5 } }\n");
+		write_test_file(temp / "bad.txt", "step = { year = 1836 modifier = { attack_mult = { no_such_scope = 0.5 } } }\n");
+		ProvisionalUnlocks good, bad;
+		{
+			const ovdl::v2script::Parser parser = Dataloader::parse_defines(temp / "good.txt");
+			good.load_file("good.txt", parser.get_file_node(), modifier_manager);
+		}
+		{
+			const ovdl::v2script::Parser parser = Dataloader::parse_defines(temp / "bad.txt");
+			bad.load_file("bad.txt", parser.get_file_node(), modifier_manager);
+		}
+		r.check(good.get_steps().size() == 2 && bad.get_steps().empty(), "modifiers: a scope that does not exist makes the step broken (it is skipped), the good file is loaded");
+		if (good.get_steps().size() != 2) {
+			fs::remove_all(temp, ec);
+			return;
+		}
+
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists()) {
+				country = &candidate;
+			}
+		}
+		StaticModifierCache const& static_modifier_cache = modifier_manager.get_static_modifier_cache();
+		const auto refresh = [&]() {
+			country->update_modifier_sum(im.get_today(), static_modifier_cache);
+		};
+		const auto weights_of = [&](RegimentType const& regiment_type) { return get_scope_weights(cache, regiment_type); };
+		const std::size_t unlock_modifiers_before = country->get_unlock_modifiers().size();
+		country->add_unlock_modifier(*good.get_steps()[0].modifier);
+		country->add_unlock_modifier(*good.get_steps()[1].modifier);
+		refresh();
+
+		// The percents are summed, by the scope of the unit
+		const auto infantry_weights = weights_of(*infantry);
+		const auto cavalry_weights = weights_of(*cavalry);
+		const auto artillery_weights = weights_of(*artillery);
+		r.check(
+			near(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, infantry_weights), fixed_point_t(15) / 100, fixed_point_t(1) / 1000)
+				&& near(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, cavalry_weights), fixed_point_t(7) / 100, fixed_point_t(1) / 1000)
+				&& near(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, artillery_weights), fixed_point_t(5) / 100, fixed_point_t(1) / 1000),
+			"modifiers: the percents of the scopes are summed (infantry 5 + 10, cavalry 5 + 2, artillery 5)",
+			fmt::format("{} {} {}", dbl(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, infantry_weights)),
+				dbl(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, cavalry_weights)), dbl(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, artillery_weights)))
+		);
+		// The multipliers are multiplied
+		r.check(
+			near(get_scoped_product(*country, cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, infantry_weights), fixed_point_t(72) / 100, fixed_point_t(1) / 1000),
+			"modifiers: the multipliers are multiplied (0.8 x 0.9 = 0.72)",
+			fmt::format("{}", dbl(get_scoped_product(*country, cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, infantry_weights)))
+		);
+		r.check(
+			near(country->get_modifier_effect_value(*cache.get_occupation_speed_pct()), fixed_point_t(35) / 100, fixed_point_t(1) / 1000)
+				&& near(get_effect_product(*country, cache.get_occupation_speed_mult()), fixed_point_t(3), fixed_point_t(1) / 1000),
+			"modifiers: the occupation speed adds the percents (0.25 + 0.10) and multiplies the multipliers (2 x 1.5)"
+		);
+		// A unit that counts half for two scopes (the dragoons) gets half of each
+		memory::vector<ScopeWeight> half_weights;
+		half_weights.push_back({ cache.find_unit_scope("infantry"), fixed_point_t::_0_50 });
+		half_weights.push_back({ cache.find_unit_scope("cavalry"), fixed_point_t::_0_50 });
+		r.check(
+			near(get_scoped_sum(*country, cache, scoped_effect_t::FORTIFICATION, half_weights), fixed_point_t::_0_50, fixed_point_t(1) / 1000)
+				&& near(get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, half_weights), fixed_point_t(6) / 100, fixed_point_t(1) / 1000),
+			"modifiers: a unit with the weights infantry 0.5 and cavalry 0.5 gets half of the bonuses of each (fortification 0.5)"
+		);
+		// The fortification of a template is the average of the regiments: 1 for the infantry, 0 for the cavalry gives 0.5
+		DivisionTemplate division_template;
+		division_template.cells[DivisionTemplate::cell_index(0, 0)] = static_cast<std::uint8_t>(get_division_slot_kind(*infantry) + 1);
+		division_template.cells[DivisionTemplate::cell_index(1, 0)] = static_cast<std::uint8_t>(get_division_slot_kind(*cavalry) + 1);
+		division_template.rebuild_counts();
+		const DivisionStats stats = compute_division_stats(im, *country, division_template);
+		r.check(near(stats.fortification, fixed_point_t::_0_50, fixed_point_t(1) / 1000), "modifiers: a template of half infantry (fortification 1) and half cavalry (0) has the fortification 0.5",
+			fmt::format("{}", dbl(stats.fortification)));
+
+		// put the country back
+		country->remove_unlock_modifier(*good.get_steps()[0].modifier);
+		country->remove_unlock_modifier(*good.get_steps()[1].modifier);
+		(void)unlock_modifiers_before;
+		refresh();
+		fs::remove_all(temp, ec);
 	}
 
 	struct Game {
@@ -2837,6 +2948,7 @@ namespace {
 		test_division_stats(r, *im);
 		test_production_types(r, *im);
 		test_regiment_equipment(r, *im);
+		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();
 

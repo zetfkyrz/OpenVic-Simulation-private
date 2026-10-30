@@ -176,7 +176,7 @@ DivisionTemplateLimits OpenVic::get_template_limits(InstanceManager const& insta
 
 	DivisionTemplateLimits limits;
 	limits.ranks = limited(
-		war.template_ranks_default + effect_value(cache.get_max_columns()).floor<std::int32_t>(), 1, war.template_ranks_max
+		war.template_ranks_default + effect_value(cache.get_max_columns_add()).floor<std::int32_t>(), 1, war.template_ranks_max
 	);
 	limits.depth = limited(
 		war.template_depth_default + effect_value(cache.get_max_rows()).floor<std::int32_t>(), 1, war.template_depth_max

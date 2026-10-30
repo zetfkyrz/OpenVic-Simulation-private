@@ -12,6 +12,7 @@
 #include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/military/UnitModifiers.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/modifier/ModifierManager.hpp"
 
@@ -62,6 +63,17 @@ DivisionStats OpenVic::compute_division_stats(
 	};
 
 	std::map<std::string, fixed_point_t> cost, supply, ammo;
+	fixed_point_t fortification_sum = fixed_point_t::_0;
+	std::array<memory::vector<ScopeWeight>, DIVISION_MAX_TYPES> scope_weights;
+	std::array<bool, DIVISION_MAX_TYPES> scope_weights_made {};
+	const auto scope_weights_of = [&](RegimentType const& regiment_type) -> memory::vector<ScopeWeight> const& {
+		const std::size_t kind = get_division_slot_kind(regiment_type);
+		if (!scope_weights_made[kind]) {
+			scope_weights_made[kind] = true;
+			scope_weights[kind] = get_scope_weights(cache, regiment_type);
+		}
+		return scope_weights[kind];
+	};
 	std::array<std::uint32_t, DIVISION_MAX_RANKS> cells_in_rank {};
 	fixed_point_t strength_sum = fixed_point_t::_0, organisation_sum = fixed_point_t::_0, durability_sum = fixed_point_t::_0;
 	fixed_point_t speed = fixed_point_t::_0;
@@ -94,6 +106,8 @@ DivisionStats OpenVic::compute_division_stats(
 			stats.reconnaissance += regiment_type->reconnaissance;
 			speed = stats.regiments == 1 ? regiment_type->maximum_speed : std::min(speed, regiment_type->maximum_speed);
 			stats.weight += regiment_type->max_strength * defines.war.template_kit_weight_per_strength;
+			// The fortification is the average of the regiments (a regiment of cavalry with no bonus has 0)
+			fortification_sum += get_scoped_sum(country, cache, scoped_effect_t::FORTIFICATION, scope_weights_of(*regiment_type));
 
 			// The goods: the weapon of the line is the one of the best generation (the good of the first generation is the one of the base game)
 			const std::string base_good = has_weapon
@@ -136,9 +150,10 @@ DivisionStats OpenVic::compute_division_stats(
 	stats.speed = speed;
 	stats.durability = durability_sum * (fixed_point_t::_1 + effect_value(cache.get_division_durability()));
 	stats.density = battle_formulas::density(strength_sum, stats.width, limits.density_reduction);
-	stats.fortification = effect_value(cache.get_fortification());
+	stats.fortification = fortification_sum / static_cast<std::int32_t>(std::max<std::uint32_t>(stats.regiments, 1));
 	stats.reconnaissance += effect_value(cache.get_division_reconnaissance());
-	stats.occupation_speed = defines.war.occupation_speed_base + effect_value(cache.get_occupation_speed());
+	stats.occupation_speed = defines.war.occupation_speed_base * (fixed_point_t::_1 + effect_value(cache.get_occupation_speed_pct()))
+		* get_effect_product(country, cache.get_occupation_speed_mult());
 	stats.occupation_instant = stats.occupation_speed * 100 >= fixed_point_t(defines.war.template_occupation_instant_percent);
 	stats.men = strength_sum * defines.war.template_men_per_strength;
 

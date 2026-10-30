@@ -196,7 +196,7 @@ bool ModifierManager::setup_modifier_effects() {
 	);
 	// The division templates: the effects add to the default limits (ov_war.TEMPLATE_*), see military/Unlocks.hpp
 	ret &= register_technology_modifier_effect(
-		modifier_effect_cache.max_columns, "max_columns", FORMAT_x1_0DP_POS, "MAX_COLUMNS_TECH"
+		modifier_effect_cache.max_columns_add, "max_columns_add", FORMAT_x1_0DP_POS, "MAX_COLUMNS_TECH"
 	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.max_rows, "max_rows", FORMAT_x1_0DP_POS, "MAX_ROWS_TECH"
@@ -211,10 +211,37 @@ bool ModifierManager::setup_modifier_effects() {
 		modifier_effect_cache.row_weight_shift, "row_weight_shift", FORMAT_x1_0DP_POS, "ROW_WEIGHT_SHIFT_TECH"
 	);
 	ret &= register_technology_modifier_effect(
-		modifier_effect_cache.fortification, "fortification", FORMAT_x1_1DP_POS, "FORTIFICATION_TECH"
+		modifier_effect_cache.occupation_speed_pct, "occupation_speed_pct", FORMAT_x100_1DP_PC_POS, "OCCUPATION_SPEED_TECH"
 	);
 	ret &= register_technology_modifier_effect(
-		modifier_effect_cache.occupation_speed, "occupation_speed", FORMAT_x100_1DP_PC_POS, "OCCUPATION_SPEED_TECH"
+		modifier_effect_cache.occupation_speed_mult, "occupation_speed_mult", FORMAT_x1_2DP_POS, "OCCUPATION_SPEED_MULT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.mobilisation_speed_pct, "mobilisation_speed_pct", FORMAT_x100_1DP_PC_POS, "MOBILISATION_SPEED_PCT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.mobilisation_speed_mult, "mobilisation_speed_mult", FORMAT_x1_2DP_POS, "MOBILISATION_SPEED_MULT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.mobilisation_size_pct, "mobilisation_size_pct", FORMAT_x100_1DP_PC_POS, "MOBILISATION_SIZE_PCT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.supply_national_pct, "supply_national_pct", FORMAT_x100_1DP_PC_POS, "SUPPLY_NATIONAL_PCT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.supply_army_pct, "supply_army_pct", FORMAT_x100_1DP_PC_POS, "SUPPLY_ARMY_PCT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.supply_days_add, "supply_days_add", FORMAT_x1_0DP_POS, "SUPPLY_DAYS_ADD_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.railway_supply_per_level, "railway_supply_per_level", FORMAT_x1_2DP_POS, "RAILWAY_SUPPLY_PER_LEVEL_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.density_coefficient_mult, "density_coefficient_mult", FORMAT_x1_2DP_POS, "DENSITY_COEFFICIENT_MULT_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.density_excess_reduction, "density_excess_reduction", FORMAT_x100_1DP_PC_POS, "DENSITY_EXCESS_REDUCTION_TECH"
 	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.division_durability, "division_durability", FORMAT_x100_1DP_PC_POS, "DIVISION_DURABILITY_TECH"

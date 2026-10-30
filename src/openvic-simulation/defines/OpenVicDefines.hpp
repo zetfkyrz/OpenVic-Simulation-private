@@ -300,6 +300,8 @@ namespace OpenVic {
 	/* loses for every generation it is behind the best one the country has */ \
 	INT(EQUIPMENT_UPGRADES_PER_DAY, equipment_upgrades_per_day, 1, 0, 1000) \
 	RATE(EQUIPMENT_SHORTFALL_PENALTY, equipment_shortfall_penalty, Rate(3, 100), 0, 1) \
+	/* A level of the fortification adds this share to the defence */ \
+	RATE(FORTIFICATION_PER_LEVEL, fortification_per_level, Rate(5, 100), 0, 10) \
 	FIXED(BATTLE_DAMAGE_PER_ATTACK, battle_damage_per_attack, fixed_point_t::_0_10, 0, 1000) \
 	FIXED(BATTLE_DEFENCE_REFERENCE, battle_defence_reference, fixed_point_t(20), 1, 100000) \
 	RATE(BATTLE_DENSITY_DAMAGE, battle_density_damage, Rate(2, 100), 0, 1) \
