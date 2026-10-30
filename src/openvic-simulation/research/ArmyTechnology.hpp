@@ -40,7 +40,7 @@ namespace OpenVic {
 		memory::vector<memory::string> unlocks; // keys of the unlock layer
 		std::optional<UnlockModifier> modifier; // the modifiers of the country (nothing if the file has none)
 		memory::string source; // the file it was loaded from
-		std::int32_t icon_frame = 0; // reserved for the icon of the technology (the branch has one for now)
+		memory::string icon; // the path of the picture of the technology among the files of the game (a temporary one for the whole branch), "" : none
 	};
 
 	struct ArmyTechnologyManager {

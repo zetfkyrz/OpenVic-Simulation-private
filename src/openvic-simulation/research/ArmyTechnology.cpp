@@ -65,7 +65,7 @@ std::size_t ArmyTechnologyManager::load_file(std::string_view source, ast::NodeC
 				"year_hint", ZERO_OR_ONE, expect_int(assign_variable_callback(technology.year_hint)),
 				"start", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(technology.start)),
 				"cost", ZERO_OR_ONE, success_callback, // reserved
-				"icon", ZERO_OR_ONE, success_callback, // reserved (the icon of the branch is used)
+				"icon", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(technology.icon)),
 				// Every "prerequisite = { ... }" is a block of its own: any technology of the block is enough, all the blocks are needed
 				"prerequisite", ZERO_OR_MORE, [&technology](ast::NodeCPtr node) -> bool {
 					technology.prerequisites.emplace_back();
