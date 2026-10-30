@@ -68,6 +68,11 @@ SupplyFriends SupplyContext::build_friends(CountryInstance const& country) {
 	return SupplyFriends::build(country, *context_countries, *context_wars);
 }
 
+bool OpenVic::is_enemy_controlled(ProvinceInstance const& province, CountryInstance const& country) {
+	CountryInstance const* const holder = province.get_controller() != nullptr ? province.get_controller() : province.get_owner();
+	return holder != nullptr && holder != &country && holder->is_at_war_with(country);
+}
+
 bool OpenVic::is_supply_held(ProvinceInstance const& province, SupplyFriends const& friends) {
 	CountryInstance const* const holder = province.get_controller() != nullptr ? province.get_controller() : province.get_owner();
 	return friends.contains(holder);
@@ -130,7 +135,9 @@ SupplyTerritory OpenVic::calculate_supply_territory(
 				marks.mark(neighbour);
 				if (is_supply_held(neighbour, friends)) {
 					held++;
-				} else {
+				} else if (!is_enemy_controlled(neighbour, country)) {
+					// The supply does not go through a province that an enemy controls (docs/WAR_ASSUMPTIONS.md, section 5): the search does not
+					// continue from it, so the levels 2 and 3 (one and two provinces between) have only provinces of nobody or of a neutral between
 					next.push_back(&neighbour);
 				}
 			}

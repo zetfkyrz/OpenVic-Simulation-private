@@ -24,6 +24,8 @@ namespace OpenVic {
 	//   none, but one province between: 50 percent for the first held province that touches the provinces between and +10 percent for
 	//   each next one (at most 4 are counted: up to 80), two provinces between: 25 percent +5 percent for each next one (at most 5: up
 	//   to 45), only when the technology opens it, further or not opened: 10 percent (a technology: 20).
+	// The supply does not go through the provinces that an enemy controls: the search for the provinces between stops at them. (Before the change of the
+	// task 2026-10-30 it went through them, as through the provinces of nobody.)
 	// Only technologies change these numbers (the generals do not: they work in the last factor of the supply limit).
 
 	// The countries whose land is own land for the supply of the armies of one country
@@ -59,6 +61,8 @@ namespace OpenVic {
 		std::int32_t held_count = 0; // the held provinces that were counted for the coefficient
 	};
 
+	// A province controlled (the owner if nobody has taken it) by a country that is at war with the country: the supply of the country does not go through it
+	[[nodiscard]] bool is_enemy_controlled(ProvinceInstance const& province, CountryInstance const& country);
 	// A province is held by a friend (the one who controls it: the owner if nobody has taken it)
 	[[nodiscard]] bool is_supply_held(ProvinceInstance const& province, SupplyFriends const& friends);
 

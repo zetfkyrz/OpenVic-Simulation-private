@@ -2651,6 +2651,158 @@ namespace {
 		}
 	}
 
+	// ---- the supply does not go through the provinces that an enemy controls (docs/WAR_ASSUMPTIONS.md, section 5)
+
+	void test_supply_through_enemy(Results& r, InstanceManager& im) {
+		OpenVicSupplyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().supply;
+		MapInstance& map = im.get_map_instance();
+		CountryInstance* attacker = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.is_at_war() && !country.get_war_enemies().empty() && country.exists()) {
+				attacker = &country;
+				break;
+			}
+		}
+		if (attacker == nullptr) {
+			fmt::println("TEST INFO supply through the enemy: no country at war, not checked");
+			return;
+		}
+		const SupplyFriends friends = SupplyFriends::build(*attacker, im.get_country_instance_manager(), im.get_war_manager());
+		const auto land_neighbours = [&map](ProvinceInstance const& province) {
+			std::vector<ProvinceInstance const*> result;
+			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND) {
+					result.push_back(&map.get_province_instance_by_definition(adjacency.get_to()));
+				}
+			}
+			return result;
+		};
+		const auto contains = [](std::vector<ProvinceInstance const*> const& list, ProvinceInstance const* item) {
+			return std::find(list.begin(), list.end(), item) != list.end();
+		};
+		// The coefficient counted another way (sets of provinces), with the provinces of the enemy closed (closed = true) or open as before
+		const auto expected_for = [&](ProvinceInstance const& province, const bool closed) -> std::pair<SupplyTerritory::kind_t, fixed_point_t> {
+			std::size_t held1 = 0;
+			std::vector<ProvinceInstance const*> between;
+			for (ProvinceInstance const* neighbour : land_neighbours(province)) {
+				if (is_supply_held(*neighbour, friends)) {
+					held1++;
+				} else if (!closed || !is_enemy_controlled(*neighbour, *attacker)) {
+					between.push_back(neighbour);
+				}
+			}
+			if (held1 >= 2) {
+				return { SupplyTerritory::kind_t::TWO_NEIGHBOURS, fixed_point_t::_1 };
+			}
+			if (held1 == 1) {
+				return { SupplyTerritory::kind_t::ONE_NEIGHBOUR, defines.supply_neighbour_one.fixed() };
+			}
+			std::vector<ProvinceInstance const*> held2;
+			for (ProvinceInstance const* first_step : between) {
+				for (ProvinceInstance const* second_step : land_neighbours(*first_step)) {
+					if (second_step != &province && !contains(between, second_step) && is_supply_held(*second_step, friends) && !contains(held2, second_step)) {
+						held2.push_back(second_step);
+					}
+				}
+			}
+			if (!held2.empty()) {
+				return { SupplyTerritory::kind_t::ONE_BETWEEN, defines.supply_gap1_base.fixed()
+					+ defines.supply_gap1_step.fixed() * (std::min<std::int32_t>(static_cast<std::int32_t>(held2.size()), defines.supply_gap1_max_count) - 1) };
+			}
+			return { SupplyTerritory::kind_t::FAR, defines.supply_far.fixed() };
+		};
+		std::size_t checked = 0, wrong = 0, differs_from_open = 0, enemy_provinces = 0;
+		for (ProvinceInstance const& province : map.get_province_instances()) {
+			if (province.province_definition.is_water() || is_supply_held(province, friends)) {
+				continue;
+			}
+			checked++;
+			enemy_provinces += is_enemy_controlled(province, *attacker);
+			const SupplyTerritory got = calculate_supply_territory(province, map, *attacker, friends, defines);
+			const auto closed = expected_for(province, true);
+			const auto open = expected_for(province, false);
+			wrong += got.kind != closed.first || got.coefficient != closed.second;
+			differs_from_open += open.first != closed.first || open.second != closed.second;
+		}
+		r.check(checked > 1000 && enemy_provinces > 0, "supply through the enemy: a country at war has provinces of its enemy around", fmt::format("{} provinces, {} of the enemy", checked, enemy_provinces));
+		r.check(wrong == 0, "supply through the enemy: the kind and the coefficient equal the ones counted another way, the provinces of the enemy closed", fmt::format("{} provinces", wrong));
+		(void)differs_from_open;
+
+		// A province behind a province of an enemy: with the province between held by nobody the supply comes through it (one province between), with the
+		// province between taken by the enemy it does not
+		{
+			CountryInstance* const enemy = const_cast<CountryInstance*>(&attacker->get_war_enemies().front().get());
+			ProvinceInstance* behind = nullptr;
+			ProvinceInstance* between_province = nullptr;
+			for (ProvinceInstance& candidate : map.get_province_instances()) {
+				if (candidate.province_definition.is_water() || is_supply_held(candidate, friends) || is_enemy_controlled(candidate, *attacker)
+					|| calculate_supply_territory(candidate, map, *attacker, friends, defines).kind != SupplyTerritory::kind_t::ONE_BETWEEN) {
+					continue;
+				}
+				// the only way to the held land goes through one neighbour that nobody held
+				ProvinceInstance* only_between = nullptr;
+				std::size_t ways = 0;
+				for (ProvinceInstance const* neighbour : land_neighbours(candidate)) {
+					for (ProvinceInstance const* second_step : land_neighbours(*neighbour)) {
+						if (second_step != &candidate && is_supply_held(*second_step, friends) && !is_supply_held(*neighbour, friends)) {
+							ways++;
+							only_between = const_cast<ProvinceInstance*>(neighbour);
+						}
+					}
+				}
+				if (ways >= 1 && only_between != nullptr && only_between->get_owner() != nullptr && enemy != nullptr && enemy != attacker) {
+					// every neighbour that leads to held land is this one
+					bool single = true;
+					for (ProvinceInstance const* neighbour : land_neighbours(candidate)) {
+						if (neighbour == only_between || is_supply_held(*neighbour, friends)) {
+							continue;
+						}
+						for (ProvinceInstance const* second_step : land_neighbours(*neighbour)) {
+							single &= second_step == &candidate || !is_supply_held(*second_step, friends);
+						}
+					}
+					if (single) {
+						behind = &candidate;
+						between_province = only_between;
+						break;
+					}
+				}
+			}
+			if (behind == nullptr) {
+				fmt::println("TEST INFO supply through the enemy: no province behind a single province between, not checked");
+			} else {
+				CountryInstance* const old_controller = between_province->get_controller();
+				between_province->set_controller(enemy);
+				const SupplyTerritory closed = calculate_supply_territory(*behind, map, *attacker, friends, defines);
+				between_province->set_controller(old_controller);
+				const SupplyTerritory open = calculate_supply_territory(*behind, map, *attacker, friends, defines);
+				r.check(open.kind == SupplyTerritory::kind_t::ONE_BETWEEN && closed.kind == SupplyTerritory::kind_t::FAR && closed.coefficient < open.coefficient,
+					"supply through the enemy: a province behind a province taken by the enemy loses the supply that went through it (one province between becomes far)",
+					fmt::format("{} -> {}", dbl(open.coefficient), dbl(closed.coefficient)));
+			}
+		}
+
+		// A province taken at once (the instant occupation): the control and the supply are worked out at once, in the same tick
+		ProvinceInstance* taken = nullptr;
+		for (ProvinceInstance& province : map.get_province_instances()) {
+			if (!province.province_definition.is_water() && province.get_owner() != nullptr && province.get_owner() == province.get_controller() && attacker->is_at_war_with(*province.get_owner())
+				&& calculate_supply_territory(province, map, *attacker, friends, defines).kind != SupplyTerritory::kind_t::HELD) {
+				taken = &province;
+				break;
+			}
+		}
+		if (taken != nullptr) {
+			CountryInstance* const old_controller = taken->get_controller();
+			taken->set_controller(attacker);
+			const SupplyTerritory now = calculate_supply_territory(*taken, map, *attacker, SupplyFriends::build(*attacker, im.get_country_instance_manager(), im.get_war_manager()), defines);
+			r.check(now.kind == SupplyTerritory::kind_t::HELD && now.coefficient == fixed_point_t::_1,
+				"supply through the enemy: a province taken at once is held by the country in the same tick (100 percent, nothing is kept from before)");
+			taken->set_controller(old_controller);
+			const SupplyTerritory back = calculate_supply_territory(*taken, map, *attacker, friends, defines);
+			r.check(back.kind != SupplyTerritory::kind_t::HELD, "supply through the enemy: the province given back is not held again");
+		}
+	}
+
 	// The delivery of the supply to the armies, the priorities and the reserves of the regiments (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 3)
 	void test_supply_delivery(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().supply;
@@ -4070,6 +4222,7 @@ namespace {
 		test_regiment_upgrade(r, *im);
 		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
+		test_supply_through_enemy(r, *im);
 		test_fronts(r, *im);
 		test_unlocks(r, *im);
 		test_division_stats(r, *im);

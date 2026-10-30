@@ -46,7 +46,9 @@ namespace OpenVic {
 		//     unlocks of the year are off by default
 		// 29: buildings and mechanics by keys (requires_unlock in ov_buildings, mechanic:division_templates / mobilisation), the signals line (telegraph, radio), the AI
 		//     researches the first available technology of the files
-		inline constexpr int SIMULATION_VERSION = 29;
+		// 30: the supply of an army does not go through the provinces that an enemy controls (one and two provinces between), support companies in the templates,
+		//     the upgrade of a regiment, the density and the occupation by the new formulas (the statistics of the templates only)
+		inline constexpr int SIMULATION_VERSION = 30;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
