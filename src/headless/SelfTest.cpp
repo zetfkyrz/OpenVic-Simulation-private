@@ -33,6 +33,7 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/research/ArmyResearch.hpp>
 #include <openvic-simulation/military/UnitEquipment.hpp>
 #include <openvic-simulation/military/UnitModifiers.hpp>
 #include <openvic-simulation/modifier/ModifierEffectCache.hpp>
@@ -531,7 +532,7 @@ namespace {
 		// ---- the provisional layer by the year: the first day of 1836 gave the first weapons and no modifier
 		r.check(
 			country->has_unlock("equipment:rifle_1") && country->has_unlock("equipment:field_gun_1") && !country->has_unlock("equipment:rifle_2"),
-			"unlocks: in 1836 the provisional layer gives rifle_1 and field_gun_1, not rifle_2"
+			"unlocks: a civilised country at the start has rifle_1 and field_gun_1 from its technologies, not rifle_2"
 		);
 		refresh();
 		DivisionTemplateLimits limits = get_template_limits(im, *country);
@@ -546,6 +547,10 @@ namespace {
 		const std::uint32_t applied_before = country->get_provisional_unlock_steps_applied();
 		const std::size_t keys_before = country->get_unlock_keys().size();
 		const std::size_t modifiers_before = country->get_unlock_modifiers().size();
+		// the layer is off by default (the technologies of the army give the unlocks): these checks turn it on
+		OpenVicWarDefines& switch_war = const_cast<OpenVicWarDefines&>(war);
+		const auto switch_before = switch_war.provisional_unlocks_enabled;
+		switch_war.provisional_unlocks_enabled = 1;
 		apply_provisional_unlocks(im, 1870);
 		refresh();
 		limits = get_template_limits(im, *country);
@@ -613,6 +618,7 @@ namespace {
 			);
 			mutable_war.provisional_unlocks_enabled = enabled_before;
 		}
+		switch_war.provisional_unlocks_enabled = switch_before;
 
 		// ---- put the country back
 		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
@@ -1201,17 +1207,16 @@ namespace {
 				&& type("line_infantry")->ov.unlock_key.empty() && type("napoleonic_artillery")->ov.unlock_key.empty() && type("cavalry")->ov.unlock_key.empty(),
 			"unit types: line infantry, cavalry and napoleonic artillery are open from the start, the others have a key");
 		// The armies of the start name the units of Vic2: infantry is line infantry (the alias)
-		bool start_types_ok = true;
-		bool old_infantry_in_armies = false;
+		// (the AI may recruit the new types its technologies open, so the line infantry of the start is only looked for)
+		bool line_infantry_in_armies = false;
 		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
 			for (ArmyInstance& army : country.get_armies()) {
 				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-					old_infantry_in_armies |= regiment.get_regiment_type().get_identifier() == "infantry";
-					start_types_ok &= regiment.get_regiment_type().get_identifier() != "artillery";
+					line_infantry_in_armies |= regiment.get_regiment_type().get_identifier() == "line_infantry";
 				}
 			}
 		}
-		r.check(!old_infantry_in_armies && start_types_ok, "unit types: the armies of the start have line infantry (the alias of the infantry of Vic2), no regiments of the new types");
+		r.check(line_infantry_in_armies, "unit types: the armies of the start have line infantry (the alias of the infantry of Vic2)");
 		// The key opens the type
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
@@ -1408,6 +1413,225 @@ namespace {
 			r.check(faulty.size() == 7 && problems >= 4, "army technologies: the validator finds a missing prerequisite, two technologies in a cell, a prerequisite that is not above and a cycle", fmt::format("{} problems", problems));
 		}
 		fs::remove_all(temp, ec);
+	}
+
+	// ---- the research of the army technologies (research/ArmyResearch.*)
+
+	void test_army_research(Results& r, InstanceManager& im) {
+		ArmyTechnologyManager const& manager = im.definition_manager.get_research_manager().get_army_technology_manager();
+		if (manager.size() == 0) {
+			fmt::println("TEST INFO army research: no army technologies, not checked");
+			return;
+		}
+		OpenVicResearchDefines& research_defines = const_cast<OpenVicResearchDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().research);
+		ModifierManager const& modifier_manager = im.definition_manager.get_modifier_manager();
+		const auto index_of = [&](std::string_view id) -> std::size_t { return manager.find(id)->index; };
+		const auto state_of = [&](CountryInstance const& country, std::string_view id) { return get_army_technology_state(manager, country, *manager.find(id)); };
+
+		// A civilised AI country, another civilised one and an uncivilised one
+		CountryInstance* civilised = nullptr;
+		CountryInstance* other = nullptr;
+		CountryInstance* uncivilised = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country()) {
+				continue;
+			}
+			if (candidate.is_civilised() && candidate.is_ai()) {
+				if (civilised == nullptr) {
+					civilised = &candidate;
+				} else if (other == nullptr) {
+					other = &candidate;
+				}
+			} else if (!candidate.is_civilised() && uncivilised == nullptr) {
+				uncivilised = &candidate;
+			}
+		}
+		if (civilised == nullptr || other == nullptr || uncivilised == nullptr) {
+			fmt::println("TEST INFO army research: no countries to test with, not checked");
+			return;
+		}
+		struct Snapshot {
+			CountryInstance* country;
+			std::vector<memory::string> keys;
+			std::vector<Modifier const*> modifiers;
+			std::vector<std::uint32_t> researched;
+			std::vector<ArmyResearchProgress> research;
+			bool start_given;
+		};
+		std::vector<Snapshot> snapshots;
+		for (CountryInstance* const country : { civilised, other, uncivilised }) {
+			snapshots.push_back({
+				country, { country->get_unlock_keys().begin(), country->get_unlock_keys().end() },
+				{ country->get_unlock_modifiers().begin(), country->get_unlock_modifiers().end() },
+				{ country->get_army_technologies_researched().begin(), country->get_army_technologies_researched().end() },
+				{ country->get_army_research().begin(), country->get_army_research().end() }, country->are_army_start_technologies_given()
+			});
+		}
+		const auto refresh = [&](CountryInstance& country) {
+			country.update_modifier_sum(im.get_today(), modifier_manager.get_static_modifier_cache());
+		};
+
+		// The AI countries have been researching since the first day: both countries are put back to the start (only the start technologies)
+		const std::int32_t ai_before = research_defines.army_research_ai_enabled;
+		research_defines.army_research_ai_enabled = 0;
+		for (CountryInstance* const country : { civilised, other }) {
+			for (ArmyTechnology const& technology : manager.get_technologies()) {
+				country->unmark_army_technology_researched(static_cast<std::uint32_t>(technology.index));
+				for (memory::string const& key : technology.unlocks) {
+					country->revoke_unlock(key);
+				}
+				if (technology.modifier.has_value()) {
+					country->remove_unlock_modifier(*technology.modifier);
+				}
+			}
+			country->get_army_research_mutable().clear();
+			country->set_army_start_technologies_given(false);
+		}
+		update_army_research(im);
+		refresh(*civilised);
+		refresh(*other);
+
+		// The start: the civilised have the technologies of the start with their keys, the uncivilised have nothing
+		r.check(
+			civilised->are_army_start_technologies_given() && civilised->has_army_technology(static_cast<std::uint32_t>(index_of("arms_making")))
+				&& civilised->has_army_technology(static_cast<std::uint32_t>(index_of("percussion_cap"))) && civilised->has_unlock("equipment:rifle_1")
+				&& civilised->has_unlock("unit:infantry") && civilised->has_unlock("equipment:field_gun_1") && !civilised->has_unlock("equipment:rifle_2"),
+			"army research: a civilised country starts with arms making, the percussion cap and the standardized army and their keys (rifle_1, field_gun_1, unit:infantry)"
+		);
+		r.check(
+			uncivilised->get_army_technologies_researched().empty() && !uncivilised->are_army_start_technologies_given() && !uncivilised->has_unlock("equipment:rifle_1"),
+			"army research: an uncivilised country has no army technologies and no keys of them"
+		);
+		r.check(
+			state_of(*civilised, "percussion_cap") == tech_state_t::RESEARCHED && state_of(*civilised, "rifling") == tech_state_t::AVAILABLE
+				&& state_of(*civilised, "breech_loading") == tech_state_t::NOT_AVAILABLE,
+			"army research: the states are researched, available (the prerequisites are done) and not available"
+		);
+		r.check(
+			can_start_army_research(im, *uncivilised, index_of("arms_making")) == army_research_check_t::NOT_ALLOWED
+				&& can_start_army_research(im, *civilised, index_of("breech_loading")) == army_research_check_t::PREREQUISITES
+				&& can_start_army_research(im, *civilised, index_of("percussion_cap")) == army_research_check_t::ALREADY_RESEARCHED
+				&& can_start_army_research(im, *civilised, 100000) == army_research_check_t::NO_SUCH_TECHNOLOGY
+				&& can_start_army_research(im, *civilised, index_of("rifling")) == army_research_check_t::OK,
+			"army research: the uncivilised cannot research, nor can one start a technology with open prerequisites, a researched one or one that does not exist"
+		);
+
+		// One slot per branch, the days, the unlocks and the modifier
+		r.check(start_army_research(im, *civilised, index_of("rifling")), "army research: a research is started");
+		r.check(
+			state_of(*civilised, "rifling") == tech_state_t::RESEARCHING
+				&& can_start_army_research(im, *civilised, index_of("post_napoleonic_tactics")) == army_research_check_t::SLOT_BUSY
+				&& can_start_army_research(im, *civilised, index_of("rifling")) == army_research_check_t::ALREADY_RESEARCHING && !start_army_research(im, *civilised, index_of("post_napoleonic_tactics")),
+			"army research: a branch has one slot, the second technology waits"
+		);
+		for (int day = 0; day < 100; ++day) {
+			update_army_research(im);
+		}
+		r.check(
+			get_army_research_days_left(im, *civilised, index_of("rifling")) == 630 && !civilised->has_unlock("equipment:rifle_2"),
+			"army research: a day of research is a day, nothing is given before the end", fmt::format("{} days left", get_army_research_days_left(im, *civilised, index_of("rifling")))
+		);
+		// cancelling loses the progress
+		r.check(cancel_army_research(im, *civilised, index_of("rifling")) && civilised->get_army_research().empty()
+				&& get_army_research_days_left(im, *civilised, index_of("rifling")) == 730 && !cancel_army_research(im, *civilised, index_of("rifling")),
+			"army research: cancelling frees the slot and the progress is lost");
+		start_army_research(im, *civilised, index_of("rifling"));
+		for (int day = 0; day < 729; ++day) {
+			update_army_research(im);
+		}
+		r.check(state_of(*civilised, "rifling") == tech_state_t::RESEARCHING && !civilised->has_unlock("equipment:rifle_2"), "army research: after 729 days the technology is still being researched");
+		update_army_research(im);
+		r.check(
+			state_of(*civilised, "rifling") == tech_state_t::RESEARCHED && civilised->get_army_research().empty() && civilised->has_unlock("equipment:rifle_2")
+				&& civilised->has_unlock("equipment:field_gun_2") && civilised->has_unlock("unit:rifled_artillery") && state_of(*civilised, "breech_loading") == tech_state_t::AVAILABLE,
+			"army research: after 730 days the technology is researched, its keys are given and the next one is available"
+		);
+		research_defines.army_research_ai_enabled = ai_before;
+
+		// The modifier of a technology reaches the country
+		{
+			CountryInstance& country = *civilised;
+			ModifierEffectCache const& cache = modifier_manager.get_modifier_effect_cache();
+			(void)cache;
+			refresh(country);
+			const std::uint32_t ranks_before = get_template_limits(im, country).ranks;
+			complete_army_technology(im, country, index_of("post_napoleonic_tactics"));
+			refresh(country);
+			r.check(get_template_limits(im, country).ranks == ranks_before + 1 && country.has_unlock("unit:hussars"),
+				"army research: post-Napoleonic tactics gives a column to the templates (the modifier of the file) and the hussars");
+			r.check(!complete_army_technology(im, country, index_of("post_napoleonic_tactics")), "army research: a technology is researched once");
+		}
+
+		// AND between the blocks, OR inside a block (operational planning: mobilisation planning AND (skirmish order OR breech loading))
+		{
+			complete_army_technology(im, *other, index_of("mobilisation_planning"));
+			r.check(state_of(*other, "operational_planning") == tech_state_t::NOT_AVAILABLE, "army research: with one of the two blocks done the technology is not available");
+			complete_army_technology(im, *other, index_of("skirmish_order"));
+			r.check(state_of(*other, "operational_planning") == tech_state_t::AVAILABLE, "army research: one technology of a block of alternatives is enough");
+		}
+
+		// The AI: the available technology with the lowest year_hint, the slot of the branch free
+		{
+			const std::size_t choice = choose_ai_army_technology(im, *other, 0);
+			r.check(choice != std::numeric_limits<std::size_t>::max() && state_of(*other, manager.at(choice).identifier) == tech_state_t::AVAILABLE, "army research: the AI chooses an available technology");
+			bool lowest = choice != std::numeric_limits<std::size_t>::max();
+			for (ArmyTechnology const& technology : manager.get_technologies()) {
+				if (lowest && can_start_army_research(im, *other, technology.index) == army_research_check_t::OK && technology.year_hint < manager.at(choice).year_hint) {
+					lowest = false;
+				}
+			}
+			r.check(lowest, "army research: the AI takes the available technology with the lowest year hint");
+			other->get_army_research_mutable().clear();
+			update_army_research(im);
+			r.check(!other->get_army_research().empty(), "army research: a free slot of an AI country is filled by the daily update");
+			research_defines.army_research_ai_enabled = 0;
+			other->get_army_research_mutable().clear();
+			update_army_research(im);
+			r.check(other->get_army_research().empty(), "army research: ov_research.ARMY_RESEARCH_AI_ENABLED = 0 stops the AI");
+			research_defines.army_research_ai_enabled = ai_before;
+		}
+
+		// A civilised-only switch
+		{
+			const std::int32_t only_before = research_defines.army_research_civilised_only;
+			research_defines.army_research_civilised_only = 0;
+			r.check(can_start_army_research(im, *uncivilised, index_of("arms_making")) == army_research_check_t::OK, "army research: with ARMY_RESEARCH_CIVILISED_ONLY = 0 the uncivilised may research too");
+			research_defines.army_research_civilised_only = only_before;
+		}
+
+		// The state is in the hash
+		{
+			other->get_army_research_mutable().clear();
+			const auto hash_before = StateHash::compute(im);
+			const std::size_t choice = choose_ai_army_technology(im, *other, 0);
+			r.check(choice != std::numeric_limits<std::size_t>::max() && start_army_research(im, *other, choice) && StateHash::compute(im) != hash_before,
+				"army research: the research is in the hash of the state");
+		}
+
+		// put the countries back
+		for (Snapshot const& snapshot : snapshots) {
+			CountryInstance& country = *snapshot.country;
+			for (const std::uint32_t index : std::vector<std::uint32_t> { country.get_army_technologies_researched().begin(), country.get_army_technologies_researched().end() }) {
+				if (std::find(snapshot.researched.begin(), snapshot.researched.end(), index) == snapshot.researched.end()) {
+					country.unmark_army_technology_researched(index);
+				}
+			}
+			for (memory::string const& key : std::vector<memory::string> { country.get_unlock_keys().begin(), country.get_unlock_keys().end() }) {
+				country.revoke_unlock(key);
+			}
+			for (memory::string const& key : snapshot.keys) {
+				country.grant_unlock(key);
+			}
+			while (!country.get_unlock_modifiers().empty()) {
+				country.remove_unlock_modifier(*country.get_unlock_modifiers().front());
+			}
+			for (Modifier const* const modifier : snapshot.modifiers) {
+				country.add_unlock_modifier(*modifier);
+			}
+			country.get_army_research_mutable().assign(snapshot.research.begin(), snapshot.research.end());
+			country.set_army_start_technologies_given(snapshot.start_given);
+			refresh(country);
+		}
 	}
 
 	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
@@ -3189,6 +3413,7 @@ namespace {
 		test_regiment_equipment(r, *im);
 		test_unit_types(r, *im);
 		test_army_technologies(r, *im);
+		test_army_research(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

@@ -1958,6 +1958,28 @@ bool CountryInstance::has_unlock(std::string_view key) const {
 	);
 }
 
+bool CountryInstance::has_army_technology(const std::uint32_t technology_index) const {
+	return std::binary_search(army_technologies_researched.begin(), army_technologies_researched.end(), technology_index);
+}
+
+bool CountryInstance::mark_army_technology_researched(const std::uint32_t technology_index) {
+	const auto it = std::lower_bound(army_technologies_researched.begin(), army_technologies_researched.end(), technology_index);
+	if (it != army_technologies_researched.end() && *it == technology_index) {
+		return false;
+	}
+	army_technologies_researched.insert(it, technology_index);
+	return true;
+}
+
+bool CountryInstance::unmark_army_technology_researched(const std::uint32_t technology_index) {
+	const auto it = std::lower_bound(army_technologies_researched.begin(), army_technologies_researched.end(), technology_index);
+	if (it == army_technologies_researched.end() || *it != technology_index) {
+		return false;
+	}
+	army_technologies_researched.erase(it);
+	return true;
+}
+
 bool CountryInstance::add_unlock_modifier(Modifier const& modifier) {
 	if (std::find(unlock_modifiers.begin(), unlock_modifiers.end(), &modifier) != unlock_modifiers.end()) {
 		return false;

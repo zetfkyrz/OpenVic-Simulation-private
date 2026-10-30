@@ -20,6 +20,7 @@
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/research/ArmyResearch.hpp"
 
 using namespace OpenVic;
 
@@ -1231,4 +1232,17 @@ bool GameActionManager::VariantVisitor::operator() (cancel_colonisation_argument
 		return false;
 	}
 	return instance_manager.get_colonisation_manager().cancel_project(war_action_country(instance_manager, country_index), *province);
+}
+
+// Research of the army technologies
+bool GameActionManager::VariantVisitor::operator() (start_army_research_argument_t const& argument) const {
+	const auto [country_index, technology_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return start_army_research(instance_manager, country, technology_index);
+}
+
+bool GameActionManager::VariantVisitor::operator() (cancel_army_research_argument_t const& argument) const {
+	const auto [country_index, technology_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return cancel_army_research(instance_manager, country, technology_index);
 }

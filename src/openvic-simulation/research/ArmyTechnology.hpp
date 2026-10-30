@@ -30,6 +30,7 @@ namespace OpenVic {
 		memory::string identifier;
 		std::size_t index = 0; // the position in the load order (the order of the files)
 		memory::string branch;
+		std::size_t branch_index = 0; // the position of the branch in the order the branches were met
 		std::int32_t era = 1;
 		std::int32_t x = 0, y = 0; // the cell of the grid
 		std::int32_t research_days = 730;
@@ -47,6 +48,7 @@ namespace OpenVic {
 		// A deque: the countries point to the modifiers of the technologies, which must not move
 		std::deque<ArmyTechnology> technologies;
 		string_map_t<std::size_t> index_by_identifier;
+		memory::vector<memory::string> branches;
 
 	public:
 		// A broken technology is skipped with a warning (file, line, reason). Returns the number of technologies loaded.
@@ -65,7 +67,10 @@ namespace OpenVic {
 		[[nodiscard]] std::deque<ArmyTechnology> const& get_technologies() const {
 			return technologies;
 		}
-		[[nodiscard]] memory::vector<memory::string> get_branches() const;
+		// The branches in the order they were met (a branch has one slot of research for a country)
+		[[nodiscard]] memory::vector<memory::string> const& get_branches() const {
+			return branches;
+		}
 		// The prerequisites with the indices: blocks of indices (a missing id gives no index, so the block cannot be satisfied by it)
 		[[nodiscard]] memory::vector<memory::vector<std::size_t>> get_prerequisite_indices(ArmyTechnology const& technology) const;
 	};

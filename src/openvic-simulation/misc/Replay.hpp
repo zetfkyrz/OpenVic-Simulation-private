@@ -42,7 +42,9 @@ namespace OpenVic {
 		// 26: small_arms and artillery are rifle_0 and field_gun_0 (they were rifle_1 and field_gun_1), recipes of the first generation
 		// 27: unit types of OpenVic in files (ov_units; infantry, cavalry, artillery of Vic2 are line_infantry, cavalry, napoleonic_artillery), unit: keys, the weapon by the
 		//     list of the type with the penalty below the lowest allowed one
-		inline constexpr int SIMULATION_VERSION = 27;
+		// 28: research of the army technologies (ov_data/common/ov_technology): one slot per branch, start technologies of the civilised, the AI researching, the provisional
+		//     unlocks of the year are off by default
+		inline constexpr int SIMULATION_VERSION = 28;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

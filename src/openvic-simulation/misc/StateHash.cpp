@@ -123,6 +123,14 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			}
 			hasher.add(static_cast<std::uint64_t>(0));
 		}
+		for (const std::uint32_t technology_index : country.get_army_technologies_researched()) {
+			hasher.add(static_cast<std::uint64_t>(technology_index));
+		}
+		for (ArmyResearchProgress const& progress : country.get_army_research()) {
+			hasher.add(static_cast<std::uint64_t>(progress.technology));
+			hasher.add(static_cast<std::uint64_t>(progress.days_done));
+		}
+		hasher.add(country.are_army_start_technologies_given() ? 1 : 0);
 		for (Modifier const* const unlock_modifier : country.get_unlock_modifiers()) {
 			for (const char character : unlock_modifier->get_identifier()) {
 				hasher.add(static_cast<std::uint64_t>(static_cast<unsigned char>(character)));

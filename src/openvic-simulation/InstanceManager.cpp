@@ -14,6 +14,7 @@
 #include "openvic-simulation/economy/production/ArtisanalProducer.hpp"
 #include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/research/ArmyResearch.hpp"
 #include "openvic-simulation/military/SupplyDelivery.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
@@ -207,6 +208,7 @@ void InstanceManager::update_gamestate() {
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "modifier_sums");
 			update_provisional_unlocks(*this);
+			update_army_research(*this);
 			update_modifier_sums();
 		}
 
@@ -497,6 +499,7 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 	OV_ERR_FAIL_COND_V_MSG(!all_has_state, false, "At least one land province has no state");
 
 	update_provisional_unlocks(*this);
+	update_army_research(*this);
 	update_modifier_sums();
 	map_instance.initialise_for_new_game(*this);
 	// The regiments of the start of the game are put into divisions (out of the template) and the armies of the countries without the

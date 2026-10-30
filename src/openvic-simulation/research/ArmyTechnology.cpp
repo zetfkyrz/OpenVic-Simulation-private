@@ -119,6 +119,11 @@ std::size_t ArmyTechnologyManager::load_file(std::string_view source, ast::NodeC
 				technology.modifier.emplace(memory::fmt::format("army_tech_{}", technology.identifier), std::move(modifier_value));
 			}
 			technology.index = technologies.size();
+			const auto branch_it = std::find(branches.begin(), branches.end(), technology.branch);
+			technology.branch_index = static_cast<std::size_t>(branch_it - branches.begin());
+			if (branch_it == branches.end()) {
+				branches.push_back(technology.branch);
+			}
 			index_by_identifier.emplace(technology.identifier, technology.index);
 			technologies.push_back(std::move(technology));
 			loaded++;
@@ -135,16 +140,6 @@ std::size_t ArmyTechnologyManager::load_file(std::string_view source, ast::NodeC
 ArmyTechnology const* ArmyTechnologyManager::find(std::string_view identifier) const {
 	const auto it = index_by_identifier.find(identifier);
 	return it == index_by_identifier.end() ? nullptr : &technologies[it->second];
-}
-
-memory::vector<memory::string> ArmyTechnologyManager::get_branches() const {
-	memory::vector<memory::string> branches;
-	for (ArmyTechnology const& technology : technologies) {
-		if (std::find(branches.begin(), branches.end(), technology.branch) == branches.end()) {
-			branches.push_back(technology.branch);
-		}
-	}
-	return branches;
 }
 
 memory::vector<memory::vector<std::size_t>> ArmyTechnologyManager::get_prerequisite_indices(ArmyTechnology const& technology) const {

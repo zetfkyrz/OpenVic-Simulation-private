@@ -96,6 +96,12 @@ namespace OpenVic {
 
 	/* Representation of a country's mutable attributes, with a CountryDefinition that is unique at any single time
 	 * but can be swapped with other CountryInstance's CountryDefinition when switching tags. */
+	// A technology of the army being researched: its index in the ArmyTechnologyManager and the days done
+	struct ArmyResearchProgress {
+		std::uint32_t technology = 0;
+		std::int32_t days_done = 0;
+	};
+
 	struct CountryInstance : FlagStrings, HasIndex<CountryInstance, country_index_t>, PopsAggregate {
 		friend struct CountryInstanceManager;
 
@@ -500,6 +506,11 @@ namespace OpenVic {
 		memory::vector<memory::string> unlock_keys;
 		memory::vector<Modifier const*> unlock_modifiers;
 		std::uint32_t provisional_unlock_steps_applied = 0;
+		// The research of the army technologies (research/ArmyResearch.hpp): the researched ones (sorted indices), the ones being researched
+		// (at most one for a branch) and whether the start technologies of the civilised were given; all of it is in the state hash
+		memory::vector<std::uint32_t> army_technologies_researched;
+		memory::vector<ArmyResearchProgress> army_research;
+		bool army_start_technologies_given = false;
 		// The groups of armies (military/ArmyGroup.hpp)
 		memory::vector<ArmyGroup> army_groups;
 		std::uint32_t next_army_group_id = 1;
@@ -867,6 +878,25 @@ namespace OpenVic {
 		bool remove_unlock_modifier(Modifier const& modifier);
 		[[nodiscard]] std::span<Modifier const* const> get_unlock_modifiers() const {
 			return unlock_modifiers;
+		}
+		[[nodiscard]] std::span<const std::uint32_t> get_army_technologies_researched() const {
+			return army_technologies_researched;
+		}
+		[[nodiscard]] bool has_army_technology(const std::uint32_t technology_index) const;
+		// true if it was not researched yet; the unlocks and the modifiers of the technology are given by complete_army_technology
+		bool mark_army_technology_researched(const std::uint32_t technology_index);
+		bool unmark_army_technology_researched(const std::uint32_t technology_index);
+		[[nodiscard]] std::span<const ArmyResearchProgress> get_army_research() const {
+			return army_research;
+		}
+		[[nodiscard]] memory::vector<ArmyResearchProgress>& get_army_research_mutable() {
+			return army_research;
+		}
+		[[nodiscard]] bool are_army_start_technologies_given() const {
+			return army_start_technologies_given;
+		}
+		void set_army_start_technologies_given(const bool given) {
+			army_start_technologies_given = given;
 		}
 		[[nodiscard]] std::uint32_t get_provisional_unlock_steps_applied() const {
 			return provisional_unlock_steps_applied;

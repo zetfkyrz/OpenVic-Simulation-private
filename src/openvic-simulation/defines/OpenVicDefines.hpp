@@ -285,8 +285,8 @@ namespace OpenVic {
 	INT(TEMPLATE_COMPANY_SLOTS_DEFAULT, template_company_slots_default, 1, 0, 8) \
 	INT(TEMPLATE_COMPANY_SLOTS_MAX, template_company_slots_max, 4, 0, 8) \
 	/* 1: the provisional unlocks of the year (ov_data/common/ov_equipment/provisional_unlocks.txt) give the weapons and the limits of the */ \
-	/* templates by the year of the game; 0 when the new system of technologies gives them (TEMPORARY, docs/PENDING_PLANS.md) */ \
-	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 1, 0, 1) \
+	/* templates by the year of the game; 0 (the default) when the technologies of the army give them (TEMPORARY, docs/PENDING_PLANS.md) */ \
+	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 0, 0, 1) \
 	/* What a template is worth (military/DivisionStats.cpp): the men of a strength point of a regiment, the kit and the men weigh this many */ \
 	/* kilograms per strength point, the occupation speed 1 is the base (technologies add to it, from this percent it is instant) */ \
 	INT(TEMPLATE_MEN_PER_STRENGTH, template_men_per_strength, 1000, 1, 100000) \
@@ -348,7 +348,11 @@ namespace OpenVic {
 	INT(AI_PLAYER_OFFER_EXTRA_DAYS, ai_player_offer_extra_days, 30, 0, 36500)
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
-	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1)
+	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1) \
+	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them (the uncivilised have none) */ \
+	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 1, 0, 1) \
+	/* 1: the AI countries start the available technology with the lowest year_hint when their slot of a branch is free */ \
+	INT(ARMY_RESEARCH_AI_ENABLED, army_research_ai_enabled, 1, 0, 1)
 #define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 12, 1, 64) \
 	INT(FACTORY_VALUE_PAYBACK_YEARS, factory_value_payback_years, 6, 1, 1000) \
