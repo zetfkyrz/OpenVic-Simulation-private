@@ -340,9 +340,12 @@ namespace {
 			"equipment: rifle_3 has the multipliers of the table (attack 2.25, defence 1.6, breakthrough 1.5, breech loading)"
 		);
 		EquipmentDefinition const* const rifle_1 = manager.find_equipment("rifle_1");
+		EquipmentDefinition const* const rifle_0 = manager.find_equipment("rifle_0");
+		EquipmentDefinition const* const gun_0 = manager.find_equipment("field_gun_0");
 		r.check(
-			rifle_1 != nullptr && rifle_1->good.replaces == "small_arms" && rifle_1->good.base_price == fixed_point_t(37),
-			"equipment: rifle_1 is the old small arms (replaces the good, price 37)"
+			rifle_0 != nullptr && rifle_0->good.replaces == "small_arms" && rifle_0->good.base_price == fixed_point_t(37)
+				&& rifle_1 != nullptr && rifle_1->good.replaces.empty() && gun_0 != nullptr && gun_0->good.replaces == "artillery",
+			"equipment: rifle_0 and field_gun_0 are the old small arms and artillery (they replace the goods of Vic2, price 37 and 60)"
 		);
 		EquipmentDefinition const* const gun_4 = manager.find_equipment("field_gun_4");
 		r.check(
@@ -354,8 +357,6 @@ namespace {
 			gun_1 != nullptr && gun_1->has_flag("canister") && gun_1->attack_mult == fixed_point_t::_1,
 			"equipment: field_gun_1 has canister and the multipliers 1"
 		);
-		EquipmentDefinition const* const rifle_0 = manager.find_equipment("rifle_0");
-		EquipmentDefinition const* const gun_0 = manager.find_equipment("field_gun_0");
 		r.check(
 			rifle_0 != nullptr && gun_0 != nullptr && rifle_0->tier == 0 && gun_0->tier == 0 && rifle_0->attack_mult == fixed_point_t(7) / 10
 				&& rifle_0->defense_mult == fixed_point_t(7) / 10 && rifle_0->breakthrough_mult == fixed_point_t(7) / 10
@@ -397,14 +398,14 @@ namespace {
 		r.check(in_category, "goods: the goods of the weapons are in the category of the file (military goods)");
 		r.check(
 			goods.get_good_definition_by_identifier("small_arms") != nullptr
-				&& goods.get_good_definition_by_identifier("small_arms") == goods.get_good_definition_by_identifier("rifle_1")
+				&& goods.get_good_definition_by_identifier("small_arms") == goods.get_good_definition_by_identifier("rifle_0")
 				&& goods.get_good_definition_by_identifier("artillery") != nullptr
-				&& goods.get_good_definition_by_identifier("artillery") == goods.get_good_definition_by_identifier("field_gun_1"),
-			"goods: the old names small_arms and artillery are rifle_1 and field_gun_1 (the files of Vic2 keep working)"
+				&& goods.get_good_definition_by_identifier("artillery") == goods.get_good_definition_by_identifier("field_gun_0"),
+			"goods: the old names small_arms and artillery are rifle_0 and field_gun_0 (the files of Vic2 keep working)"
 		);
 		UnitTypeManager const& unit_types = game_manager.get_definition_manager().get_military_manager().get_unit_type_manager();
 		RegimentType const* const infantry_type = unit_types.get_regiment_type_by_identifier("infantry");
-		GoodDefinition const* const rifle_good = goods.get_good_definition_by_identifier("rifle_1");
+		GoodDefinition const* const rifle_good = goods.get_good_definition_by_identifier("rifle_0");
 		bool builds_with_rifles = false, ammunition_used = false;
 		if (infantry_type != nullptr) {
 			for (auto const& [good, quantity] : infantry_type->get_build_cost()) {
@@ -414,7 +415,7 @@ namespace {
 				ammunition_used |= item.good->get_identifier() == "ammunition" && item.construction_amount > fixed_point_t::_0;
 			}
 		}
-		r.check(builds_with_rifles && ammunition_used, "goods: an infantry regiment is built from rifle_1 (the old small arms of its file) and still uses ammunition");
+		r.check(builds_with_rifles && ammunition_used, "goods: an infantry regiment is built from rifle_0 (the old small arms of its file) and still uses ammunition");
 	}
 
 	// ---- the unlocks of a country (docs/EQUIPMENT_MODDING.md, section 6)
@@ -867,20 +868,20 @@ namespace {
 		// ---- the options of the buildings: a type for every generation, from the files
 		const auto rifle_options = get_factory_production_options(im, *rifle_building);
 		const auto gun_options = get_factory_production_options(im, *gun_building);
-		bool ordered = rifle_options.size() == 4 && gun_options.size() == 4;
-		for (std::size_t i = 0; ordered && i < 4; ++i) {
-			ordered = rifle_options[i].tier == i + 1 && gun_options[i].tier == i + 1
-				&& rifle_options[i].production_type->output_good.get_identifier() == fmt::format("rifle_{}", i + 1)
-				&& gun_options[i].production_type->output_good.get_identifier() == fmt::format("field_gun_{}", i + 1);
+		bool ordered = rifle_options.size() == 5 && gun_options.size() == 5;
+		for (std::size_t i = 0; ordered && i < 5; ++i) {
+			ordered = rifle_options[i].tier == i && gun_options[i].tier == i
+				&& rifle_options[i].production_type->output_good.get_identifier() == fmt::format("rifle_{}", i)
+				&& gun_options[i].production_type->output_good.get_identifier() == fmt::format("field_gun_{}", i);
 		}
-		r.check(ordered, "production types: a factory of rifles and a factory of guns have a type for each of the four generations, the lowest first",
+		r.check(ordered, "production types: a factory of rifles and a factory of guns have a type for each of the five generations (0 to 4), the lowest first",
 			fmt::format("{} and {} options", rifle_options.size(), gun_options.size()));
 		r.check(
-			rifle_options.size() == 4 && rifle_options[0].production_type == rifle_building->production_type,
+			rifle_options.size() == 5 && rifle_options[0].production_type == rifle_building->production_type,
 			"production types: the first generation is the type of the building (the old small arms recipe)"
 		);
-		bool recipes_cost_more = rifle_options.size() == 4 && gun_options.size() == 4;
-		for (std::size_t i = 1; recipes_cost_more && i < 4; ++i) {
+		bool recipes_cost_more = rifle_options.size() == 5 && gun_options.size() == 5;
+		for (std::size_t i = 1; recipes_cost_more && i < 5; ++i) {
 			const auto input_value = [&im](ProductionType const& production_type) -> fixed_point_t {
 				fixed_point_t value = fixed_point_t::_0;
 				for (auto const& [good, quantity] : production_type.input_goods) {
@@ -922,40 +923,42 @@ namespace {
 		const std::uint32_t applied_before = owner->get_provisional_unlock_steps_applied();
 
 		ProductionType const* best = get_best_production_type(im, *owner, *rifle_building);
-		r.check(best == rifle_options[0].production_type, "production types: in 1836 only the first generation is available",
+		r.check(best == rifle_options[1].production_type, "production types: in 1836 the best type is the one of rifle_1 (the provisional unlocks), the tier 0 stays available",
 			best != nullptr ? std::string(best->get_identifier()) : std::string("none"));
 		r.check(
-			is_production_option_available(*owner, rifle_options[0]) && !is_production_option_available(*owner, rifle_options[1])
-				&& !is_production_option_available(*owner, rifle_options[3]),
+			is_production_option_available(*owner, rifle_options[0]) && is_production_option_available(*owner, rifle_options[1])
+				&& !is_production_option_available(*owner, rifle_options[2]) && !is_production_option_available(*owner, rifle_options[4]),
 			"production types: a type is available when the country has the unlock of its weapon"
 		);
 		owner->grant_unlock("equipment:rifle_3");
 		best = get_best_production_type(im, *owner, *rifle_building);
-		r.check(best == rifle_options[2].production_type, "production types: with the third generation the best type is the one of rifle_3");
+		r.check(best == rifle_options[3].production_type, "production types: with the third generation the best type is the one of rifle_3");
 
 		// ---- the command: switching a factory takes one tick and costs nothing
 		const province_index_t province = state->get_capital()->index;
 		const building_type_index_t type = rifle_building->index;
 		FactoryInstance* factory = state->find_factory(*rifle_building);
 		const fixed_point_t efficiency_before = factory->get_efficiency();
+		ProductionType const* const type_before = factory->production_type; // the AI may have moved it to the first generation already
 		const bool had_machine_parts_before = std::any_of(factory->get_inputs().begin(), factory->get_inputs().end(), [](FactoryInstance::Input const& input) {
 			return input.good.get_identifier() == "machine_parts";
 		});
+		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(4));
+		im.force_tick_and_update();
+		factory = state->find_factory(*rifle_building);
+		r.check(factory->production_type == type_before, "production types: a type whose weapon the country does not have is refused");
 		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(3));
 		im.force_tick_and_update();
 		factory = state->find_factory(*rifle_building);
-		r.check(factory->production_type == rifle_options[0].production_type, "production types: a type whose weapon the country does not have is refused");
-		im.queue_game_action<set_factory_production_type_argument_t>(owner->index, province, type, std::uint32_t(2));
-		im.force_tick_and_update();
-		factory = state->find_factory(*rifle_building);
 		r.check(
-			factory->production_type == rifle_options[2].production_type && factory->get_pending_production_type() == nullptr,
+			factory->production_type == rifle_options[3].production_type && factory->get_pending_production_type() == nullptr,
 			"production types: the factory makes the type that was chosen after one tick"
 		);
 		const bool machine_parts_now = std::any_of(factory->get_inputs().begin(), factory->get_inputs().end(), [](FactoryInstance::Input const& input) {
 			return input.good.get_identifier() == "machine_parts";
 		});
-		r.check(!had_machine_parts_before && machine_parts_now && factory->get_inputs().size() == rifle_options[2].production_type->input_goods.size(),
+		(void)had_machine_parts_before;
+		r.check(machine_parts_now && factory->get_inputs().size() == rifle_options[3].production_type->input_goods.size(),
 			"production types: the inputs of the factory are the ones of the new recipe");
 		r.check(factory->get_efficiency() >= efficiency_before * 9 / 10, "production types: the switch costs no efficiency (no retooling)");
 		const std::uint64_t hash_switched = StateHash::compute(im);
@@ -974,7 +977,7 @@ namespace {
 		choose_ai_production_types(im, *owner);
 		im.force_tick_and_update();
 		r.check(
-			state->find_factory(*rifle_building)->production_type == rifle_options[2].production_type,
+			state->find_factory(*rifle_building)->production_type == rifle_options[3].production_type,
 			"production types: the AI puts the factories of weapons on the newest generation the country has"
 		);
 
@@ -1037,7 +1040,7 @@ namespace {
 		}
 		const auto pieces_of = [&](RegimentInstance const& regiment) -> fixed_point_t {
 			for (auto const& [good, quantity] : regiment.get_regiment_type().get_build_cost()) {
-				if (good->get_identifier() == "rifle_1") {
+				if (good->get_identifier() == "rifle_0") {
 					return quantity;
 				}
 			}
@@ -1050,12 +1053,19 @@ namespace {
 		const fixed_point_t stock_2_before = country->get_good_data(*rifle_2_good).stockpile_amount;
 		const fixed_point_t stock_3_before = country->get_good_data(*rifle_3_good).stockpile_amount;
 
-		// ---- at the start every regiment has the weapon it was made with
-		bool all_first = true;
+		// ---- at the start every regiment has the weapon it was made with: rifle_0, 0.7 of the attack of its type
+		EquipmentDefinition const* const rifle_0 = equipment.find_equipment("rifle_0");
+		im.force_tick_and_update();
+		bool all_first = rifle_0 != nullptr;
+		// The country has rifle_1 too (the provisional unlocks): a regiment with rifle_0 is one generation behind the best
+		EquipmentDefinition const* const best_at_start = get_best_equipment(equipment, *country, "rifle");
+		const fixed_point_t start_keep = fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * static_cast<std::int32_t>(best_at_start != nullptr ? best_at_start->tier : 0);
 		for (RegimentInstance* const regiment : infantry) {
-			all_first &= regiment->get_weapon() == nullptr && regiment->get_weapon_attack_ratio() == fixed_point_t::_1;
+			all_first &= regiment->get_weapon() == nullptr && rifle_0 != nullptr
+				&& near(regiment->get_weapon_attack_ratio(), rifle_0->attack_mult * start_keep, fixed_point_t(1) / 100)
+				&& near(regiment->get_weapon_breakthrough_ratio(), rifle_0->breakthrough_mult * start_keep, fixed_point_t(1) / 100);
 		}
-		r.check(all_first, "regiment equipment: at the start the regiments have the weapon of the first generation (ratio 1)");
+		r.check(all_first, "regiment equipment: at the start the regiments have the weapon they were made with (rifle_0, multipliers 0.7)");
 
 		// ---- the country gets the third generation, the stock has the rifles: one regiment a day is given the weapon, the stock is used
 		country->grant_unlock("equipment:rifle_2");
@@ -1078,9 +1088,10 @@ namespace {
 		);
 		if (equipped != nullptr) {
 			r.check(
-				near(equipped->get_weapon_attack_ratio(), rifle_3->attack_mult / rifle_1->attack_mult, fixed_point_t(1) / 100)
-					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defense_mult / rifle_1->defense_mult, fixed_point_t(1) / 100),
-				"regiment equipment: its attack and defence are worth the points of the new weapon against the first generation",
+				near(equipped->get_weapon_attack_ratio(), rifle_3->attack_mult, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defense_mult, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_breakthrough_ratio(), rifle_3->breakthrough_mult, fixed_point_t(1) / 100),
+				"regiment equipment: its attack, defence and breakthrough are the multipliers of the new weapon",
 				fmt::format("{} {}", dbl(equipped->get_weapon_attack_ratio()), dbl(equipped->get_weapon_defence_ratio()))
 			);
 			r.check(
@@ -1101,10 +1112,11 @@ namespace {
 			}
 		}
 		if (behind != nullptr) {
-			const fixed_point_t expected = fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * 2;
+			// rifle_0 against the best generation, rifle_3: three generations behind
+			const fixed_point_t expected = rifle_0->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * 3);
 			r.check(
 				near(behind->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
-				"regiment equipment: a regiment two generations behind the best loses the penalty twice",
+				"regiment equipment: a regiment three generations behind the best loses the penalty three times",
 				fmt::format("{} against {}", dbl(behind->get_weapon_attack_ratio()), dbl(expected))
 			);
 		}
@@ -1121,7 +1133,7 @@ namespace {
 		}
 		r.check(second_generation != nullptr, "regiment equipment: when the stock lacks the best generation the regiment is given the best one the stock has");
 		if (second_generation != nullptr) {
-			const fixed_point_t expected = rifle_2->attack_mult / rifle_1->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
+			const fixed_point_t expected = rifle_2->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
 			r.check(
 				near(second_generation->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
 				"regiment equipment: the weapon of a worse generation than the best comes with the penalty",
