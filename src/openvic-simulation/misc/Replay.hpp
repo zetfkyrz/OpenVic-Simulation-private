@@ -44,7 +44,9 @@ namespace OpenVic {
 		//     list of the type with the penalty below the lowest allowed one
 		// 28: research of the army technologies (ov_data/common/ov_technology): one slot per branch, start technologies of the civilised, the AI researching, the provisional
 		//     unlocks of the year are off by default
-		inline constexpr int SIMULATION_VERSION = 28;
+		// 29: buildings and mechanics by keys (requires_unlock in ov_buildings, mechanic:division_templates / mobilisation), the signals line (telegraph, radio), the AI
+		//     researches the first available technology of the files
+		inline constexpr int SIMULATION_VERSION = 29;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

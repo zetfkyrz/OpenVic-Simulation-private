@@ -47,6 +47,7 @@ namespace OpenVic {
 			ProductionType const* production_type = nullptr;
 			naval_capacity_t naval_capacity = 0;
 			memory::vector<fixed_point_t> colonial_points;
+			memory::vector<memory::string> requires_unlock;
 
 			building_type_args_t() {};
 			building_type_args_t(building_type_args_t&&) = default;
@@ -93,6 +94,11 @@ namespace OpenVic {
 		const fixed_point_t colonial_range;
 		const fixed_point_t infrastructure;
 
+		// The unlock keys of the army technologies (military/Unlocks.hpp): a country builds the building (new ones, expansions) only with one of these keys,
+		// the buildings that are built work without them. Empty: the technologies of the base game decide. Set by `requires_unlock` in the building
+		// (or in common/ov_buildings of OpenVic).
+		memory::vector<memory::string> requires_unlock;
+
 		BuildingType(
 			index_t new_index,
 			std::optional<province_building_index_t> new_province_building_index,
@@ -135,6 +141,10 @@ namespace OpenVic {
 		}
 
 		bool add_building_type(std::string_view identifier, BuildingType::building_type_args_t& building_type_args);
+
+		// The overlay of OpenVic: <building> = { requires_unlock = "key" } (or a list of keys, any of them is enough) for the buildings of the base game. A broken
+		// entry is skipped with a warning. Returns the number of buildings changed.
+		std::size_t load_ov_buildings_file(std::string_view source, ast::NodeCPtr root);
 
 		bool load_buildings_file(
 			GoodDefinitionManager const& good_definition_manager, ProductionTypeManager const& production_type_manager,

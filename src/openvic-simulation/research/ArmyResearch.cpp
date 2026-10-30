@@ -141,9 +141,8 @@ std::size_t OpenVic::choose_ai_army_technology(InstanceManager const& instance_m
 		if (technology.branch_index != branch_index || can_start_army_research(instance_manager, country, technology.index) != army_research_check_t::OK) {
 			continue;
 		}
-		if (best == std::numeric_limits<std::size_t>::max() || technology.year_hint < manager.at(best).year_hint) {
-			best = technology.index;
-		}
+		best = technology.index; // the first available in the order of the files
+		break;
 	}
 	return best;
 }

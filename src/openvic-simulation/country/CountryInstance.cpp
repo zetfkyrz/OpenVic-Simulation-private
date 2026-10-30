@@ -961,6 +961,15 @@ building_level_t const& CountryInstance::get_building_type_unlock_levels(Buildin
 }
 
 bool CountryInstance::is_building_type_unlocked(BuildingType const& building_type) const {
+	// A building with requires_unlock is built with one of its keys (the technologies of the army), not by the technologies of the base game
+	if (!building_type.requires_unlock.empty()) {
+		for (memory::string const& key : building_type.requires_unlock) {
+			if (has_unlock(key)) {
+				return true;
+			}
+		}
+		return false;
+	}
 	return building_type_unlock_levels.at(building_type) > building_level_t(0);
 }
 

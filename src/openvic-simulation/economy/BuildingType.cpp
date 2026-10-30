@@ -10,12 +10,33 @@
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/military/Unlocks.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/modifier/ModifierManager.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 
 using namespace OpenVic;
 using namespace OpenVic::NodeTools;
+
+namespace {
+	// A key "<kind>:<id>" or a list of them
+	NodeTools::node_callback_t expect_unlock_keys(memory::vector<memory::string>& keys) {
+		const auto add_key = [&keys](std::string_view unlock_key) -> bool {
+			if (!is_valid_unlock_key(unlock_key)) {
+				spdlog::warn_s("The unlock key \"{}\" is not <kind>:<id>, skipped", unlock_key);
+				return true;
+			}
+			keys.emplace_back(unlock_key);
+			return true;
+		};
+		return [add_key](ast::NodeCPtr node) -> bool {
+			if (dryad::node_try_cast<ast::ListValue>(node) != nullptr) {
+				return expect_list(expect_identifier_or_string(add_key))(node);
+			}
+			return expect_identifier_or_string(add_key)(node);
+		};
+	}
+}
 
 BuildingType::BuildingType(
 	index_t new_index,
@@ -56,7 +77,8 @@ BuildingType::BuildingType(
 	is_sail { building_type_args.sail },
 	is_steam { building_type_args.steam },
 	capital { building_type_args.capital },
-	is_port { building_type_args.port } {}
+	is_port { building_type_args.port },
+	requires_unlock { std::move(building_type_args.requires_unlock) } {}
 
 bool BuildingType::can_be_built_in(
 	ModifierEffectCache const& modifier_effect_cache,
@@ -143,6 +165,36 @@ bool BuildingTypeManager::add_building_type(
 	return ret;
 }
 
+std::size_t BuildingTypeManager::load_ov_buildings_file(std::string_view source, ast::NodeCPtr root) {
+	std::size_t changed = 0;
+	const bool parsed = expect_dictionary([this, source, &changed](std::string_view key, ast::NodeCPtr value) -> bool {
+		BuildingType* const building_type = building_types.get_item_by_identifier(key);
+		if (building_type == nullptr) {
+			spdlog::warn_s("The building \"{}\" of {} does not exist, skipped", key, source);
+			return true;
+		}
+		memory::vector<memory::string> keys;
+		const bool ok = NodeTools::expect_dictionary_keys_and_default(
+			[source, key](std::string_view unknown_key, ast::NodeCPtr) -> bool {
+				spdlog::warn_s("Unknown key \"{}\" in the building \"{}\" of {}", unknown_key, key, source);
+				return true;
+			},
+			"requires_unlock", ONE_EXACTLY, expect_unlock_keys(keys)
+		)(value);
+		if (!ok || keys.empty()) {
+			spdlog::warn_s("The building \"{}\" of {} has no usable requires_unlock, skipped", key, source);
+			return true;
+		}
+		building_type->requires_unlock = std::move(keys);
+		changed++;
+		return true;
+	})(root);
+	if (!parsed) {
+		spdlog::warn_s("The buildings file {} is broken, what could be read is used", source);
+	}
+	return changed;
+}
+
 bool BuildingTypeManager::load_buildings_file(
 	GoodDefinitionManager const& good_definition_manager, ProductionTypeManager const& production_type_manager,
 	ModifierManager& modifier_manager, ast::NodeCPtr root
@@ -195,7 +247,8 @@ bool BuildingTypeManager::load_buildings_file(
 				"sail", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.sail)),
 				"steam", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.steam)),
 				"capital", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.capital)),
-				"port", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.port))
+				"port", ZERO_OR_ONE, expect_bool(assign_variable_callback(building_type_args.port)),
+				"requires_unlock", ZERO_OR_ONE, expect_unlock_keys(building_type_args.requires_unlock)
 			)(value);
 
 			// The wood of the construction: lumber for the cement and timber on top of it

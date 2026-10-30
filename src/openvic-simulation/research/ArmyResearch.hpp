@@ -14,7 +14,7 @@ namespace OpenVic {
 	// The research of the army technologies of a country (docs/WAR_ASSUMPTIONS.md, section 5): one slot for a branch, a technology takes its
 	// research_days, nothing is paid. When it is done the keys of the technology are granted (CountryInstance::grant_unlock) and its modifier
 	// is added to the country. The civilised countries get the technologies with start = civilised when they become civilised (at the start
-	// of the game for those that are). The AI picks the available technology with the lowest year_hint when its slot is free.
+	// of the game for those that are). The AI picks the first available technology (the order of the files) when its slot is free.
 
 	enum struct army_research_check_t : std::uint8_t {
 		OK,
@@ -40,7 +40,7 @@ namespace OpenVic {
 	bool complete_army_technology(InstanceManager& instance_manager, CountryInstance& country, std::size_t technology_index);
 	// The days left of a technology being researched (research_days if it is not)
 	[[nodiscard]] std::int32_t get_army_research_days_left(InstanceManager const& instance_manager, CountryInstance const& country, std::size_t technology_index);
-	// The technology the AI would start in the branch (SIZE_MAX if none): the available one with the lowest year_hint, then the lowest index
+	// The technology the AI would start in the branch (SIZE_MAX if none): the first available one in the order of the files
 	[[nodiscard]] std::size_t choose_ai_army_technology(InstanceManager const& instance_manager, CountryInstance const& country, std::size_t branch_index);
 
 	// Every day (before the modifier sums): the start technologies of the countries that became civilised, the progress of the research,

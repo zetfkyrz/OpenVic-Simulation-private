@@ -303,6 +303,10 @@ bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t cons
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
 
+	if (new_is_mobilised && !country.has_unlock(UNLOCK_MECHANIC_MOBILISATION)) {
+		return false;
+	}
+
 	const bool old_mobilise = country.is_mobilised();
 	country.set_mobilised(new_is_mobilised);
 	return old_mobilise != country.is_mobilised();
@@ -986,18 +990,27 @@ bool GameActionManager::VariantVisitor::operator() (set_army_supply_priority_arg
 bool GameActionManager::VariantVisitor::operator() (create_division_template_argument_t const& argument) const {
 	const auto [country_index, grid] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
+		return false;
+	}
 	return create_division_template(instance_manager, country, grid);
 }
 
 bool GameActionManager::VariantVisitor::operator() (update_division_template_argument_t const& argument) const {
 	const auto [country_index, template_id, grid] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
+		return false;
+	}
 	return update_division_template(instance_manager, country, template_id, grid);
 }
 
 bool GameActionManager::VariantVisitor::operator() (delete_division_template_argument_t const& argument) const {
 	const auto [country_index, template_id] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
+		return false;
+	}
 	return delete_division_template(country, template_id);
 }
 

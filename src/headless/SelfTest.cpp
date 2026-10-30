@@ -1570,17 +1570,17 @@ namespace {
 			r.check(state_of(*other, "operational_planning") == tech_state_t::AVAILABLE, "army research: one technology of a block of alternatives is enough");
 		}
 
-		// The AI: the available technology with the lowest year_hint, the slot of the branch free
+		// The AI: the first available technology in the order of the files, the slot of the branch free
 		{
 			const std::size_t choice = choose_ai_army_technology(im, *other, 0);
 			r.check(choice != std::numeric_limits<std::size_t>::max() && state_of(*other, manager.at(choice).identifier) == tech_state_t::AVAILABLE, "army research: the AI chooses an available technology");
-			bool lowest = choice != std::numeric_limits<std::size_t>::max();
+			bool first = choice != std::numeric_limits<std::size_t>::max();
 			for (ArmyTechnology const& technology : manager.get_technologies()) {
-				if (lowest && can_start_army_research(im, *other, technology.index) == army_research_check_t::OK && technology.year_hint < manager.at(choice).year_hint) {
-					lowest = false;
+				if (first && technology.index < choice && can_start_army_research(im, *other, technology.index) == army_research_check_t::OK) {
+					first = false;
 				}
 			}
-			r.check(lowest, "army research: the AI takes the available technology with the lowest year hint");
+			r.check(first, "army research: the AI takes the first available technology in the order of the files");
 			other->get_army_research_mutable().clear();
 			update_army_research(im);
 			r.check(!other->get_army_research().empty(), "army research: a free slot of an AI country is filled by the daily update");
@@ -1631,6 +1631,63 @@ namespace {
 			country.get_army_research_mutable().assign(snapshot.research.begin(), snapshot.research.end());
 			country.set_army_start_technologies_given(snapshot.start_given);
 			refresh(country);
+		}
+	}
+
+	// ---- the buildings and the mechanics that the keys of the unlock layer open (BuildingType::requires_unlock, mechanic:*)
+
+	void test_unlock_gates(Results& r, InstanceManager& im) {
+		BuildingTypeManager const& buildings = im.definition_manager.get_economy_manager().get_building_type_manager();
+		BuildingType const* const small_arms = buildings.get_building_type_by_identifier("small_arms_factory");
+		BuildingType const* const radio_factory = buildings.get_building_type_by_identifier("radio_factory");
+		BuildingType const* const steel = buildings.get_building_type_by_identifier("steel_factory");
+		if (small_arms == nullptr || radio_factory == nullptr || steel == nullptr || small_arms->requires_unlock.empty()) {
+			fmt::println("TEST INFO unlock gates: no ov_data folder, not checked");
+			return;
+		}
+		CountryInstance* civilised = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.is_civilised()) {
+				civilised = &candidate;
+			}
+		}
+		if (civilised == nullptr) {
+			return;
+		}
+		const std::vector<memory::string> keys_before { civilised->get_unlock_keys().begin(), civilised->get_unlock_keys().end() };
+		for (std::string_view const key : { "building:small_arms_factory", "building:telegraph_factory", "building:radio_factory", "mechanic:division_templates", "mechanic:mobilisation" }) {
+			civilised->revoke_unlock(key);
+		}
+		r.check(!civilised->is_building_type_unlocked(*small_arms), "unlock gates: without the key a building that needs it cannot be built, whatever the technologies of the base game say");
+		civilised->grant_unlock("building:small_arms_factory");
+		r.check(civilised->is_building_type_unlocked(*small_arms), "unlock gates: with the key the building can be built (the base game technology is not needed)");
+		r.check(!civilised->is_building_type_unlocked(*radio_factory), "unlock gates: the communications factory needs the telegraph or the radio");
+		civilised->grant_unlock("building:telegraph_factory");
+		r.check(civilised->is_building_type_unlocked(*radio_factory), "unlock gates: any one of the keys of a building is enough (the telegraph)");
+		civilised->revoke_unlock("building:telegraph_factory");
+		civilised->grant_unlock("building:radio_factory");
+		r.check(civilised->is_building_type_unlocked(*radio_factory), "unlock gates: any one of the keys of a building is enough (the radio)");
+		r.check(steel->requires_unlock.empty(), "unlock gates: a building that is not in ov_buildings is unlocked by the technologies of the base game as before");
+		// the factory production types: the telegraph and the radio, the old one stays
+		const auto options = get_factory_production_options(im, *radio_factory);
+		bool telegraph_option = false, radio_option = false;
+		for (FactoryProductionOption const& option : options) {
+			telegraph_option |= option.production_type->output_good.get_identifier() == "telegraph" && option.unlock_key == "building:telegraph_factory" && option.tier == 1;
+			radio_option |= option.production_type->output_good.get_identifier() == "radio" && option.unlock_key == "building:radio_factory" && option.tier == 2;
+		}
+		r.check(telegraph_option && radio_option, "unlock gates: the communications factory makes the telegraph (tier 1) or the radio (tier 2), each by its key");
+		ProductionType const* const with_both = get_best_production_type(im, *civilised, *radio_factory);
+		civilised->grant_unlock("building:telegraph_factory");
+		civilised->revoke_unlock("building:radio_factory");
+		ProductionType const* const with_telegraph = get_best_production_type(im, *civilised, *radio_factory);
+		r.check(with_both != nullptr && with_telegraph != nullptr && with_both->output_good.get_identifier() == "radio" && with_telegraph->output_good.get_identifier() == "telegraph",
+			"unlock gates: the radio takes over from the telegraph when the country has both, the telegraph is the best before");
+
+		for (memory::string const& key : std::vector<memory::string> { civilised->get_unlock_keys().begin(), civilised->get_unlock_keys().end() }) {
+			civilised->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			civilised->grant_unlock(key);
 		}
 	}
 
@@ -2816,6 +2873,56 @@ namespace {
 	}
 
 	// Groups of armies and field marshals, the bonus of the generals to the supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 1 and 4)
+	// ---- the mechanics that the keys open (mechanic:division_templates, mechanic:mobilisation)
+
+	void test_unlock_mechanics(Results& r, InstanceManager& im) {
+		CountryInstance* civilised = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.is_civilised()) {
+				civilised = &candidate;
+			}
+		}
+		if (civilised == nullptr || im.definition_manager.get_military_manager().get_equipment_manager().get_equipment().empty()) {
+			return;
+		}
+		const std::vector<memory::string> keys_before { civilised->get_unlock_keys().begin(), civilised->get_unlock_keys().end() };
+		const bool mobilised_before = civilised->is_mobilised();
+		civilised->revoke_unlock("mechanic:division_templates");
+		civilised->revoke_unlock("mechanic:mobilisation");
+		civilised->set_mobilised(false);
+		const std::size_t templates_before = civilised->get_division_templates().size();
+		const DivisionGrid grid = make_test_grid(regiment_kind(im, "line_infantry"), 1, regiment_kind(im, "cavalry"), 1);
+		im.run_game_action_now<create_division_template_argument_t>(civilised->index, grid);
+		r.check(civilised->get_division_templates().size() == templates_before, "unlock gates: without mechanic:division_templates a template cannot be created");
+		civilised->grant_unlock("mechanic:division_templates");
+		im.run_game_action_now<create_division_template_argument_t>(civilised->index, grid);
+		r.check(civilised->get_division_templates().size() == templates_before + 1, "unlock gates: with mechanic:division_templates a template is created");
+		civilised->revoke_unlock("mechanic:division_templates");
+		const std::uint32_t new_id = civilised->get_division_templates().back().id;
+		im.run_game_action_now<delete_division_template_argument_t>(civilised->index, new_id);
+		r.check(civilised->get_division_templates().size() == templates_before + 1, "unlock gates: without the key a template cannot be deleted either (the templates are fixed)");
+		civilised->grant_unlock("mechanic:division_templates");
+		im.run_game_action_now<delete_division_template_argument_t>(civilised->index, new_id);
+		r.check(civilised->get_division_templates().size() == templates_before, "unlock gates: with the key the template is deleted");
+
+		im.run_game_action_now<set_mobilise_argument_t>(civilised->index, true);
+		r.check(!civilised->is_mobilised(), "unlock gates: without mechanic:mobilisation a country cannot mobilise");
+		civilised->grant_unlock("mechanic:mobilisation");
+		im.run_game_action_now<set_mobilise_argument_t>(civilised->index, true);
+		r.check(civilised->is_mobilised(), "unlock gates: with mechanic:mobilisation it can");
+		civilised->revoke_unlock("mechanic:mobilisation");
+		im.run_game_action_now<set_mobilise_argument_t>(civilised->index, false);
+		r.check(!civilised->is_mobilised(), "unlock gates: demobilising is always possible");
+
+		civilised->set_mobilised(mobilised_before);
+		for (memory::string const& key : std::vector<memory::string> { civilised->get_unlock_keys().begin(), civilised->get_unlock_keys().end() }) {
+			civilised->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			civilised->grant_unlock(key);
+		}
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -3404,6 +3511,7 @@ namespace {
 		}
 		test_supply_limit(r, *im);
 		test_divisions(r, *im);
+		test_unlock_mechanics(r, *im);
 		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
 		test_fronts(r, *im);
@@ -3414,6 +3522,7 @@ namespace {
 		test_unit_types(r, *im);
 		test_army_technologies(r, *im);
 		test_army_research(r, *im);
+		test_unlock_gates(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

@@ -1224,6 +1224,19 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load buildings!");
 		ret = false;
 	}
+	{
+		// The keys of the unlock layer that the buildings of the base game need (common/ov_buildings/*.txt of OpenVic)
+		std::size_t restricted = 0;
+		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_buildings", ".txt", false)) {
+			const v2script::Parser parser = parse_defines(file);
+			if (parser.has_fatal_error() || parser.has_error()) {
+				spdlog::warn_s("The buildings file {} is skipped, it has errors", file);
+				continue;
+			}
+			restricted += definition_manager.get_economy_manager().get_building_type_manager().load_ov_buildings_file(file.string(), parser.get_file_node());
+		}
+		SPDLOG_INFO("{} buildings need a key of the unlock layer", restricted);
+	}
 	if (!definition_manager.get_mapmode_manager().setup_mapmodes(
 		definition_manager.get_map_definition(),
 		definition_manager.get_economy_manager().get_building_type_manager()

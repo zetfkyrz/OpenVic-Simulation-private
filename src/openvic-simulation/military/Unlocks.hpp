@@ -34,6 +34,11 @@ namespace OpenVic {
 	// "<kind>:<id>": both parts are not empty and have no spaces
 	[[nodiscard]] bool is_valid_unlock_key(std::string_view key);
 
+	// The keys of the mechanics that the technologies of the army open (kind "mechanic", docs/WAR_ASSUMPTIONS.md): a country without the key cannot do it
+	inline constexpr std::string_view UNLOCK_MECHANIC_DIVISION_TEMPLATES = "mechanic:division_templates"; // create, change and delete templates (the standard one is fixed)
+	inline constexpr std::string_view UNLOCK_MECHANIC_MOBILISATION = "mechanic:mobilisation"; // mobilise (demobilising is always possible)
+	inline constexpr std::string_view UNLOCK_MECHANIC_INSTANT_OCCUPATION = "mechanic:instant_occupation"; // the divisions take a province at once
+
 	// A modifier of the provisional unlocks (the type is a technology: the effects are the ones of the technologies)
 	struct UnlockModifier : Modifier {
 		UnlockModifier(std::string_view new_identifier, ModifierValue&& new_values)
