@@ -40,7 +40,9 @@ namespace OpenVic {
 		//     its attack and defence
 		// 25: tier 0 of the weapons (rifle_0, field_gun_0), the weapons are multipliers of the attack, the defence and the breakthrough, default unlocks
 		// 26: small_arms and artillery are rifle_0 and field_gun_0 (they were rifle_1 and field_gun_1), recipes of the first generation
-		inline constexpr int SIMULATION_VERSION = 26;
+		// 27: unit types of OpenVic in files (ov_units; infantry, cavalry, artillery of Vic2 are line_infantry, cavalry, napoleonic_artillery), unit: keys, the weapon by the
+		//     list of the type with the penalty below the lowest allowed one
+		inline constexpr int SIMULATION_VERSION = 27;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

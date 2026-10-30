@@ -527,11 +527,34 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 
 	const path_vector_t unit_files = lookup_files_in_dir(units_directory, ".txt");
 
-	unit_type_manager.reserve_all_unit_types(unit_files.size());
+	// The units of OpenVic, a file each: loaded first, the types of Vic2 that they replace (infantry, cavalry, artillery) are not loaded
+	const path_vector_t ov_unit_files = lookup_files_in_dir_load_order("common/ov_units", ".txt", false);
+	unit_type_manager.reserve_all_unit_types(unit_files.size() + ov_unit_files.size());
+	std::size_t ov_unit_count = 0;
+	for (fs::path const& file : ov_unit_files) {
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The unit file {} is skipped, it has errors", file);
+			continue;
+		}
+		if (file.filename() == "aliases.txt") {
+			unit_type_manager.load_vic2_aliases(file.string(), parser.get_file_node());
+			continue;
+		}
+		ov_unit_count += unit_type_manager.load_ov_unit_file(
+			definition_manager.get_economy_manager().get_good_definition_manager(),
+			definition_manager.get_military_manager().get_equipment_manager(), file.string(), parser.get_file_node()
+		);
+	}
+	SPDLOG_INFO("Loaded {} unit types of OpenVic", ov_unit_count);
 
 	bool ret = apply_to_files(
 		unit_files,
-		[&definition_manager, &unit_type_manager](fs::path const& file) -> bool {
+		[&definition_manager, &unit_type_manager, ov_unit_count](fs::path const& file) -> bool {
+			// The type of Vic2 that an alias names is replaced by the type of OpenVic (when there are units of OpenVic)
+			if (ov_unit_count > 0 && unit_type_manager.is_vic2_alias(file.stem().string())) {
+				return true;
+			}
 			return unit_type_manager.load_unit_type_file(
 				definition_manager.get_economy_manager().get_good_definition_manager(),
 				definition_manager.get_map_definition().get_terrain_type_manager(),

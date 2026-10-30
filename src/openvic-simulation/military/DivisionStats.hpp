@@ -30,6 +30,7 @@ namespace OpenVic {
 		// Combat
 		fixed_point_t attack; // the possible damage; the cells of the rows weigh 1, 1/2, 1/4, ...
 		fixed_point_t defence; // is counted the same way
+		fixed_point_t breakthrough; // the third parameter of the battle: how fast the attacker breaks a defence (counted the same way)
 		std::uint32_t width = 0; // ranks that have a regiment
 		fixed_point_t depth; // regiments per rank, the average (1.5 for ranks of 1 and 2)
 		fixed_point_t density; // strength points per rank, less by the density_reduction

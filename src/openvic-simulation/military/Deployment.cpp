@@ -180,8 +180,17 @@ bool DeploymentManager::load_oob_file(
 
 					const bool ret = expect_dictionary_keys(
 						"name", ONE_EXACTLY, expect_string(assign_variable_callback(regiment_name)),
-						"type", ONE_EXACTLY, military_manager.get_unit_type_manager()
-							.expect_regiment_type_identifier(assign_variable_callback_pointer(regiment_type)),
+						"type", ONE_EXACTLY, expect_identifier_or_string(
+							[&military_manager, &regiment_type](std::string_view type_identifier) -> bool {
+								// The files of Vic2 say infantry for line_infantry (the aliases of ov_data/common/ov_units)
+								regiment_type = military_manager.get_unit_type_manager().resolve_vic2_regiment_type(type_identifier);
+								if (regiment_type == nullptr) {
+									spdlog::error_s("Invalid regiment type: {}", type_identifier);
+									return false;
+								}
+								return true;
+							}
+						),
 						"home", ZERO_OR_ONE, map_definition
 							.expect_province_definition_identifier(assign_variable_callback_pointer(regiment_home))
 					)(node);

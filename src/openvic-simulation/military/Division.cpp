@@ -36,7 +36,7 @@ DivisionGrid OpenVic::make_standard_division_grid(UnitTypeManager const& unit_ty
 		return nullptr;
 	};
 	DivisionGrid grid {};
-	RegimentType const* const infantry = find_type("infantry", INFANTRY);
+	RegimentType const* const infantry = find_type("line_infantry", INFANTRY);
 	RegimentType const* const cavalry = find_type("cavalry", CAVALRY);
 	const auto cell_of = [](RegimentType const& regiment_type) -> std::uint8_t {
 		const std::size_t kind = get_division_slot_kind(regiment_type);

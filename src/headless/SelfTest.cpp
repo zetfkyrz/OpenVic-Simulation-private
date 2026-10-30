@@ -33,6 +33,7 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/military/UnitEquipment.hpp>
 #include <openvic-simulation/military/UnitModifiers.hpp>
 #include <openvic-simulation/modifier/ModifierEffectCache.hpp>
 #include <openvic-simulation/military/BattleFormulas.hpp>
@@ -406,7 +407,7 @@ namespace {
 			"goods: the old names small_arms and artillery are rifle_0 and field_gun_0 (the files of Vic2 keep working)"
 		);
 		UnitTypeManager const& unit_types = game_manager.get_definition_manager().get_military_manager().get_unit_type_manager();
-		RegimentType const* const infantry_type = unit_types.get_regiment_type_by_identifier("infantry");
+		RegimentType const* const infantry_type = unit_types.get_regiment_type_by_identifier("line_infantry");
 		GoodDefinition const* const rifle_good = goods.get_good_definition_by_identifier("rifle_0");
 		bool builds_with_rifles = false, ammunition_used = false;
 		if (infantry_type != nullptr) {
@@ -660,11 +661,14 @@ namespace {
 				country = &candidate;
 			}
 		}
-		RegimentType const* const infantry = unit_types.get_regiment_type_by_identifier("infantry");
+		RegimentType const* const infantry = unit_types.get_regiment_type_by_identifier("line_infantry");
 		RegimentType const* const cavalry = unit_types.get_regiment_type_by_identifier("cavalry");
-		RegimentType const* const artillery = unit_types.get_regiment_type_by_identifier("artillery");
-		r.check(country != nullptr && infantry != nullptr && cavalry != nullptr && artillery != nullptr, "division stats: a country and the regiment types to test with");
-		if (country == nullptr || infantry == nullptr || cavalry == nullptr || artillery == nullptr) {
+		RegimentType const* const artillery = unit_types.get_regiment_type_by_identifier("napoleonic_artillery");
+		RegimentType const* const skirmishers = unit_types.get_regiment_type_by_identifier("skirmisher_infantry");
+		RegimentType const* const rifled = unit_types.get_regiment_type_by_identifier("rifled_artillery");
+		r.check(country != nullptr && infantry != nullptr && cavalry != nullptr && artillery != nullptr && skirmishers != nullptr && rifled != nullptr,
+			"division stats: a country and the regiment types to test with");
+		if (country == nullptr || infantry == nullptr || cavalry == nullptr || artillery == nullptr || skirmishers == nullptr || rifled == nullptr) {
 			return;
 		}
 		StaticModifierCache const& static_modifier_cache = im.definition_manager.get_modifier_manager().get_static_modifier_cache();
@@ -699,8 +703,16 @@ namespace {
 		const DivisionTemplate standard = make_template(make_standard_division_grid(unit_types));
 		const DivisionStats standard_stats = compute_division_stats(im, *country, standard);
 		// The first row weighs 1 and the second 1/2: every regiment counts 1.5
-		const fixed_point_t expected_attack = (infantry->attack * 2 + cavalry->attack) * 3 / 2;
-		const fixed_point_t expected_defence = (infantry->defence * 2 + cavalry->defence) * 3 / 2;
+		// the weapons the country gives to the types (line infantry: rifle_0; the cavalry: rifle_1 from the provisional unlocks)
+		const auto weapon_of = [&](RegimentType const& regiment_type) {
+			return choose_unit_weapon(equipment, *country, regiment_type, get_allowed_weapons(equipment, regiment_type), war.equipment_below_min_penalty.fixed());
+		};
+		const UnitWeapon infantry_weapon = weapon_of(*infantry);
+		const UnitWeapon cavalry_weapon = weapon_of(*cavalry);
+		const fixed_point_t expected_attack = (infantry->attack * infantry_weapon.effective->attack_mult * infantry_weapon.keep * 2
+			+ cavalry->attack * cavalry_weapon.effective->attack_mult * cavalry_weapon.keep) * 3 / 2;
+		const fixed_point_t expected_defence = (infantry->defence * infantry_weapon.effective->defense_mult * infantry_weapon.keep * 2
+			+ cavalry->defence * cavalry_weapon.effective->defense_mult * cavalry_weapon.keep) * 3 / 2;
 		r.check(
 			standard_stats.regiments == 6 && standard_stats.width == 3 && standard_stats.depth == fixed_point_t(2),
 			"division stats: the standard template has 6 regiments, a front of 3 ranks and a depth of 2",
@@ -708,7 +720,7 @@ namespace {
 		);
 		r.check(
 			near(standard_stats.attack, expected_attack, fixed_point_t(1) / 100) && near(standard_stats.defence, expected_defence, fixed_point_t(1) / 100),
-			"division stats: the attack and the defence add up the regiments by the weights of their rows (the weapons of the first generation change nothing)",
+			"division stats: the attack and the defence add up the regiments by the weights of their rows and the multipliers of their weapons",
 			fmt::format("attack {} of {}, defence {} of {}", dbl(standard_stats.attack), dbl(expected_attack), dbl(standard_stats.defence), dbl(expected_defence))
 		);
 		r.check(
@@ -744,8 +756,8 @@ namespace {
 		const DivisionStats shallow = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 1)));
 		const DivisionStats deep = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 2)));
 		r.check(
-			deep.durability == shallow.durability * 2
-				&& battle_formulas::days_to_destroy(deep.durability, damage_narrow) == battle_formulas::days_to_destroy(shallow.durability, damage_narrow) * 2,
+			near(deep.durability, shallow.durability * 2, fixed_point_t(1) / 100)
+				&& near(battle_formulas::days_to_destroy(deep.durability, damage_narrow), battle_formulas::days_to_destroy(shallow.durability, damage_narrow) * 2, fixed_point_t(1) / 10),
 			"division stats: twice the depth, twice the durability, twice the days to destroy"
 		);
 		DivisionGrid uneven = grid_with(*infantry, 1, 2);
@@ -758,14 +770,15 @@ namespace {
 		);
 
 		// ---- the weapons of a better generation: the attack, the defence and the goods change
-		const DivisionTemplate infantry_template = make_template(grid_with(*infantry, 2, 2));
+		const DivisionTemplate infantry_template = make_template(grid_with(*skirmishers, 2, 2)); // may have rifle_2 and rifle_3
 		const DivisionStats first_generation = compute_division_stats(im, *country, infantry_template);
 		country->grant_unlock("equipment:rifle_3");
 		const DivisionStats third_generation = compute_division_stats(im, *country, infantry_template);
 		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
 		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
 		if (rifle_1 != nullptr && rifle_3 != nullptr) {
-			const fixed_point_t ratio = rifle_3->attack_mult / rifle_1->attack_mult; // the regiments are made with rifle_1
+			// before: no allowed rifle, rifle_1 with the penalty of one generation; after: rifle_3
+			const fixed_point_t ratio = rifle_3->attack_mult / (rifle_1->attack_mult * (fixed_point_t::_1 - war.equipment_below_min_penalty.fixed()));
 			r.check(
 				near(third_generation.attack, first_generation.attack * ratio, fixed_point_t(1) / 50),
 				"division stats: a rifle of the third generation gives the attack in proportion to its points",
@@ -777,9 +790,9 @@ namespace {
 				return std::any_of(list.begin(), list.end(), [good](DivisionGoodAmount const& entry) { return entry.good == good && entry.amount > fixed_point_t::_0; });
 			};
 			r.check(
-				has_good(third_generation.cost, "rifle_3") && !has_good(third_generation.cost, "rifle_1") && !has_good(third_generation.cost, "small_arms")
-					&& has_good(first_generation.cost, "rifle_1") && !has_good(first_generation.cost, "rifle_3"),
-				"division stats: the cost lists the rifles of the generation (the old small arms are the first generation)"
+				has_good(third_generation.cost, "rifle_3") && !has_good(third_generation.cost, "rifle_2")
+					&& has_good(first_generation.cost, "rifle_2") && !has_good(first_generation.cost, "rifle_3"),
+				"division stats: the cost lists the rifles the unit is built with, or the better ones of its list that the country has"
 			);
 			r.check(has_good(third_generation.supply_per_day, "rifle_3") && has_good(third_generation.ammo_per_day, "ammunition"),
 				"division stats: the supplies of the regiments and the use of ammunition list the rifles of the generation");
@@ -794,9 +807,9 @@ namespace {
 		country->revoke_unlock("equipment:rifle_3");
 
 		// ---- the artillery has its supplies too (the guns of the generation, canned food)
-		const DivisionStats artillery_first = compute_division_stats(im, *country, make_template(grid_with(*artillery, 1, 1)));
+		const DivisionStats artillery_first = compute_division_stats(im, *country, make_template(grid_with(*rifled, 1, 1)));
 		country->grant_unlock("equipment:field_gun_3");
-		const DivisionStats artillery_third = compute_division_stats(im, *country, make_template(grid_with(*artillery, 1, 1)));
+		const DivisionStats artillery_third = compute_division_stats(im, *country, make_template(grid_with(*rifled, 1, 1)));
 		const auto amount_of = [](memory::vector<DivisionGoodAmount> const& list, std::string_view good) -> fixed_point_t {
 			for (DivisionGoodAmount const& entry : list) {
 				if (entry.good == good) {
@@ -806,14 +819,14 @@ namespace {
 			return fixed_point_t::_0;
 		};
 		r.check(
-			amount_of(artillery_first.supply_per_day, "field_gun_1") > fixed_point_t::_0 && amount_of(artillery_first.supply_per_day, "canned_food") > fixed_point_t::_0,
+			amount_of(artillery_first.supply_per_day, "field_gun_2") > fixed_point_t::_0 && amount_of(artillery_first.supply_per_day, "canned_food") > fixed_point_t::_0,
 			"division stats: the supplies of artillery are listed (the guns and the food)",
 			fmt::format("{} supply entries, field_gun_1 {}, canned_food {}, regiments {}", artillery_first.supply_per_day.size(),
-				dbl(amount_of(artillery_first.supply_per_day, "field_gun_1")), dbl(amount_of(artillery_first.supply_per_day, "canned_food")), artillery_first.regiments)
+				dbl(amount_of(artillery_first.supply_per_day, "field_gun_2")), dbl(amount_of(artillery_first.supply_per_day, "canned_food")), artillery_first.regiments)
 		);
 		r.check(
-			amount_of(artillery_third.supply_per_day, "field_gun_3") == amount_of(artillery_first.supply_per_day, "field_gun_1")
-				&& amount_of(artillery_third.supply_per_day, "field_gun_1") == fixed_point_t::_0
+			amount_of(artillery_third.supply_per_day, "field_gun_3") == amount_of(artillery_first.supply_per_day, "field_gun_2")
+				&& amount_of(artillery_third.supply_per_day, "field_gun_2") == fixed_point_t::_0
 				&& artillery_third.attack > artillery_first.attack,
 			"division stats: with a gun of the third generation the supplies are of this gun and the attack is more"
 		);
@@ -995,29 +1008,34 @@ namespace {
 		im.force_tick_and_update();
 	}
 
-	// ---- the weapons of the regiments (CountryInstance::update_regiment_equipment)
+	// ---- the weapons of the regiments (CountryInstance::update_regiment_equipment, military/UnitEquipment.hpp)
 
 	void test_regiment_equipment(Results& r, InstanceManager& im) {
 		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
 		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
 		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
 		if (equipment.get_equipment().empty()) {
 			fmt::println("TEST INFO regiment equipment: no ov_data folder, not checked");
 			return;
 		}
-		GoodDefinition const* const rifle_2_good = goods.get_good_definition_by_identifier("rifle_2");
-		GoodDefinition const* const rifle_3_good = goods.get_good_definition_by_identifier("rifle_3");
+		GoodDefinition const* const rifle_0_good = goods.get_good_definition_by_identifier("rifle_0");
+		GoodDefinition const* const rifle_1_good = goods.get_good_definition_by_identifier("rifle_1");
+		EquipmentDefinition const* const rifle_0 = equipment.find_equipment("rifle_0");
 		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
 		EquipmentDefinition const* const rifle_2 = equipment.find_equipment("rifle_2");
-		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
-		if (rifle_2_good == nullptr || rifle_3_good == nullptr || rifle_1 == nullptr || rifle_2 == nullptr || rifle_3 == nullptr) {
-			r.check(false, "regiment equipment: the rifles and their goods exist");
+		RegimentType const* const dragoons = unit_types.get_regiment_type_by_identifier("dragoons");
+		RegimentType const* const line_infantry = unit_types.get_regiment_type_by_identifier("line_infantry");
+		RegimentType const* const cavalry_type = unit_types.get_regiment_type_by_identifier("cavalry");
+		if (rifle_0_good == nullptr || rifle_1_good == nullptr || rifle_0 == nullptr || rifle_1 == nullptr || rifle_2 == nullptr || dragoons == nullptr
+			|| line_infantry == nullptr || cavalry_type == nullptr) {
+			r.check(false, "regiment equipment: the rifles, their goods and the unit types exist");
 			return;
 		}
 
-		// A country with a few regiments of infantry
+		// A country with a few regiments of cavalry (they may have rifle_0 and rifle_1)
 		CountryInstance* country = nullptr;
-		std::vector<RegimentInstance*> infantry;
+		std::vector<RegimentInstance*> cavalry;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
 			if (!candidate.exists() || candidate.is_at_war()) {
 				continue;
@@ -1025,141 +1043,133 @@ namespace {
 			std::vector<RegimentInstance*> found;
 			for (ArmyInstance& army : candidate.get_armies()) {
 				for (RegimentInstance& regiment : army.get_regiment_instances()) {
-					if (regiment.get_regiment_type().get_identifier() == "infantry") {
+					if (&regiment.get_regiment_type() == cavalry_type) {
 						found.push_back(&regiment);
 					}
 				}
 			}
 			if (found.size() >= 4) {
 				country = &candidate;
-				infantry = std::move(found);
+				cavalry = std::move(found);
 				break;
 			}
 		}
-		r.check(country != nullptr, "regiment equipment: a country with four regiments of infantry exists");
+		r.check(country != nullptr, "regiment equipment: a country with four regiments of cavalry exists");
 		if (country == nullptr) {
 			return;
 		}
-		const auto pieces_of = [&](RegimentInstance const& regiment) -> fixed_point_t {
-			for (auto const& [good, quantity] : regiment.get_regiment_type().get_build_cost()) {
-				if (good->get_identifier() == "rifle_0") {
+		const fixed_point_t pieces = [&]() -> fixed_point_t {
+			for (auto const& [good, quantity] : cavalry_type->get_build_cost()) {
+				if (good == rifle_0_good) {
 					return quantity;
 				}
 			}
 			return fixed_point_t::_0;
-		};
-		const fixed_point_t pieces = pieces_of(*infantry.front());
-		r.check(pieces > fixed_point_t::_0, "regiment equipment: a regiment of infantry is built from rifles (the pieces of its weapon)");
+		}();
+		r.check(pieces > fixed_point_t::_0, "regiment equipment: a regiment of cavalry is built with rifles (the pieces of its weapon)");
 
 		const std::vector<memory::string> keys_before { country->get_unlock_keys().begin(), country->get_unlock_keys().end() };
-		const fixed_point_t stock_2_before = country->get_good_data(*rifle_2_good).stockpile_amount;
-		const fixed_point_t stock_3_before = country->get_good_data(*rifle_3_good).stockpile_amount;
+		const fixed_point_t stock_before = country->get_good_data(*rifle_1_good).stockpile_amount;
+		const fixed_point_t penalty = war.equipment_below_min_penalty.fixed();
 
-		// ---- at the start every regiment has the weapon it was made with: rifle_0, 0.7 of the attack of its type
-		EquipmentDefinition const* const rifle_0 = equipment.find_equipment("rifle_0");
+		// ---- the unit is built with the lowest weapon of its list; the country has rifle_1 too (the provisional unlocks)
+		country->grant_unlock("equipment:rifle_1");
+		country->get_good_data(*rifle_1_good).stockpile_amount = fixed_point_t::_0;
 		im.force_tick_and_update();
-		bool all_first = rifle_0 != nullptr;
-		// The country has rifle_1 too (the provisional unlocks): a regiment with rifle_0 is one generation behind the best
-		EquipmentDefinition const* const best_at_start = get_best_equipment(equipment, *country, "rifle");
-		const fixed_point_t start_keep = fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * static_cast<std::int32_t>(best_at_start != nullptr ? best_at_start->tier : 0);
-		for (RegimentInstance* const regiment : infantry) {
-			all_first &= regiment->get_weapon() == nullptr && rifle_0 != nullptr
-				&& near(regiment->get_weapon_attack_ratio(), rifle_0->attack_mult * start_keep, fixed_point_t(1) / 100)
-				&& near(regiment->get_weapon_breakthrough_ratio(), rifle_0->breakthrough_mult * start_keep, fixed_point_t(1) / 100);
+		bool all_first = true;
+		for (RegimentInstance* const regiment : cavalry) {
+			all_first &= regiment->get_weapon() == nullptr && near(regiment->get_weapon_attack_ratio(), rifle_0->attack_mult, fixed_point_t(1) / 100)
+				&& near(regiment->get_weapon_breakthrough_ratio(), rifle_0->breakthrough_mult, fixed_point_t(1) / 100);
 		}
-		r.check(all_first, "regiment equipment: at the start the regiments have the weapon they were made with (rifle_0, multipliers 0.7)");
+		r.check(all_first, "regiment equipment: a regiment has the weapon it was built with (rifle_0, multipliers 0.7) until it is given a better one");
+		r.check(
+			country->get_good_data(*rifle_1_good).government_needs >= pieces,
+			"regiment equipment: without the rifles in the stockpile the government needs them (it buys them at the market)",
+			fmt::format("needs {}", dbl(country->get_good_data(*rifle_1_good).government_needs))
+		);
 
-		// ---- the country gets the third generation, the stock has the rifles: one regiment a day is given the weapon, the stock is used
-		country->grant_unlock("equipment:rifle_2");
-		country->grant_unlock("equipment:rifle_3");
-		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t(1000);
-		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t::_0;
+		// ---- the stock has the rifles: a day gives the best allowed weapon to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says
+		country->get_good_data(*rifle_1_good).stockpile_amount = fixed_point_t(1000);
 		im.force_tick_and_update();
-		std::size_t with_rifle_3 = 0;
+		std::size_t with_rifle_1 = 0;
 		RegimentInstance* equipped = nullptr;
-		for (RegimentInstance* const regiment : infantry) {
-			if (regiment->get_weapon() == rifle_3) {
-				with_rifle_3++;
-				equipped = regiment;
+		// the regiments of all the types of the country that may have rifle_1 (the day gives the weapon to the first ones)
+		for (ArmyInstance& army : country->get_armies()) {
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				if (regiment.get_weapon() == rifle_1) {
+					with_rifle_1++;
+					equipped = &regiment;
+				}
 			}
 		}
 		r.check(
-			with_rifle_3 == static_cast<std::size_t>(war.equipment_upgrades_per_day) && equipped != nullptr && equipped->get_weapon_good() == rifle_3_good,
-			"regiment equipment: a day gives the weapon of the best generation to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says",
-			fmt::format("{} regiments", with_rifle_3)
+			with_rifle_1 == static_cast<std::size_t>(war.equipment_upgrades_per_day) && equipped != nullptr && equipped->get_weapon_good() == rifle_1_good,
+			"regiment equipment: a day gives the better weapon to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says",
+			fmt::format("{} regiments, stock {}, needs {}, pieces {}, upgrades {}, best {}", with_rifle_1, dbl(country->get_good_data(*rifle_1_good).stockpile_amount),
+				dbl(country->get_good_data(*rifle_1_good).government_needs), dbl(pieces), war.equipment_upgrades_per_day,
+				choose_unit_weapon(equipment, *country, *cavalry_type, get_allowed_weapons(equipment, *cavalry_type), war.equipment_below_min_penalty.fixed()).best != nullptr ? "yes" : "no")
 		);
 		if (equipped != nullptr) {
 			r.check(
-				near(equipped->get_weapon_attack_ratio(), rifle_3->attack_mult, fixed_point_t(1) / 100)
-					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defense_mult, fixed_point_t(1) / 100)
-					&& near(equipped->get_weapon_breakthrough_ratio(), rifle_3->breakthrough_mult, fixed_point_t(1) / 100),
-				"regiment equipment: its attack, defence and breakthrough are the multipliers of the new weapon",
-				fmt::format("{} {}", dbl(equipped->get_weapon_attack_ratio()), dbl(equipped->get_weapon_defence_ratio()))
+				near(equipped->get_weapon_attack_ratio(), rifle_1->attack_mult, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_defence_ratio(), rifle_1->defense_mult, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_breakthrough_ratio(), rifle_1->breakthrough_mult, fixed_point_t(1) / 100),
+				"regiment equipment: its attack, defence and breakthrough are the multipliers of the new weapon"
 			);
 			r.check(
-				country->get_good_data(*rifle_3_good).army_needs > fixed_point_t::_0,
-				"regiment equipment: the supplies of the regiment are of its weapon (the rifles of the third generation, not the first)"
+				country->get_good_data(*rifle_1_good).army_needs > fixed_point_t::_0,
+				"regiment equipment: the supplies of the regiment are of its weapon (the rifles of the first generation, not rifle_0)"
 			);
 		}
 		r.check(
-			country->get_good_data(*rifle_3_good).stockpile_amount < fixed_point_t(1000),
+			country->get_good_data(*rifle_1_good).stockpile_amount < fixed_point_t(1000),
 			"regiment equipment: the weapons come out of the national stockpile (they are not made from the air)"
 		);
-
-		// ---- a regiment that is behind the best generation loses a part of its attack and defence
-		RegimentInstance* behind = nullptr;
-		for (RegimentInstance* const regiment : infantry) {
-			if (regiment->get_weapon() == nullptr) {
-				behind = regiment;
-			}
+		// The weapon is never better than the list of the type allows: line infantry (rifle_0 only) is not given rifle_1
+		{
+			const auto allowed = get_allowed_weapons(equipment, *line_infantry);
+			r.check(allowed.size() == 1 && allowed.front() == rifle_0, "regiment equipment: line infantry may have rifle_0 only (the list of its file)");
+			const UnitWeapon choice = choose_unit_weapon(equipment, *country, *line_infantry, allowed, penalty);
+			r.check(choice.best == rifle_0 && choice.effective == rifle_0 && choice.keep == fixed_point_t::_1, "regiment equipment: it uses rifle_0 even when the country has better rifles");
 		}
-		if (behind != nullptr) {
-			// rifle_0 against the best generation, rifle_3: three generations behind
-			const fixed_point_t expected = rifle_0->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * 3);
+
+		// ---- a type with none of the allowed weapons: the nearest lower generation, 25 % less for every generation below the lowest allowed one
+		{
+			const auto allowed = get_allowed_weapons(equipment, *dragoons); // rifle_2 and rifle_3
+			r.check(allowed.size() == 2 && allowed.front() == rifle_2, "regiment equipment: dragoons may have rifle_2 and rifle_3");
+			// the country has rifle_0 and rifle_1: one generation below rifle_2
+			UnitWeapon choice = choose_unit_weapon(equipment, *country, *dragoons, allowed, penalty);
 			r.check(
-				near(behind->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
-				"regiment equipment: a regiment three generations behind the best loses the penalty three times",
-				fmt::format("{} against {}", dbl(behind->get_weapon_attack_ratio()), dbl(expected))
+				choice.best == nullptr && choice.effective == rifle_1 && near(choice.keep, fixed_point_t(3) / 4, fixed_point_t(1) / 1000),
+				"regiment equipment: dragoons with rifle_1 only use it with 25 % less (one generation below the lowest allowed)"
 			);
-		}
-
-		// ---- there are no rifles of the third generation, only of the second: the best the stock allows, with the penalty
-		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t::_0;
-		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t(1000);
-		im.force_tick_and_update();
-		RegimentInstance* second_generation = nullptr;
-		for (RegimentInstance* const regiment : infantry) {
-			if (regiment->get_weapon() == rifle_2) {
-				second_generation = regiment;
-			}
-		}
-		r.check(second_generation != nullptr, "regiment equipment: when the stock lacks the best generation the regiment is given the best one the stock has");
-		if (second_generation != nullptr) {
-			const fixed_point_t expected = rifle_2->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
+			// only rifle_0: two generations below
+			country->revoke_unlock("equipment:rifle_1");
+			choice = choose_unit_weapon(equipment, *country, *dragoons, allowed, penalty);
 			r.check(
-				near(second_generation->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
-				"regiment equipment: the weapon of a worse generation than the best comes with the penalty",
-				fmt::format("{} against {}", dbl(second_generation->get_weapon_attack_ratio()), dbl(expected))
+				choice.effective == rifle_0 && near(choice.keep, fixed_point_t::_0_50, fixed_point_t(1) / 1000),
+				"regiment equipment: with rifle_0 only the penalty is 25 % for each of the two generations (50 % left)"
 			);
+			// rifle_2: the lowest allowed one
+			country->grant_unlock("equipment:rifle_2");
+			choice = choose_unit_weapon(equipment, *country, *dragoons, allowed, penalty);
+			r.check(choice.best == rifle_2 && choice.keep == fixed_point_t::_1, "regiment equipment: with rifle_2 the dragoons have no penalty");
+			// rifle_3 is allowed too: the best
+			country->grant_unlock("equipment:rifle_3");
+			choice = choose_unit_weapon(equipment, *country, *dragoons, allowed, penalty);
+			r.check(choice.best != nullptr && choice.best->tier == 3, "regiment equipment: with rifle_3 the dragoons use it (the best of the list)");
 		}
-
-		// ---- no stock at all: the government wants to buy the rifles of the best generation (they come from the market)
-		country->get_good_data(*rifle_2_good).stockpile_amount = fixed_point_t::_0;
-		country->get_good_data(*rifle_3_good).stockpile_amount = fixed_point_t::_0;
-		im.force_tick_and_update();
-		r.check(
-			country->get_good_data(*rifle_3_good).government_needs >= pieces,
-			"regiment equipment: without the rifles in the stockpile the government needs them (it buys them at the market)",
-			fmt::format("needs {}", dbl(country->get_good_data(*rifle_3_good).government_needs))
-		);
 
 		// ---- put the country back
-		for (RegimentInstance* const regiment : infantry) {
-			regiment->set_weapon(nullptr);
-			regiment->set_weapon_base_good(nullptr);
-			regiment->set_weapon_good(nullptr);
-			regiment->set_weapon_attack_ratio(fixed_point_t::_1);
-			regiment->set_weapon_defence_ratio(fixed_point_t::_1);
+		for (ArmyInstance& army : country->get_armies()) {
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				regiment.set_weapon(nullptr);
+				regiment.set_weapon_base_good(nullptr);
+				regiment.set_weapon_good(nullptr);
+				regiment.set_weapon_attack_ratio(fixed_point_t::_1);
+				regiment.set_weapon_defence_ratio(fixed_point_t::_1);
+				regiment.set_weapon_breakthrough_ratio(fixed_point_t::_1);
+			}
 		}
 		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
 			country->revoke_unlock(key);
@@ -1167,8 +1177,136 @@ namespace {
 		for (memory::string const& key : keys_before) {
 			country->grant_unlock(key);
 		}
-		country->get_good_data(*rifle_2_good).stockpile_amount = stock_2_before;
-		country->get_good_data(*rifle_3_good).stockpile_amount = stock_3_before;
+		country->get_good_data(*rifle_1_good).stockpile_amount = stock_before;
+	}
+
+	// ---- the unit types of ov_data/common/ov_units
+
+	void test_unit_types(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+		ModifierEffectCache const& cache = im.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+		const auto type = [&](std::string_view id) { return unit_types.get_regiment_type_by_identifier(id); };
+		for (std::string_view const id : { "line_infantry", "infantry", "skirmisher_infantry", "modern_infantry", "cavalry", "hussars", "dragoons", "cuirassiers",
+			"napoleonic_artillery", "artillery", "rifled_artillery", "fragmentation_artillery" }) {
+			if (type(id) == nullptr) {
+				fmt::println("TEST INFO unit types: no ov_data folder or a unit is missing ({}), not checked", id);
+				return;
+			}
+		}
+		r.check(true, "unit types: the twelve types of the starting set are loaded from files");
+		r.check(type("infantry")->ov.unlock_key == "unit:infantry" && type("hussars")->ov.unlock_key == "unit:hussars"
+				&& type("line_infantry")->ov.unlock_key.empty() && type("napoleonic_artillery")->ov.unlock_key.empty() && type("cavalry")->ov.unlock_key.empty(),
+			"unit types: line infantry, cavalry and napoleonic artillery are open from the start, the others have a key");
+		// The armies of the start name the units of Vic2: infantry is line infantry (the alias)
+		bool start_types_ok = true;
+		bool old_infantry_in_armies = false;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			for (ArmyInstance& army : country.get_armies()) {
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					old_infantry_in_armies |= regiment.get_regiment_type().get_identifier() == "infantry";
+					start_types_ok &= regiment.get_regiment_type().get_identifier() != "artillery";
+				}
+			}
+		}
+		r.check(!old_infantry_in_armies && start_types_ok, "unit types: the armies of the start have line infantry (the alias of the infantry of Vic2), no regiments of the new types");
+		// The key opens the type
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists()) {
+				country = &candidate;
+			}
+		}
+		const std::vector<memory::string> keys_before { country->get_unlock_keys().begin(), country->get_unlock_keys().end() };
+		country->revoke_unlock("unit:hussars");
+		r.check(!country->is_unit_type_unlocked(*type("hussars")) && country->is_unit_type_unlocked(*type("line_infantry")),
+			"unit types: without the key a type is not available (line infantry, with no key, is)");
+		country->grant_unlock("unit:hussars");
+		r.check(country->is_unit_type_unlocked(*type("hussars")), "unit types: with the key unit:hussars the type is available");
+		// The dragoons get half of the bonuses of the infantry and half of the cavalry
+		{
+			const fs::path temp = fs::temp_directory_path() / "openvic_selftest_units";
+			std::error_code ec;
+			fs::remove_all(temp, ec);
+			write_test_file(temp / "m.txt", "step = { year = 1836 modifier = { attack_mult = { infantry = 0.10 cavalry = 0.02 } } }\n");
+			ProvisionalUnlocks modifiers;
+			const ovdl::v2script::Parser parser = Dataloader::parse_defines(temp / "m.txt");
+			modifiers.load_file("m.txt", parser.get_file_node(), im.definition_manager.get_modifier_manager());
+			if (modifiers.get_steps().size() == 1) {
+				country->add_unlock_modifier(*modifiers.get_steps()[0].modifier);
+				country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache());
+				const auto sum_for = [&](RegimentType const& regiment_type) {
+					return get_scoped_sum(*country, cache, scoped_effect_t::ATTACK_MULT, get_scope_weights(cache, regiment_type));
+				};
+				r.check(
+					near(sum_for(*type("dragoons")), fixed_point_t(6) / 100, fixed_point_t(1) / 1000)
+						&& near(sum_for(*type("line_infantry")), fixed_point_t(10) / 100, fixed_point_t(1) / 1000)
+						&& near(sum_for(*type("hussars")), fixed_point_t(2) / 100, fixed_point_t(1) / 1000),
+					"unit types: the dragoons get half of the bonus of the infantry and half of the cavalry (0.05 + 0.01), the infantry 0.10, the hussars 0.02",
+					fmt::format("{} {} {}", dbl(sum_for(*type("dragoons"))), dbl(sum_for(*type("line_infantry"))), dbl(sum_for(*type("hussars"))))
+				);
+				country->remove_unlock_modifier(*modifiers.get_steps()[0].modifier);
+				country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache());
+			}
+			fs::remove_all(temp, ec);
+		}
+		// The stats of the types
+		r.check(type("hussars")->maximum_speed > type("cavalry")->maximum_speed && type("hussars")->reconnaissance > type("cavalry")->reconnaissance
+				&& type("hussars")->ov.occupation_weight > type("cavalry")->ov.occupation_weight,
+			"unit types: the hussars are faster than the cavalry, with a better reconnaissance and a bigger occupation weight");
+		r.check(type("cuirassiers")->maximum_speed < type("cavalry")->maximum_speed && type("cuirassiers")->get_breakthrough() > type("cavalry")->get_breakthrough()
+				&& type("cuirassiers")->max_strength > type("cavalry")->max_strength && type("cuirassiers")->reconnaissance < type("cavalry")->reconnaissance
+				&& type("cuirassiers")->ov.occupation_weight < type("cavalry")->ov.occupation_weight,
+			"unit types: the cuirassiers are slower, more durable, with a better breakthrough and a worse reconnaissance and occupation than the cavalry");
+		bool iron_in_cost = false;
+		for (auto const& [good, quantity] : type("cuirassiers")->get_build_cost()) {
+			iron_in_cost |= good->get_identifier() == "iron" && quantity > fixed_point_t::_0;
+		}
+		r.check(iron_in_cost, "unit types: the cuirassiers are built with iron");
+		r.check(type("artillery")->ov.occupation_weight == fixed_point_t::_0_50 && type("line_infantry")->ov.occupation_weight == fixed_point_t::_1
+				&& type("dragoons")->ov.occupation_weight == fixed_point_t(3) / 2,
+			"unit types: the weights of the occupation of the artillery, the infantry and the dragoons are 0.5, 1, 1.5");
+		r.check(type("cavalry")->ov.upgrades_to == "hussars" && !type("cavalry")->ov.upgrade_cost.empty(), "unit types: the cavalry can be upgraded to hussars for a price from the data");
+
+		// A new type comes with a file only, a broken one is skipped
+		{
+			const fs::path temp = fs::temp_directory_path() / "openvic_selftest_unit_files";
+			std::error_code ec;
+			fs::remove_all(temp, ec);
+			write_test_file(temp / "good.txt",
+				"guard_test = { category = infantry equipment = { rifle_0 } icon = 1 sprite = Infantry occupation_weight = 1.2\n"
+				" base_stats = { attack = 8 defense = 2 breakthrough = 9 organisation = 30 speed = 4 manpower = 3 cost = { rifle_0 = 10 } supply_cost = { rifle_0 = 0.02 ammunition = 0.1 } } }\n");
+			write_test_file(temp / "bad.txt",
+				"bad_weapon = { category = infantry equipment = { no_such_rifle } icon = 1 sprite = Infantry\n"
+				" base_stats = { attack = 8 defense = 2 breakthrough = 9 organisation = 30 speed = 4 manpower = 3 cost = { rifle_0 = 10 } supply_cost = { rifle_0 = 0.02 } } }\n"
+				"bad_category = { category = navy equipment = { rifle_0 } icon = 1 sprite = Infantry\n"
+				" base_stats = { attack = 8 defense = 2 breakthrough = 9 organisation = 30 speed = 4 manpower = 3 cost = { rifle_0 = 10 } supply_cost = { rifle_0 = 0.02 } } }\n"
+				"missing_stats = { category = infantry equipment = { rifle_0 } icon = 1 sprite = Infantry }\n");
+			UnitTypeManager fresh;
+			fresh.reserve_all_unit_types(4);
+			const ovdl::v2script::Parser good = Dataloader::parse_defines(temp / "good.txt");
+			const ovdl::v2script::Parser bad = Dataloader::parse_defines(temp / "bad.txt");
+			const std::size_t good_count = fresh.load_ov_unit_file(goods, equipment, "good.txt", good.get_file_node());
+			const std::size_t bad_count = fresh.load_ov_unit_file(goods, equipment, "bad.txt", bad.get_file_node());
+			RegimentType const* const guard_test = fresh.get_regiment_type_by_identifier("guard_test");
+			r.check(
+				good_count == 1 && guard_test != nullptr && guard_test->attack == fixed_point_t(8) && guard_test->get_breakthrough() == fixed_point_t(9)
+					&& guard_test->ov.occupation_weight == fixed_point_t(12) / 10 && guard_test->ov.equipment.size() == 1,
+				"unit types: a new type of unit comes with one file, no code is needed"
+			);
+			r.check(bad_count == 0 && fresh.get_regiment_type_count() == 1, "unit types: a type with an unknown weapon, an unknown category or without stats is skipped, the game goes on");
+			fs::remove_all(temp, ec);
+		}
+
+		// put the country back
+		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
+			country->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			country->grant_unlock(key);
+		}
 	}
 
 	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
@@ -2157,7 +2295,7 @@ namespace {
 		r.check(plain_leaders == 0, "divisions: the armies of a country without the technology have no general");
 
 		// The standard template: four regiments of infantry (2 x 2) and two of cavalry (1 x 2)
-		const std::size_t kind_infantry = regiment_kind(im, "infantry");
+		const std::size_t kind_infantry = regiment_kind(im, "line_infantry");
 		const std::size_t kind_named_cavalry = regiment_kind(im, "cavalry");
 		// The cavalry of the tests: the cavalry type that most regiments of the civilised countries are of
 		std::size_t kind_cavalry = kind_named_cavalry;
@@ -2948,6 +3086,7 @@ namespace {
 		test_division_stats(r, *im);
 		test_production_types(r, *im);
 		test_regiment_equipment(r, *im);
+		test_unit_types(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

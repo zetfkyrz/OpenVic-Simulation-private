@@ -33,6 +33,8 @@
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/BattleFormulas.hpp>
 #include <openvic-simulation/military/DivisionStats.hpp>
+#include <openvic-simulation/military/UnitModifiers.hpp>
+#include <openvic-simulation/modifier/ModifierEffectCache.hpp>
 #include <openvic-simulation/defines/OpenVicDefines.hpp>
 #include <openvic-simulation/map/ProvinceInstance.hpp>
 #include <openvic-simulation/population/PopType.hpp>
@@ -1001,6 +1003,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
 	fmt::println(file, "    --ov-data <folder> : The folder with the data of OpenVic (default: OPENVIC_DATA_PATH, else ov_data found near the executable or in the current folder).");
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
+	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
@@ -1210,7 +1213,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1232,6 +1235,35 @@ static void print_template_line(std::string_view tag, CountryInstance const& cou
 	fmt::println("{}_COST country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.cost));
 	fmt::println("{}_SUPPLY_PER_DAY country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.supply_per_day));
 	fmt::println("{}_AMMO_PER_DAY country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.ammo_per_day));
+}
+
+// --dump-unit: the types of land units (UNIT lines), the data of OpenVic first
+static void run_unit_dump(InstanceManager& instance_manager) {
+	UnitTypeManager const& unit_types = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	for (RegimentType const& type : unit_types.get_regiment_types()) {
+		std::string weapons;
+		for (memory::string const& weapon : type.ov.equipment) {
+			weapons += (weapons.empty() ? "" : ",") + std::string { weapon };
+		}
+		std::string scopes;
+		for (ScopeWeight const& weight : get_scope_weights(cache, type)) {
+			scopes += fmt::format("{}{}={:.2f}", scopes.empty() ? "" : ",", cache.get_unit_scopes()[weight.scope], static_cast<double>(weight.weight));
+		}
+		std::string cost;
+		for (auto const& [good, quantity] : type.get_build_cost()) {
+			cost += fmt::format("{}{}={:.1f}", cost.empty() ? "" : ",", good->get_identifier(), static_cast<double>(quantity));
+		}
+		fmt::println(
+			"UNIT {:<24} source={} category={} key={} equipment={} attack={:.2f} defence={:.2f} breakthrough={:.2f} organisation={:.1f} speed={:.2f} reconnaissance={:.1f} "
+			"strength={:.1f} occupation_weight={:.2f} scopes={} cost={} upgrades_to={}",
+			type.get_identifier(), type.ov.is_ov ? "ov" : "vic2", type.ov.is_ov ? type.ov.category_scope : get_unit_category_scope(type),
+			type.ov.unlock_key.empty() ? "-" : type.ov.unlock_key, weapons.empty() ? "-" : weapons, static_cast<double>(type.attack), static_cast<double>(type.defence),
+			static_cast<double>(type.get_breakthrough()), static_cast<double>(type.default_organisation), static_cast<double>(type.maximum_speed),
+			static_cast<double>(type.reconnaissance), static_cast<double>(type.max_strength), static_cast<double>(type.ov.occupation_weight), scopes, cost,
+			type.ov.upgrades_to.empty() ? "-" : type.ov.upgrades_to
+		);
+	}
 }
 
 static void run_template_battle_dump(InstanceManager& instance_manager) {
@@ -1526,6 +1558,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && dump_units) {
+		run_unit_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -1755,6 +1790,8 @@ int main(int argc, char const* argv[]) {
 			dump_templates = true;
 		} else if (strcmp(arg, "--dump-battle") == 0) {
 			dump_battles = true;
+		} else if (strcmp(arg, "--dump-unit") == 0) {
+			dump_units = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");

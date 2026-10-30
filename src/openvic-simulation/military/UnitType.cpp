@@ -47,14 +47,13 @@ UnitType::UnitType(
 		if (auto const it = build_cost.find(good); it != build_cost.end()) {
 			construction_amount = it->second;
 		} else {
-			for (std::string_view const fallback : { "small_arms", "rifle_0", "rifle_1", "artillery", "field_gun_0", "field_gun_1" }) {
-				for (auto const& [cost_good, cost_quantity] : build_cost) {
-					if (cost_good->get_identifier() == fallback) {
-						construction_amount = cost_quantity;
-					}
-				}
-				if (construction_amount > fixed_point_t::_0) {
-					break;
+			// The weapons of any generation (rifle_N, field_gun_N) and the old names count
+			for (auto const& [cost_good, cost_quantity] : build_cost) {
+				const std::string_view cost_identifier = cost_good->get_identifier();
+				if (construction_amount == fixed_point_t::_0
+					&& (cost_identifier.starts_with("rifle_") || cost_identifier.starts_with("field_gun_") || cost_identifier == "small_arms"
+						|| cost_identifier == "artillery")) {
+					construction_amount = cost_quantity;
 				}
 			}
 		}

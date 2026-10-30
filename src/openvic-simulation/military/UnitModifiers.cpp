@@ -7,6 +7,9 @@
 using namespace OpenVic;
 
 std::string_view OpenVic::get_unit_category_scope(RegimentType const& regiment_type) {
+	if (regiment_type.ov.is_ov) {
+		return regiment_type.ov.category_scope;
+	}
 	using enum UnitType::unit_category_t;
 	switch (regiment_type.unit_category) {
 	case INFANTRY: return "infantry";
@@ -18,18 +21,31 @@ std::string_view OpenVic::get_unit_category_scope(RegimentType const& regiment_t
 
 memory::vector<ScopeWeight> OpenVic::get_scope_weights(ModifierEffectCache const& cache, RegimentType const& regiment_type) {
 	memory::vector<ScopeWeight> weights;
-	for (std::string_view const scope : { std::string_view { "all" }, get_unit_category_scope(regiment_type), regiment_type.get_identifier() }) {
+	const auto add = [&](std::string_view scope, const fixed_point_t weight) {
 		if (scope.empty()) {
-			continue;
+			return;
 		}
 		const std::size_t index = cache.find_unit_scope(scope);
 		if (index == ModifierEffectCache::NO_SCOPE) {
-			continue;
+			return;
 		}
-		const bool known = std::any_of(weights.begin(), weights.end(), [index](ScopeWeight const& weight) { return weight.scope == index; });
-		if (!known) {
-			weights.push_back({ index, fixed_point_t::_1 });
+		for (ScopeWeight& known : weights) {
+			if (known.scope == index) {
+				known.weight = weight;
+				return;
+			}
 		}
+		weights.push_back({ index, weight });
+	};
+	// All the units are in "all" and in their own id; the categories come from the file of the type (the dragoons: infantry 0.5, cavalry 0.5)
+	add("all", fixed_point_t::_1);
+	add(regiment_type.get_identifier(), fixed_point_t::_1);
+	if (!regiment_type.ov.scope_weights.empty()) {
+		for (auto const& [scope, weight] : regiment_type.ov.scope_weights) {
+			add(scope, weight);
+		}
+	} else {
+		add(get_unit_category_scope(regiment_type), fixed_point_t::_1);
 	}
 	return weights;
 }

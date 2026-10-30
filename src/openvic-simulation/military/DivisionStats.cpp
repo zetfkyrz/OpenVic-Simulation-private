@@ -12,6 +12,7 @@
 #include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/military/UnitEquipment.hpp"
 #include "openvic-simulation/military/UnitModifiers.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/modifier/ModifierManager.hpp"
@@ -36,28 +37,20 @@ DivisionStats OpenVic::compute_division_stats(
 	DivisionStats stats;
 	stats.reliability = std::clamp(equipment_fill, fixed_point_t::_0, fixed_point_t::_1);
 
-	// The line of weapons of every regiment type, and the weapon of it the country has of the highest generation
+	// The weapons of every regiment type: what it may have and what the country gives it (military/UnitEquipment.hpp)
 	struct type_info_t {
 		bool looked_up = false;
-		EquipmentDefinition const* first = nullptr;
-		EquipmentDefinition const* best = nullptr;
+		UnitWeapon weapon;
 	};
 	std::array<type_info_t, DIVISION_MAX_TYPES> type_infos;
+	const fixed_point_t below_min_penalty = defines.war.equipment_below_min_penalty.fixed();
 	const auto info_of = [&](RegimentType const& regiment_type, const std::size_t kind) -> type_info_t const& {
 		type_info_t& info = type_infos[kind];
 		if (!info.looked_up) {
 			info.looked_up = true;
-			for (EquipmentLine const& line : equipment_manager.get_lines()) {
-				if (std::find(line.unit_types.begin(), line.unit_types.end(), regiment_type.get_identifier()) == line.unit_types.end()) {
-					continue;
-				}
-				const auto generations = equipment_manager.get_line_equipment(line.identifier);
-				if (!generations.empty()) {
-					info.first = equipment_manager.get_initial_equipment(line.identifier);
-					info.best = get_best_equipment(equipment_manager, country, line.identifier);
-				}
-				break;
-			}
+			info.weapon = choose_unit_weapon(
+				equipment_manager, country, regiment_type, get_allowed_weapons(equipment_manager, regiment_type), below_min_penalty
+			);
 		}
 		return info;
 	};
@@ -89,33 +82,42 @@ DivisionStats OpenVic::compute_division_stats(
 				continue;
 			}
 			type_info_t const& info = info_of(*regiment_type, cell - 1);
-			const bool has_weapon = info.first != nullptr && info.best != nullptr;
+			EquipmentDefinition const* const first = info.weapon.initial; // what the unit is built with
+			const bool has_weapon = first != nullptr;
+			// The weapon of the goods and the ammunition: the best allowed one, else what the unit is built with
+			EquipmentDefinition const* const goods_weapon = info.weapon.best != nullptr ? info.weapon.best : first;
+			EquipmentDefinition const* const effective = info.weapon.effective;
+			const fixed_point_t keep = info.weapon.keep;
 			const fixed_point_t attack_ratio = has_weapon
-				? battle_formulas::weapon_ratio(info.first->attack_mult, info.best->attack_mult, equipment_fill) : fixed_point_t::_1;
+				? battle_formulas::weapon_ratio(first->attack_mult, effective->attack_mult * keep, equipment_fill) : fixed_point_t::_1;
 			const fixed_point_t defence_ratio = has_weapon
-				? battle_formulas::weapon_ratio(info.first->defense_mult, info.best->defense_mult, equipment_fill) : fixed_point_t::_1;
+				? battle_formulas::weapon_ratio(first->defense_mult, effective->defense_mult * keep, equipment_fill) : fixed_point_t::_1;
+			const fixed_point_t breakthrough_ratio = has_weapon
+				? battle_formulas::weapon_ratio(first->breakthrough_mult, effective->breakthrough_mult * keep, equipment_fill) : fixed_point_t::_1;
 			const fixed_point_t row_weight = battle_formulas::row_weight(row, limits.row_weight_shift);
 
 			stats.regiments++;
 			cells_in_rank[rank]++;
 			stats.attack += regiment_type->attack * attack_ratio * row_weight;
 			stats.defence += regiment_type->defence * defence_ratio * row_weight;
+			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * row_weight;
 			durability_sum += regiment_type->max_strength * defence_ratio;
 			strength_sum += regiment_type->max_strength;
 			organisation_sum += regiment_type->default_organisation;
 			stats.reconnaissance += regiment_type->reconnaissance;
 			speed = stats.regiments == 1 ? regiment_type->maximum_speed : std::min(speed, regiment_type->maximum_speed);
-			stats.weight += regiment_type->max_strength * defines.war.template_kit_weight_per_strength;
+			stats.weight += regiment_type->ov.weight > fixed_point_t::_0 ? regiment_type->ov.weight
+				: regiment_type->max_strength * defines.war.template_kit_weight_per_strength;
 			// The fortification is the average of the regiments (a regiment of cavalry with no bonus has 0)
 			fortification_sum += get_scoped_sum(country, cache, scoped_effect_t::FORTIFICATION, scope_weights_of(*regiment_type));
 
 			// The goods: the weapon of the line is the one of the best generation (the good of the first generation is the one of the base game)
 			const std::string base_good = has_weapon
-				? std::string { info.first->good.identifier }
+				? std::string { first->good.identifier }
 				: std::string {};
 			const auto good_id = [&](GoodDefinition const& good) -> std::string {
 				if (has_weapon && good.get_identifier() == base_good) {
-					return std::string { info.best->good.identifier };
+					return std::string { goods_weapon->good.identifier };
 				}
 				return std::string { good.get_identifier() };
 			};
@@ -133,9 +135,9 @@ DivisionStats OpenVic::compute_division_stats(
 				supply[good_id(*item.good)] += share_of * regiment_type->supply_consumption / economy.supply_days_per_month;
 			}
 			if (has_weapon) {
-				stats.weight += pieces * info.best->weight;
-				ammo[info.best->ammo_good.empty() ? std::string { "ammunition" } : std::string { info.best->ammo_good }] +=
-					pieces * info.best->ammo_per_day;
+				stats.weight += pieces * goods_weapon->weight;
+				ammo[goods_weapon->ammo_good.empty() ? std::string { "ammunition" } : std::string { goods_weapon->ammo_good }] +=
+					pieces * goods_weapon->ammo_per_day;
 			}
 		}
 	}

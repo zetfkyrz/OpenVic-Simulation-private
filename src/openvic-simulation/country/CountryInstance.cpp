@@ -3,6 +3,7 @@
 #include "openvic-simulation/misc/MoneyLedger.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
 #include "openvic-simulation/military/Equipment.hpp"
+#include "openvic-simulation/military/UnitEquipment.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
@@ -907,8 +908,14 @@ bool CountryInstance::is_unit_type_unlocked(UnitType const& unit_type) const {
 	using enum unit_branch_t;
 
 	switch (unit_type.branch) {
-	case LAND:
-		return is_unit_type_unlocked(static_cast<UnitTypeBranched<LAND> const&>(unit_type).index);
+	case LAND: {
+		RegimentType const& regiment_type = static_cast<UnitTypeBranched<LAND> const&>(unit_type);
+		// A unit type of OpenVic is open when it has no key or the country has the key (unit:<id>); the units of Vic2 follow the technologies of Vic2
+		if (regiment_type.ov.is_ov) {
+			return regiment_type.ov.unlock_key.empty() || has_unlock(regiment_type.ov.unlock_key);
+		}
+		return is_unit_type_unlocked(regiment_type.index);
+	}
 	case NAVAL:
 		return is_unit_type_unlocked(static_cast<UnitTypeBranched<NAVAL> const&>(unit_type).index);
 	default:
@@ -2268,12 +2275,11 @@ void CountryInstance::update_regiment_equipment() {
 	std::int32_t upgrades_left = war.equipment_upgrades_per_day;
 	std::int32_t needs_left = war.equipment_upgrades_per_day; // the regiments whose weapons the government buys the goods of today
 
-	// What a regiment type needs, found once a day for every type (the line of its weapons, the generations, the best one the country has)
+	// What a regiment type needs, found once a day for every type: the weapons it may have, what the country can give it
 	struct type_cache_t {
 		bool looked_up = false;
-		memory::vector<EquipmentDefinition const*> generations;
-		EquipmentDefinition const* first = nullptr;
-		EquipmentDefinition const* best = nullptr;
+		memory::vector<EquipmentDefinition const*> allowed;
+		UnitWeapon choice;
 		GoodDefinition const* base_good = nullptr;
 		fixed_point_t pieces = fixed_point_t::_0;
 	};
@@ -2289,37 +2295,30 @@ void CountryInstance::update_regiment_equipment() {
 			type_cache_t& cache = caches[kind];
 			if (!cache.looked_up) {
 				cache.looked_up = true;
-				if (EquipmentLine const* const line = equipment_manager->find_line_of_unit_type(regiment_type.get_identifier()); line != nullptr) {
-					cache.generations = equipment_manager->get_line_equipment(line->identifier);
-					if (!cache.generations.empty()) {
-						cache.first = equipment_manager->get_initial_equipment(line->identifier);
-						for (EquipmentDefinition const* const candidate : cache.generations) {
-							if (has_unlock(candidate->unlock_key)) {
-								cache.best = candidate;
-							}
-						}
-						cache.base_good = good_definition_manager->get_good_definition_by_identifier(cache.first->good.identifier);
-						// The pieces of the weapon a regiment needs: what its construction took of the good of the first generation
-						for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
-							if (good == cache.base_good) {
-								cache.pieces = quantity;
-							}
+				cache.allowed = get_allowed_weapons(*equipment_manager, regiment_type);
+				cache.choice = choose_unit_weapon(*equipment_manager, *this, regiment_type, cache.allowed, war.equipment_below_min_penalty.fixed());
+				if (cache.choice.initial != nullptr) {
+					cache.base_good = good_definition_manager->get_good_definition_by_identifier(cache.choice.initial->good.identifier);
+					// The pieces of the weapon a regiment needs: what its construction took of the good of the weapon it is built with
+					for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
+						if (good == cache.base_good) {
+							cache.pieces = quantity;
 						}
 					}
 				}
 			}
-			if (cache.first == nullptr || cache.best == nullptr) {
+			if (cache.choice.initial == nullptr) {
 				continue;
 			}
-			EquipmentDefinition const* const first = cache.first;
-			EquipmentDefinition const* const best = cache.best;
-			const std::uint32_t current_tier = regiment.get_weapon() != nullptr ? regiment.get_weapon()->tier : first->tier;
+			EquipmentDefinition const* const initial = cache.choice.initial;
+			EquipmentDefinition const* const best = cache.choice.best; // nullptr: the country has none of the allowed weapons
+			const std::uint32_t current_tier = regiment.get_weapon() != nullptr ? regiment.get_weapon()->tier : initial->tier;
 
-			if (current_tier < best->tier && cache.base_good != nullptr && cache.pieces > fixed_point_t::_0) {
+			if (best != nullptr && current_tier < best->tier && cache.base_good != nullptr && cache.pieces > fixed_point_t::_0) {
 				if (upgrades_left > 0) {
-					// The best generation the stockpile can give
-					for (std::size_t i = cache.generations.size(); i-- > 0;) {
-						EquipmentDefinition const* const candidate = cache.generations[i];
+					// The best allowed generation the stockpile can give
+					for (std::size_t i = cache.allowed.size(); i-- > 0;) {
+						EquipmentDefinition const* const candidate = cache.allowed[i];
 						if (candidate->tier <= current_tier || candidate->tier > best->tier || !has_unlock(candidate->unlock_key)) {
 							continue;
 						}
@@ -2352,12 +2351,14 @@ void CountryInstance::update_regiment_equipment() {
 				}
 			}
 
-			// What the weapon is worth in the battle: the points of the weapon against the first generation, less for the generations it is behind
-			EquipmentDefinition const* const equipped = regiment.get_weapon() != nullptr ? regiment.get_weapon() : first;
-			const std::uint32_t behind = best->tier > equipped->tier ? best->tier - equipped->tier : 0;
-			const fixed_point_t keep = std::max(
-				fixed_point_t::_0, fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * static_cast<std::int32_t>(behind)
-			);
+			// What the weapon is worth in the battle: the multipliers of the weapon the regiment has (what was given to it, else the weapon it is built
+			// with, which is the nearest lower generation with the penalty when the country does not have it)
+			EquipmentDefinition const* equipped = regiment.get_weapon();
+			fixed_point_t keep = fixed_point_t::_1;
+			if (equipped == nullptr) {
+				equipped = cache.choice.best != nullptr ? initial : cache.choice.effective;
+				keep = cache.choice.best != nullptr ? fixed_point_t::_1 : cache.choice.keep;
+			}
 			regiment.set_weapon_attack_ratio(equipped->attack_mult * keep);
 			regiment.set_weapon_defence_ratio(equipped->defense_mult * keep);
 			regiment.set_weapon_breakthrough_ratio(equipped->breakthrough_mult * keep);

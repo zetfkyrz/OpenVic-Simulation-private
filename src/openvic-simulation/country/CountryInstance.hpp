@@ -876,8 +876,8 @@ namespace OpenVic {
 		}
 		// The weapons of the regiments (every day, in calculate_government_good_needs): a regiment that is behind the best generation of its line the
 		// country has gets a weapon of a better one out of the national stockpile (the best the stock allows, at most ov_war.EQUIPMENT_UPGRADES_PER_DAY
-		// regiments a day), the government buys the goods of the next ones at the market (its needs), and a regiment behind the best generation
-		// loses ov_war.EQUIPMENT_SHORTFALL_PENALTY of its attack and defence for each generation it lacks
+		// regiments a day), the government buys the goods of the next ones at the market (its needs); the weapons come from the list of its type
+		// (military/UnitEquipment.hpp)
 		void update_regiment_equipment();
 		// Days of the reserve of supplies a regiment of this country keeps
 		[[nodiscard]] fixed_point_t get_supply_reserve_capacity() const;

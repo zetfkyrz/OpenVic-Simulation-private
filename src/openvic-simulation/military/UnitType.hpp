@@ -22,6 +22,7 @@ namespace OpenVic {
 	struct TerrainTypeManager;
 	struct Culture;
 	struct CountryInstance;
+	struct EquipmentManager;
 
 	struct UnitType : HasIdentifier {
 		using icon_t = uint32_t;
@@ -133,6 +134,34 @@ namespace OpenVic {
 		const fixed_point_t maneuver;
 		const fixed_point_t siege;
 
+		// A buff of a unit type: shares added to the attack, the defence and the breakthrough
+		struct OvBuff {
+			fixed_point_t attack_mult;
+			fixed_point_t defense_mult;
+			fixed_point_t breakthrough_mult;
+		};
+		// What a unit type of OpenVic (ov_data/common/ov_units) has besides the stats of the game; the types of Vic2 have the defaults (is_ov = false)
+		struct OvUnitData {
+			bool is_ov = false;
+			memory::string unlock_key; // empty: open from the start
+			memory::vector<memory::string> equipment; // the weapons the type may have (their ids); the lowest generation is the one it is built with
+			memory::string category_scope; // infantry, cavalry or artillery
+			fixed_point_t breakthrough;
+			fixed_point_t weight; // kilograms of a regiment, 0: made from the strength
+			fixed_point_t occupation_weight = fixed_point_t::_1;
+			memory::vector<std::pair<memory::string, fixed_point_t>> scope_weights; // the category scopes with weights (empty: the category of the type, weight 1)
+			memory::string upgrades_to;
+			fixed_point_map_t<GoodDefinition const*> upgrade_cost;
+			OvBuff general;
+			memory::vector<std::pair<memory::string, OvBuff>> vs_unit; // against a type of units or a category
+			memory::vector<std::pair<memory::string, OvBuff>> terrain; // on a terrain
+		};
+		OvUnitData ov;
+
+		[[nodiscard]] fixed_point_t get_breakthrough() const {
+			return ov.is_ov ? ov.breakthrough : attack;
+		}
+
 		UnitTypeBranched(
 			index_t new_index, unit_type_index_t new_unit_type_index, std::string_view new_identifier,
 			unit_type_args_t& unit_args, regiment_type_args_t const& regiment_type_args
@@ -184,6 +213,7 @@ namespace OpenVic {
 		IdentifierPointerRegistry<UnitType> IDENTIFIER_REGISTRY(unit_type);
 		IdentifierRegistry<RegimentType> IDENTIFIER_REGISTRY(regiment_type);
 		IdentifierRegistry<ShipType> IDENTIFIER_REGISTRY(ship_type);
+		string_map_t<memory::string> vic2_aliases;
 
 	public:
 		void reserve_all_unit_types(size_t size);
@@ -230,6 +260,18 @@ namespace OpenVic {
 				},
 				allow_empty, warn
 			);
+		}
+
+		// The types of units of OpenVic, a file of ov_data/common/ov_units each (the type of Vic2 with the same id is not loaded): the number of types loaded
+		std::size_t load_ov_unit_file(
+			GoodDefinitionManager const& good_definition_manager, EquipmentManager const& equipment_manager, std::string_view source, ast::NodeCPtr root
+		);
+		// The ids of the units of Vic2 that are other units here (infantry is line_infantry): ov_data/common/ov_units/aliases.txt. Only the files of
+		// Vic2 (the armies of the start) use them; resolve_vic2_regiment_type gives the type
+		bool load_vic2_aliases(std::string_view source, ast::NodeCPtr root);
+		[[nodiscard]] RegimentType const* resolve_vic2_regiment_type(std::string_view identifier) const;
+		[[nodiscard]] bool is_vic2_alias(std::string_view identifier) const {
+			return vic2_aliases.contains(identifier);
 		}
 
 		bool load_unit_type_file(
