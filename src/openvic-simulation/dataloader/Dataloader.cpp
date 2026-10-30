@@ -240,6 +240,19 @@ Dataloader::path_vector_t Dataloader::lookup_files_in_dir_load_order(
 	return result;
 }
 
+std::size_t Dataloader::load_default_unlocks(DefaultUnlocks& default_unlocks) const {
+	const fs::path file = lookup_file("common/ov_equipment/default_unlocks.txt", false);
+	if (file.empty()) {
+		return 0;
+	}
+	const v2script::Parser parser = parse_defines(file);
+	if (parser.has_fatal_error() || parser.has_error()) {
+		spdlog::warn_s("The default unlocks file {} is skipped, it has errors", file);
+		return 0;
+	}
+	return default_unlocks.load_file(file.string(), parser.get_file_node());
+}
+
 std::size_t Dataloader::load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const {
 	static constexpr std::string_view provisional_unlocks_file = "common/ov_equipment/provisional_unlocks.txt";
 
@@ -1097,6 +1110,9 @@ bool Dataloader::load_defines(
 		ProvisionalUnlocks& provisional_unlocks = definition_manager.get_military_manager().get_provisional_unlocks();
 		const std::size_t step_count = load_provisional_unlocks(provisional_unlocks, definition_manager.get_modifier_manager());
 		SPDLOG_INFO("Loaded {} provisional unlock steps", step_count);
+		SPDLOG_INFO(
+			"Loaded {} default unlock keys", load_default_unlocks(definition_manager.get_military_manager().get_default_unlocks())
+		);
 	}
 	if (!definition_manager.get_pop_manager().get_culture_manager().load_graphical_culture_type_file(
 		parse_defines(lookup_file(graphical_culture_type_file)).get_file_node()

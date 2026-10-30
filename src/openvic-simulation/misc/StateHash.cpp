@@ -87,9 +87,11 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				if (regiment.get_weapon() != nullptr) {
 					hasher.add(static_cast<std::uint64_t>(regiment.get_weapon()->index + 1));
 				}
-				if (regiment.get_weapon_attack_ratio() != fixed_point_t::_1 || regiment.get_weapon_defence_ratio() != fixed_point_t::_1) {
+				if (regiment.get_weapon_attack_ratio() != fixed_point_t::_1 || regiment.get_weapon_defence_ratio() != fixed_point_t::_1
+					|| regiment.get_weapon_breakthrough_ratio() != fixed_point_t::_1) {
 					hasher.add(regiment.get_weapon_attack_ratio());
 					hasher.add(regiment.get_weapon_defence_ratio());
+					hasher.add(regiment.get_weapon_breakthrough_ratio());
 				}
 			}
 		}

@@ -38,7 +38,8 @@ namespace OpenVic {
 		//     takes the newest generation the country has
 		// 24: regiments have a weapon of a generation (taken out of the national stockpile, bought by the government), use its goods as supplies and fight with
 		//     its attack and defence
-		inline constexpr int SIMULATION_VERSION = 24;
+		// 25: tier 0 of the weapons (rifle_0, field_gun_0), the weapons are multipliers of the attack, the defence and the breakthrough, default unlocks
+		inline constexpr int SIMULATION_VERSION = 25;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

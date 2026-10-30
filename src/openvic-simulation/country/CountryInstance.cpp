@@ -2292,7 +2292,7 @@ void CountryInstance::update_regiment_equipment() {
 				if (EquipmentLine const* const line = equipment_manager->find_line_of_unit_type(regiment_type.get_identifier()); line != nullptr) {
 					cache.generations = equipment_manager->get_line_equipment(line->identifier);
 					if (!cache.generations.empty()) {
-						cache.first = cache.generations.front();
+						cache.first = equipment_manager->get_initial_equipment(line->identifier);
 						for (EquipmentDefinition const* const candidate : cache.generations) {
 							if (has_unlock(candidate->unlock_key)) {
 								cache.best = candidate;
@@ -2358,8 +2358,9 @@ void CountryInstance::update_regiment_equipment() {
 			const fixed_point_t keep = std::max(
 				fixed_point_t::_0, fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed() * static_cast<std::int32_t>(behind)
 			);
-			regiment.set_weapon_attack_ratio(first->attack > fixed_point_t::_0 ? equipped->attack / first->attack * keep : keep);
-			regiment.set_weapon_defence_ratio(first->defence > fixed_point_t::_0 ? equipped->defence / first->defence * keep : keep);
+			regiment.set_weapon_attack_ratio(equipped->attack_mult * keep);
+			regiment.set_weapon_defence_ratio(equipped->defense_mult * keep);
+			regiment.set_weapon_breakthrough_ratio(equipped->breakthrough_mult * keep);
 		}
 	}
 }

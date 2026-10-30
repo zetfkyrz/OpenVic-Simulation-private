@@ -63,6 +63,21 @@ namespace OpenVic {
 		}
 	};
 
+	// The keys that every country has from the start of the game (ov_data/common/ov_equipment/default_unlocks.txt: unlock = { "<key>" ... }), for example
+	// the weapons of the Napoleonic wars. They are given again every day: a key that a country has lost is not given back by anything but this list.
+	struct DefaultUnlocks {
+	private:
+		memory::vector<memory::string> keys;
+
+	public:
+		// Returns the number of keys. A key that is not <kind>:<id> is skipped with a warning.
+		std::size_t load_file(std::string_view source, ast::NodeCPtr root);
+		[[nodiscard]] std::span<const memory::string> get_keys() const {
+			return keys;
+		}
+	};
+	void apply_default_unlocks(InstanceManager& instance_manager);
+
 	// Every day (one thread, before the modifier sums): the steps whose year has come give their keys and modifiers to every country
 	void update_provisional_unlocks(InstanceManager& instance_manager);
 	// The same for a given year (the tests)

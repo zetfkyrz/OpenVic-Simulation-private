@@ -75,6 +75,7 @@ namespace OpenVic {
 		GoodDefinition const* PROPERTY_RW(weapon_good, nullptr);
 		fixed_point_t PROPERTY_RW(weapon_attack_ratio, fixed_point_t::_1);
 		fixed_point_t PROPERTY_RW(weapon_defence_ratio, fixed_point_t::_1);
+		fixed_point_t PROPERTY_RW(weapon_breakthrough_ratio, fixed_point_t::_1);
 
 		UnitInstanceBranched(
 			unique_id_t new_unique_id,

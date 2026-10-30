@@ -52,7 +52,7 @@ DivisionStats OpenVic::compute_division_stats(
 				}
 				const auto generations = equipment_manager.get_line_equipment(line.identifier);
 				if (!generations.empty()) {
-					info.first = generations.front();
+					info.first = equipment_manager.get_initial_equipment(line.identifier);
 					info.best = get_best_equipment(equipment_manager, country, line.identifier);
 				}
 				break;
@@ -79,9 +79,9 @@ DivisionStats OpenVic::compute_division_stats(
 			type_info_t const& info = info_of(*regiment_type, cell - 1);
 			const bool has_weapon = info.first != nullptr && info.best != nullptr;
 			const fixed_point_t attack_ratio = has_weapon
-				? battle_formulas::weapon_ratio(info.first->attack, info.best->attack, equipment_fill) : fixed_point_t::_1;
+				? battle_formulas::weapon_ratio(info.first->attack_mult, info.best->attack_mult, equipment_fill) : fixed_point_t::_1;
 			const fixed_point_t defence_ratio = has_weapon
-				? battle_formulas::weapon_ratio(info.first->defence, info.best->defence, equipment_fill) : fixed_point_t::_1;
+				? battle_formulas::weapon_ratio(info.first->defense_mult, info.best->defense_mult, equipment_fill) : fixed_point_t::_1;
 			const fixed_point_t row_weight = battle_formulas::row_weight(row, limits.row_weight_shift);
 
 			stats.regiments++;

@@ -16,5 +16,6 @@ namespace OpenVic {
 		WargoalTypeManager PROPERTY_REF(wargoal_type_manager);
 		EquipmentManager PROPERTY_REF(equipment_manager);
 		ProvisionalUnlocks PROPERTY_REF(provisional_unlocks);
+		DefaultUnlocks PROPERTY_REF(default_unlocks);
 	};
 }

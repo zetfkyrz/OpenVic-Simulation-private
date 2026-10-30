@@ -20,6 +20,7 @@ namespace OpenVic {
 	struct GameRulesManager;
 	struct EquipmentManager;
 	struct ProvisionalUnlocks;
+	struct DefaultUnlocks;
 	struct ModifierManager;
 	class UIManager;
 
@@ -122,6 +123,8 @@ namespace OpenVic {
 		 * Returns the number of weapons loaded. */
 		std::size_t load_equipment_files(EquipmentManager& equipment_manager) const;
 		/* The provisional unlocks by the year (common/ov_equipment/provisional_unlocks.txt, TEMPORARY). Returns the number of steps. */
+		/* The keys every country has from the start (common/ov_equipment/default_unlocks.txt). Returns the number of keys. */
+		std::size_t load_default_unlocks(DefaultUnlocks& default_unlocks) const;
 		std::size_t load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir(std::string_view path, fs::path const& extension) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir_recursive(

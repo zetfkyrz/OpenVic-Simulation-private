@@ -114,8 +114,9 @@ std::size_t EquipmentManager::load_equipment_file(std::string_view source, ast::
 				"line", ONE_EXACTLY, expect_identifier_or_string(assign_variable_callback_string(definition.line)),
 				"tier", ONE_EXACTLY, expect_uint(assign_variable_callback(definition.tier)),
 				"unlock_key", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.unlock_key)),
-				"attack", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.attack)),
-				"defence", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.defence)),
+				"attack_mult", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.attack_mult)),
+				"defense_mult", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.defense_mult)),
+				"breakthrough_mult", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.breakthrough_mult)),
 				"ammo_per_day", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(definition.ammo_per_day)),
 				"ammo_good", ZERO_OR_ONE, expect_identifier_or_string(assign_variable_callback_string(definition.ammo_good)),
 				"weight", ONE_EXACTLY, expect_fixed_point(assign_variable_callback(definition.weight)),
@@ -164,11 +165,9 @@ std::size_t EquipmentManager::load_equipment_file(std::string_view source, ast::
 			if (find_line(definition.line) == nullptr) {
 				return skip(memory::fmt::format("the line \"{}\" is not described in lines.txt", definition.line));
 			}
-			if (definition.tier < 1) {
-				return skip("tier must be 1 or more");
-			}
-			if (definition.attack <= fixed_point_t::_0 || definition.defence <= fixed_point_t::_0) {
-				return skip("attack and defence must be above 0");
+			if (definition.attack_mult <= fixed_point_t::_0 || definition.defense_mult <= fixed_point_t::_0
+				|| definition.breakthrough_mult <= fixed_point_t::_0) {
+				return skip("attack_mult, defense_mult and breakthrough_mult must be above 0");
 			}
 			if (definition.weight < fixed_point_t::_0 || definition.ammo_per_day < fixed_point_t::_0) {
 				return skip("weight and ammo_per_day cannot be negative");
@@ -229,6 +228,22 @@ EquipmentLine const* EquipmentManager::find_line_of_unit_type(std::string_view u
 		}
 	}
 	return nullptr;
+}
+
+EquipmentDefinition const* EquipmentManager::get_initial_equipment(std::string_view line_identifier) const {
+	EquipmentDefinition const* lowest = nullptr;
+	for (EquipmentDefinition const& definition : equipment) {
+		if (definition.line != line_identifier) {
+			continue;
+		}
+		if (!definition.good.replaces.empty()) {
+			return &definition;
+		}
+		if (lowest == nullptr || definition.tier < lowest->tier) {
+			lowest = &definition;
+		}
+	}
+	return lowest;
 }
 
 EquipmentDefinition const* EquipmentManager::find_equipment(std::string_view identifier) const {

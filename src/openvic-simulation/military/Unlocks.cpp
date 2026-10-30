@@ -98,7 +98,44 @@ std::size_t ProvisionalUnlocks::load_file(std::string_view source, ast::NodeCPtr
 	return steps.size();
 }
 
+std::size_t DefaultUnlocks::load_file(std::string_view source, ast::NodeCPtr root) {
+	keys.clear();
+	const bool parsed = expect_dictionary_keys_and_default(
+		[source](std::string_view key, ast::NodeCPtr) -> bool {
+			spdlog::warn_s("Unknown key \"{}\" in the default unlocks {}", key, source);
+			return true;
+		},
+		"unlock", ZERO_OR_MORE, expect_list(expect_identifier_or_string(
+			[this, source](std::string_view key) -> bool {
+				if (!is_valid_unlock_key(key)) {
+					spdlog::warn_s("The unlock key \"{}\" of {} is not <kind>:<id>, skipped", key, source);
+					return true;
+				}
+				keys.emplace_back(key);
+				return true;
+			}
+		))
+	)(root);
+	if (!parsed) {
+		spdlog::warn_s("The default unlocks file {} is broken, what could be read is loaded", source);
+	}
+	return keys.size();
+}
+
+void OpenVic::apply_default_unlocks(InstanceManager& instance_manager) {
+	DefaultUnlocks const& defaults = instance_manager.definition_manager.get_military_manager().get_default_unlocks();
+	if (defaults.get_keys().empty()) {
+		return;
+	}
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		for (memory::string const& key : defaults.get_keys()) {
+			country.grant_unlock(key);
+		}
+	}
+}
+
 void OpenVic::update_provisional_unlocks(InstanceManager& instance_manager) {
+	apply_default_unlocks(instance_manager);
 	apply_provisional_unlocks(instance_manager, static_cast<int>(instance_manager.get_today().get_year()));
 }
 

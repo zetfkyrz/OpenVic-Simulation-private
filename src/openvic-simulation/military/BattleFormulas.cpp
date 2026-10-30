@@ -24,11 +24,8 @@ fixed_point_t battle_formulas::density(
 }
 
 fixed_point_t battle_formulas::weapon_ratio(const fixed_point_t first_points, const fixed_point_t best_points, const fixed_point_t fill) {
-	if (first_points <= fixed_point_t::_0 || best_points <= fixed_point_t::_0) {
-		return fixed_point_t::_1;
-	}
 	const fixed_point_t clamped_fill = fill < fixed_point_t::_0 ? fixed_point_t::_0 : fill > fixed_point_t::_1 ? fixed_point_t::_1 : fill;
-	return fixed_point_t::_1 + clamped_fill * (best_points / first_points - fixed_point_t::_1);
+	return first_points + clamped_fill * (best_points - first_points);
 }
 
 fixed_point_t battle_formulas::damage_per_day(

@@ -234,29 +234,29 @@ namespace {
 			"rifle = { icon = \"small_arms\" name = \"LINE_RIFLE\" slot = infantry unit_types = { infantry } }\n"
 			"siege_artillery = { icon = \"artillery\" name = \"LINE_SIEGE\" slot = special unit_types = { siege } }\n");
 		write_test_file(base / "common/ov_equipment/rifles/rifle_a.txt",
-			"rifle_a = {\n line = rifle\n tier = 1\n attack = 4\n defence = 4\n weight = 4.5\n"
+			"rifle_a = {\n line = rifle\n tier = 1\n attack_mult = 4\n defense_mult = 1\n breakthrough_mult = 1\n weight = 4.5\n"
 			" flags = { smokeless breech_loading breech_loading }\n good = { base_price = 37 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/rifle_b.txt",
-			"rifle_b = {\n line = rifle\n tier = 2\n attack = 6\n defence = 5\n weight = 4.2\n"
+			"rifle_b = {\n line = rifle\n tier = 2\n attack_mult = 6\n defense_mult = 1\n breakthrough_mult = 1\n weight = 4.2\n"
 			" unlock_key = \"my_unlock:b\"\n mystery_key = 5\n good = { id = \"rifle_b_good\" base_price = 50 }\n}\n");
 		// A new line with one weapon: no code is needed
 		write_test_file(base / "common/ov_equipment/siege/mortar_1.txt",
-			"mortar_1 = {\n line = siege_artillery\n tier = 1\n attack = 8\n defence = 2\n weight = 2000\n"
+			"mortar_1 = {\n line = siege_artillery\n tier = 1\n attack_mult = 8\n defense_mult = 1\n breakthrough_mult = 1\n weight = 2000\n"
 			" good = { base_price = 90 }\n}\n");
 		// Broken: an unknown line, a missing value, a value out of its range, a file that cannot be parsed
 		write_test_file(base / "common/ov_equipment/rifles/bad_line.txt",
-			"bad_line = {\n line = nothing\n tier = 1\n attack = 1\n defence = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_line = {\n line = nothing\n tier = 1\n attack_mult = 1\n defense_mult = 1\n breakthrough_mult = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_missing.txt",
-			"bad_missing = {\n line = rifle\n tier = 1\n attack = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_missing = {\n line = rifle\n tier = 1\n attack_mult = 1\n defense_mult = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_range.txt",
-			"bad_range = {\n line = rifle\n tier = 1\n attack = -1\n defence = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
+			"bad_range = {\n line = rifle\n tier = 1\n attack_mult = -1\n defense_mult = 1\n breakthrough_mult = 1\n weight = 1\n good = { base_price = 1 }\n}\n");
 		write_test_file(base / "common/ov_equipment/rifles/bad_syntax.txt", "bad_syntax = { line = rifle tier = \n");
 		// The mod: replaces rifle_a with a file of the same path, adds rifle_c, replaces rifle_b by id from another file
 		write_test_file(mod / "common/ov_equipment/rifles/rifle_a.txt",
-			"rifle_a = {\n line = rifle\n tier = 1\n attack = 5\n defence = 4\n weight = 4.4\n good = { base_price = 40 }\n}\n");
+			"rifle_a = {\n line = rifle\n tier = 1\n attack_mult = 5\n defense_mult = 1\n breakthrough_mult = 1\n weight = 4.4\n good = { base_price = 40 }\n}\n");
 		write_test_file(mod / "common/ov_equipment/rifles/rifle_c.txt",
-			"rifle_c = {\n line = rifle\n tier = 3\n attack = 9\n defence = 6\n weight = 4\n good = { base_price = 70 }\n}\n"
-			"rifle_b = {\n line = rifle\n tier = 2\n attack = 7\n defence = 5\n weight = 4.2\n good = { base_price = 51 }\n}\n");
+			"rifle_c = {\n line = rifle\n tier = 3\n attack_mult = 9\n defense_mult = 1\n breakthrough_mult = 1\n weight = 4\n good = { base_price = 70 }\n}\n"
+			"rifle_b = {\n line = rifle\n tier = 2\n attack_mult = 7\n defense_mult = 1\n breakthrough_mult = 1\n weight = 4.2\n good = { base_price = 51 }\n}\n");
 
 		Dataloader loader;
 		const Dataloader::path_vector_t roots { base, mod };
@@ -282,7 +282,7 @@ namespace {
 
 		EquipmentDefinition const* const rifle_a = manager.find_equipment("rifle_a");
 		r.check(
-			rifle_a != nullptr && rifle_a->attack == fixed_point_t(5) && rifle_a->good.base_price == fixed_point_t(40),
+			rifle_a != nullptr && rifle_a->attack_mult == fixed_point_t(5) && rifle_a->good.base_price == fixed_point_t(40),
 			"equipment: a file of a mod with the same path replaces the built-in one"
 		);
 		r.check(rifle_a != nullptr && rifle_a->unlock_key == "equipment:rifle_a", "equipment: the unlock key is equipment:<id> by default");
@@ -292,7 +292,7 @@ namespace {
 		);
 		EquipmentDefinition const* const rifle_b = manager.find_equipment("rifle_b");
 		r.check(
-			rifle_b != nullptr && rifle_b->attack == fixed_point_t(7) && rifle_b->unlock_key == "equipment:rifle_b",
+			rifle_b != nullptr && rifle_b->attack_mult == fixed_point_t(7) && rifle_b->unlock_key == "equipment:rifle_b",
 			"equipment: a weapon of a mod with the id of another one replaces it, whatever the file"
 		);
 		EquipmentDefinition const* const rifle_c = manager.find_equipment("rifle_c");
@@ -327,17 +327,17 @@ namespace {
 		r.check(manager.get_lines().size() >= 2, "equipment: the lines of the game are loaded", std::to_string(manager.get_lines().size()));
 		for (std::string_view line : { "rifle", "field_artillery" }) {
 			auto const generations = manager.get_line_equipment(line);
-			bool ok = generations.size() >= 4;
+			bool ok = generations.size() >= 5;
 			for (std::size_t i = 0; ok && i < generations.size(); i++) {
-				ok = generations[i]->tier == i + 1;
+				ok = generations[i]->tier == i;
 			}
-			r.check(ok, fmt::format("equipment: the line {} has the generations 1 to 4", line), std::to_string(generations.size()));
+			r.check(ok, fmt::format("equipment: the line {} has the generations 0 to 4", line), std::to_string(generations.size()));
 		}
 		EquipmentDefinition const* const rifle_3 = manager.find_equipment("rifle_3");
 		r.check(
-			rifle_3 != nullptr && rifle_3->attack == fixed_point_t(9) && rifle_3->defence == fixed_point_t(13) / 2
+			rifle_3 != nullptr && rifle_3->attack_mult == fixed_point_t(9) / 4 && rifle_3->defense_mult == fixed_point_t(8) / 5 && rifle_3->breakthrough_mult == fixed_point_t(3) / 2
 				&& rifle_3->has_flag("breech_loading") && !rifle_3->has_flag("magazine"),
-			"equipment: rifle_3 has the values of the table (attack 9, defence 6.5, breech loading)"
+			"equipment: rifle_3 has the multipliers of the table (attack 2.25, defence 1.6, breakthrough 1.5, breech loading)"
 		);
 		EquipmentDefinition const* const rifle_1 = manager.find_equipment("rifle_1");
 		r.check(
@@ -346,19 +346,28 @@ namespace {
 		);
 		EquipmentDefinition const* const gun_4 = manager.find_equipment("field_gun_4");
 		r.check(
-			gun_4 != nullptr && gun_4->has_flag("indirect_fire") && gun_4->attack == fixed_point_t(6) && gun_4->good.base_price == fixed_point_t(185),
-			"equipment: field_gun_4 is the quick-firing gun (attack 6, indirect fire, price 185)"
+			gun_4 != nullptr && gun_4->has_flag("indirect_fire") && gun_4->attack_mult == fixed_point_t(4) && gun_4->good.base_price == fixed_point_t(185),
+			"equipment: field_gun_4 is the quick-firing gun (attack 4, indirect fire, price 185)"
 		);
 		EquipmentDefinition const* const gun_1 = manager.find_equipment("field_gun_1");
 		r.check(
-			gun_1 != nullptr && gun_1->has_flag("canister") && gun_1->attack == fixed_point_t(3) / 2,
-			"equipment: field_gun_1 has canister and the attack 1.5 of the artillery regiment"
+			gun_1 != nullptr && gun_1->has_flag("canister") && gun_1->attack_mult == fixed_point_t::_1,
+			"equipment: field_gun_1 has canister and the multipliers 1"
+		);
+		EquipmentDefinition const* const rifle_0 = manager.find_equipment("rifle_0");
+		EquipmentDefinition const* const gun_0 = manager.find_equipment("field_gun_0");
+		r.check(
+			rifle_0 != nullptr && gun_0 != nullptr && rifle_0->tier == 0 && gun_0->tier == 0 && rifle_0->attack_mult == fixed_point_t(7) / 10
+				&& rifle_0->defense_mult == fixed_point_t(7) / 10 && rifle_0->breakthrough_mult == fixed_point_t(7) / 10
+				&& gun_0->attack_mult == fixed_point_t(7) / 10 && gun_0->breakthrough_mult == fixed_point_t(7) / 10
+				&& rifle_0->good.base_price == fixed_point_t(37) && gun_0->good.base_price == fixed_point_t(60),
+			"equipment: the weapons of tier 0 (rifle_0, field_gun_0) have the multipliers 0.7 and the prices of rifle_1 and field_gun_1"
 		);
 		bool prices_grow = true;
 		for (std::string_view line : { "rifle", "field_artillery" }) {
 			auto const generations = manager.get_line_equipment(line);
 			for (std::size_t i = 1; i < generations.size(); i++) {
-				prices_grow &= generations[i]->good.base_price > generations[i - 1]->good.base_price;
+				prices_grow &= generations[i]->good.base_price >= generations[i - 1]->good.base_price; // rifle_0 costs as rifle_1
 			}
 		}
 		r.check(prices_grow, "equipment: the base price grows with the generation");
@@ -366,7 +375,8 @@ namespace {
 		for (std::string_view line : { "rifle", "field_artillery" }) {
 			auto const generations = manager.get_line_equipment(line);
 			for (std::size_t i = 1; i < generations.size(); i++) {
-				power_grows &= generations[i]->attack > generations[i - 1]->attack && generations[i]->defence > generations[i - 1]->defence;
+				power_grows &= generations[i]->attack_mult > generations[i - 1]->attack_mult && generations[i]->defense_mult > generations[i - 1]->defense_mult
+					&& generations[i]->breakthrough_mult > generations[i - 1]->breakthrough_mult;
 			}
 		}
 		r.check(power_grows, "equipment: the attack and the defence grow with the generation");
@@ -382,7 +392,7 @@ namespace {
 				in_category &= good->category.get_identifier() == equipment.good.category;
 			}
 		}
-		r.check(all_goods && manager.get_equipment().size() >= 8, "goods: every weapon is a good of the market (rifle_1..4, field_gun_1..4)");
+		r.check(all_goods && manager.get_equipment().size() >= 10, "goods: every weapon is a good of the market (rifle_0..4, field_gun_0..4)");
 		r.check(prices_match, "goods: the base price of a good is the one of the file of its weapon");
 		r.check(in_category, "goods: the goods of the weapons are in the category of the file (military goods)");
 		r.check(
@@ -432,6 +442,13 @@ namespace {
 		r.check(country != nullptr && other != nullptr, "unlocks: two countries to test with");
 		if (country == nullptr || other == nullptr) {
 			return;
+		}
+		{
+			bool all_have_defaults = true;
+			for (CountryInstance const& each : countries) {
+				all_have_defaults &= each.has_unlock("equipment:rifle_0") && each.has_unlock("equipment:field_gun_0");
+			}
+			r.check(all_have_defaults, "unlocks: every country has the weapons of tier 0 from the start (default_unlocks.txt)");
 		}
 		StaticModifierCache const& static_modifier_cache = im.definition_manager.get_modifier_manager().get_static_modifier_cache();
 		const auto refresh = [&]() {
@@ -745,7 +762,7 @@ namespace {
 		EquipmentDefinition const* const rifle_1 = equipment.find_equipment("rifle_1");
 		EquipmentDefinition const* const rifle_3 = equipment.find_equipment("rifle_3");
 		if (rifle_1 != nullptr && rifle_3 != nullptr) {
-			const fixed_point_t ratio = rifle_3->attack / rifle_1->attack;
+			const fixed_point_t ratio = rifle_3->attack_mult / rifle_1->attack_mult; // the regiments are made with rifle_1
 			r.check(
 				near(third_generation.attack, first_generation.attack * ratio, fixed_point_t(1) / 50),
 				"division stats: a rifle of the third generation gives the attack in proportion to its points",
@@ -1061,8 +1078,8 @@ namespace {
 		);
 		if (equipped != nullptr) {
 			r.check(
-				near(equipped->get_weapon_attack_ratio(), rifle_3->attack / rifle_1->attack, fixed_point_t(1) / 100)
-					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defence / rifle_1->defence, fixed_point_t(1) / 100),
+				near(equipped->get_weapon_attack_ratio(), rifle_3->attack_mult / rifle_1->attack_mult, fixed_point_t(1) / 100)
+					&& near(equipped->get_weapon_defence_ratio(), rifle_3->defense_mult / rifle_1->defense_mult, fixed_point_t(1) / 100),
 				"regiment equipment: its attack and defence are worth the points of the new weapon against the first generation",
 				fmt::format("{} {}", dbl(equipped->get_weapon_attack_ratio()), dbl(equipped->get_weapon_defence_ratio()))
 			);
@@ -1104,7 +1121,7 @@ namespace {
 		}
 		r.check(second_generation != nullptr, "regiment equipment: when the stock lacks the best generation the regiment is given the best one the stock has");
 		if (second_generation != nullptr) {
-			const fixed_point_t expected = rifle_2->attack / rifle_1->attack * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
+			const fixed_point_t expected = rifle_2->attack_mult / rifle_1->attack_mult * (fixed_point_t::_1 - war.equipment_shortfall_penalty.fixed());
 			r.check(
 				near(second_generation->get_weapon_attack_ratio(), expected, fixed_point_t(1) / 100),
 				"regiment equipment: the weapon of a worse generation than the best comes with the penalty",

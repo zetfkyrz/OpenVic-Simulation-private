@@ -46,13 +46,14 @@ namespace OpenVic {
 		memory::string identifier;
 		std::size_t index = 0; // the position in the load order (a replaced weapon keeps the position)
 		memory::string line; // EquipmentLine::identifier
-		std::uint32_t tier = 1; // the generation, 1 and up
+		std::uint32_t tier = 1; // the generation, 0 and up (0 is the weapon of the Napoleonic wars)
 		memory::string unlock_key; // the unlock of the country that makes the weapon available (equipment:<id> if the file has none)
 
-		// The strength of a piece in the points of the regiment types (units/*.txt: attack, defence). A regiment keeps the attack and the defence of
-		// its type with the weapon of the first generation of its line and gets more or less with another one, in proportion to these numbers.
-		fixed_point_t attack = fixed_point_t::_0;
-		fixed_point_t defence = fixed_point_t::_0;
+		// What the weapon does to a unit that has it: the attack, the defence and the breakthrough of the unit type (units/*.txt, ov_units) are multiplied
+		// by these. 1 is the strength of a unit with the weapon the type was made for.
+		fixed_point_t attack_mult = fixed_point_t::_0;
+		fixed_point_t defense_mult = fixed_point_t::_0;
+		fixed_point_t breakthrough_mult = fixed_point_t::_0;
 		fixed_point_t ammo_per_day = fixed_point_t::_0; // of ammo_good a piece uses in a day of battle
 		memory::string ammo_good; // empty: the weapon does not use a special ammunition (the field is for the ammunition generations later)
 		fixed_point_t weight = fixed_point_t::_0; // kilograms of a piece (carried by the ships)
@@ -88,6 +89,8 @@ namespace OpenVic {
 		[[nodiscard]] EquipmentLine const* find_line(std::string_view identifier) const;
 		// The line of weapons a regiment type uses (the line that names it in unit_types), nullptr if it has none
 		[[nodiscard]] EquipmentLine const* find_line_of_unit_type(std::string_view unit_type_identifier) const;
+		// The weapon that a unit of the line is made with: the one whose good replaces a good of the base game (small_arms, artillery), else the lowest generation
+		[[nodiscard]] EquipmentDefinition const* get_initial_equipment(std::string_view line_identifier) const;
 		[[nodiscard]] EquipmentDefinition const* find_equipment(std::string_view identifier) const;
 		// The weapons of a line, the lowest generation first
 		[[nodiscard]] memory::vector<EquipmentDefinition const*> get_line_equipment(std::string_view line_identifier) const;

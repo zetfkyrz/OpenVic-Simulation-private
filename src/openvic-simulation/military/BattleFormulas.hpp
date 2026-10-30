@@ -22,8 +22,8 @@ namespace OpenVic {
 		// The density of the formation: the strength points of the regiments per rank of the front, less by density_reduction (0..1) of the technologies
 		[[nodiscard]] fixed_point_t density(fixed_point_t strength_sum, std::uint32_t width, fixed_point_t density_reduction);
 
-		// The ratio a weapon gives to the attack or the defence of a regiment: 1 with the weapon of the first generation, the ratio of the points of
-		// the weapons otherwise; with an equipment fill (0..1) the regiment has the weapon in this share and the first generation in the rest
+		// What the weapon is worth to the attack, the defence or the breakthrough of a regiment: the multiplier of its weapon; with an equipment fill
+		// (0..1) the regiment has the best weapon in this share and the one it was made with in the rest
 		[[nodiscard]] fixed_point_t weapon_ratio(fixed_point_t first_points, fixed_point_t best_points, fixed_point_t fill);
 
 		// Durability points a division loses in a day of battle against another one (the damage is in proportion to the attack, so to the width of the
