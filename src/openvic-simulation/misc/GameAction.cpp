@@ -1247,6 +1247,24 @@ bool GameActionManager::VariantVisitor::operator() (cancel_colonisation_argument
 	return instance_manager.get_colonisation_manager().cancel_project(war_action_country(instance_manager, country_index), *province);
 }
 
+// A paid upgrade of one regiment (cavalry to hussars...): the goods come from the national stockpile
+bool GameActionManager::VariantVisitor::operator() (upgrade_regiment_argument_t const& argument) const {
+	const auto [country_index, regiment_id] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	ArmyInstance* army = nullptr;
+	RegimentInstance* const regiment = find_regiment(instance_manager, regiment_id, army);
+	if (regiment == nullptr || army == nullptr) {
+		return false;
+	}
+	RegimentType const* const target = UnitInstanceManager::get_upgrade_target(
+		instance_manager.definition_manager.get_military_manager().get_unit_type_manager(), regiment->get_regiment_type()
+	);
+	if (target == nullptr) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().upgrade_regiment(country, *army, *regiment, *target);
+}
+
 // Research of the army technologies
 bool GameActionManager::VariantVisitor::operator() (start_army_research_argument_t const& argument) const {
 	const auto [country_index, technology_index] = argument;

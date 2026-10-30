@@ -2923,6 +2923,89 @@ namespace {
 		}
 	}
 
+	// ---- the paid upgrade of a regiment (cavalry to hussars)
+
+	void test_regiment_upgrade(Results& r, InstanceManager& im) {
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		RegimentType const* const cavalry = unit_types.get_regiment_type_by_identifier("cavalry");
+		RegimentType const* const hussars = unit_types.get_regiment_type_by_identifier("hussars");
+		if (cavalry == nullptr || hussars == nullptr || cavalry->ov.upgrades_to != "hussars" || cavalry->ov.upgrade_cost.empty()) {
+			fmt::println("TEST INFO regiment upgrade: no ov_data folder, not checked");
+			return;
+		}
+		ArmyInstance* army = nullptr;
+		RegimentInstance* regiment = nullptr;
+		for (CountryInstance& owner : im.get_country_instance_manager().get_country_instances()) {
+			for (ArmyInstance& candidate : owner.get_armies()) {
+				if (candidate.is_in_combat() || owner.is_rebel_country()) {
+					continue;
+				}
+				for (RegimentInstance const& unit : candidate.get_regiment_instances()) {
+					if (&unit.get_regiment_type() == cavalry) {
+						army = &candidate;
+						regiment = const_cast<RegimentInstance*>(&unit);
+						break;
+					}
+				}
+				if (regiment != nullptr) {
+					break;
+				}
+			}
+			if (regiment != nullptr) {
+				break;
+			}
+		}
+		if (regiment == nullptr) {
+			fmt::println("TEST INFO regiment upgrade: no cavalry regiment, not checked");
+			return;
+		}
+		CountryInstance& country = army->get_country();
+		const unique_id_t id = regiment->unique_id;
+		const std::uint32_t division_id = regiment->get_division_id();
+		Pop* const pop = regiment->get_pop();
+		const std::size_t units_before = army->get_unit_count();
+		const std::vector<memory::string> keys_before { country.get_unlock_keys().begin(), country.get_unlock_keys().end() };
+		std::vector<std::pair<GoodDefinition const*, fixed_point_t>> stock_before;
+		for (auto const& [good, quantity] : cavalry->ov.upgrade_cost) {
+			stock_before.emplace_back(good, country.get_good_data(*good).stockpile_amount);
+			country.get_good_data(*good).stockpile_amount = quantity * 3;
+		}
+
+		country.revoke_unlock("unit:hussars");
+		r.check(!im.run_game_action_now<upgrade_regiment_argument_t>(country.index, id) && &regiment->get_regiment_type() == cavalry, "regiment upgrade: without the key of the hussars the upgrade is refused");
+		country.grant_unlock("unit:hussars");
+		for (auto const& [good, quantity] : cavalry->ov.upgrade_cost) {
+			country.get_good_data(*good).stockpile_amount = quantity / 2;
+		}
+		r.check(!im.run_game_action_now<upgrade_regiment_argument_t>(country.index, id) && &regiment->get_regiment_type() == cavalry, "regiment upgrade: without the goods in the stockpile the upgrade is refused");
+		for (auto const& [good, quantity] : cavalry->ov.upgrade_cost) {
+			country.get_good_data(*good).stockpile_amount = quantity * 3;
+		}
+		r.check(!im.run_game_action_now<upgrade_regiment_argument_t>(country_index_t(country.index == country_index_t(0) ? 1 : 0), id), "regiment upgrade: a regiment of another country cannot be upgraded");
+		const bool upgraded = im.run_game_action_now<upgrade_regiment_argument_t>(country.index, id);
+		RegimentInstance* const after = static_cast<RegimentInstance*>(im.get_unit_instance_manager().get_unit_instance_by_unique_id(id));
+		r.check(
+			upgraded && after != nullptr && &after->get_regiment_type() == hussars && after->get_division_id() == division_id && after->get_pop() == pop && army->get_unit_count() == units_before,
+			"regiment upgrade: a paid upgrade makes the cavalry regiment hussars with the same id, pop and division"
+		);
+		bool paid = true;
+		for (auto const& [good, quantity] : cavalry->ov.upgrade_cost) {
+			paid &= country.get_good_data(*good).stockpile_amount == quantity * 2;
+		}
+		r.check(paid, "regiment upgrade: the price of the file is taken from the national stockpile");
+		r.check(!im.run_game_action_now<upgrade_regiment_argument_t>(country.index, id), "regiment upgrade: hussars cannot be upgraded (no upgrades_to)");
+
+		for (auto const& [good, quantity] : stock_before) {
+			country.get_good_data(*good).stockpile_amount = quantity;
+		}
+		for (memory::string const& key : std::vector<memory::string> { country.get_unlock_keys().begin(), country.get_unlock_keys().end() }) {
+			country.revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			country.grant_unlock(key);
+		}
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -3512,6 +3595,7 @@ namespace {
 		test_supply_limit(r, *im);
 		test_divisions(r, *im);
 		test_unlock_mechanics(r, *im);
+		test_regiment_upgrade(r, *im);
 		test_army_groups(r, *im);
 		test_supply_delivery(r, *im);
 		test_fronts(r, *im);

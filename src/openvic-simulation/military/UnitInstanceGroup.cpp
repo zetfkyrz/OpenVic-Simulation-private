@@ -1311,6 +1311,74 @@ bool UnitInstanceManager::merge_armies(ArmyInstance& target, ArmyInstance& sourc
 	return true;
 }
 
+RegimentType const* UnitInstanceManager::get_upgrade_target(UnitTypeManager const& unit_types, RegimentType const& regiment_type) {
+	return regiment_type.ov.upgrades_to.empty() ? nullptr : unit_types.get_regiment_type_by_identifier(regiment_type.ov.upgrades_to);
+}
+
+std::string_view UnitInstanceManager::get_upgrade_block_reason(
+	CountryInstance const& country, ArmyInstance const& army, RegimentInstance const& regiment, RegimentType const* target
+) {
+	RegimentType const& regiment_type = regiment.get_regiment_type();
+	if (&army.get_country() != &country) {
+		return "Полк другой страны";
+	}
+	if (target == nullptr) {
+		return "Этот тип полка не улучшается";
+	}
+	if (!country.is_unit_type_unlocked(*target)) {
+		return "Тип улучшения ещё не открыт";
+	}
+	if (army.is_in_combat()) {
+		return "Армия в бою";
+	}
+	for (auto const& [good, quantity] : regiment_type.ov.upgrade_cost) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return "На складе страны не хватает товаров";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::upgrade_regiment(CountryInstance& country, ArmyInstance& army, RegimentInstance& regiment, RegimentType const& target_type) {
+	if (!get_upgrade_block_reason(country, army, regiment, &target_type).empty()) {
+		return false;
+	}
+	RegimentType const& old_type = regiment.get_regiment_type();
+	RegimentType const* const target = &target_type;
+
+	for (auto const& [good, quantity] : old_type.ov.upgrade_cost) {
+		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+		good_data.stockpile_amount -= quantity;
+		good_data.stockpile_change_yesterday -= quantity;
+	}
+
+	// The unit type of an instance is a reference that cannot change: the regiment is made again under the same id, with the same pop (the slot of
+	// the pop is not freed), name and division, and the same share of strength and organisation
+	const unique_id_t id = regiment.unique_id;
+	const memory::string name { regiment.get_name() };
+	Pop* const pop = regiment.get_pop();
+	const bool mobilised = regiment.is_mobilised();
+	const std::uint32_t division_id = regiment.get_division_id();
+	const fixed_point_t supply_reserve = regiment.get_supply_reserve();
+	const fixed_point_t strength_share = old_type.max_strength > fixed_point_t::_0 ? regiment.get_strength() / old_type.max_strength : fixed_point_t::_1;
+	const fixed_point_t organisation_share = regiment.get_max_organisation() > fixed_point_t::_0 ? regiment.get_organisation() / regiment.get_max_organisation() : fixed_point_t::_1;
+
+	army.remove_unit(regiment);
+	unit_instance_map.erase(id);
+	regiments.erase(regiments.get_iterator(&regiment));
+
+	RegimentInstance& upgraded = *regiments.insert(RegimentInstance { id, name, *target, pop, mobilised });
+	unit_instance_map.emplace(upgraded.unique_id, upgraded);
+	upgraded.set_division_id(division_id);
+	upgraded.set_supply_reserve(supply_reserve);
+	upgraded.take_damage(
+		upgraded.get_organisation() - upgraded.get_max_organisation() * organisation_share, upgraded.get_strength() - target->max_strength * strength_share
+	);
+	army.add_unit(upgraded);
+	army.update_gamestate();
+	return true;
+}
+
 void UnitInstanceManager::disband_regiment(ArmyInstance& army, RegimentInstance& regiment) {
 	destroy_unit(regiment, army);
 }

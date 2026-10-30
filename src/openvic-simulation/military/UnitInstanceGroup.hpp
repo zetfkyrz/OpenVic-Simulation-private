@@ -364,6 +364,13 @@ namespace OpenVic {
 		ArmyInstance* split_regiment(ArmyInstance& army, RegimentInstance& regiment);
 		// Moves all the regiments of the source army into the target army (same country and province), deletes the source
 		bool merge_armies(ArmyInstance& target, ArmyInstance& source);
+		// A paid upgrade of one regiment to the type its type upgrades to (upgrades_to, upgrade_cost in the unit file): the goods are taken from the
+		// national stockpile, the regiment keeps its id, its pop, its division and its share of strength and organisation. The reason is empty if possible.
+		[[nodiscard]] static RegimentType const* get_upgrade_target(UnitTypeManager const& unit_types, RegimentType const& regiment_type);
+		[[nodiscard]] static std::string_view get_upgrade_block_reason(
+			CountryInstance const& country, ArmyInstance const& army, RegimentInstance const& regiment, RegimentType const* target
+		);
+		bool upgrade_regiment(CountryInstance& country, ArmyInstance& army, RegimentInstance& regiment, RegimentType const& target);
 		// Disbands one regiment (the army is deleted with its last regiment), frees the pop slot
 		void disband_regiment(ArmyInstance& army, RegimentInstance& regiment);
 
