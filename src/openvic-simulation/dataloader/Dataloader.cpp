@@ -659,6 +659,21 @@ bool Dataloader::_load_technologies(DefinitionManager& definition_manager) {
 	return ret;
 }
 
+void Dataloader::_load_army_technologies(DefinitionManager& definition_manager) {
+	ArmyTechnologyManager& army_technology_manager = definition_manager.get_research_manager().get_army_technology_manager();
+	std::size_t loaded = 0;
+	for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_technology", ".txt", true)) {
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The technology file {} is skipped, it has errors", file);
+			continue;
+		}
+		loaded += army_technology_manager.load_file(file.string(), parser.get_file_node(), definition_manager.get_modifier_manager());
+	}
+	const std::size_t problems = army_technology_manager.validate();
+	SPDLOG_INFO("Loaded {} army technologies ({} problems found)", loaded, problems);
+}
+
 bool Dataloader::_load_inventions(DefinitionManager& definition_manager) {
 	static constexpr std::string_view inventions_directory = "inventions";
 
@@ -1233,6 +1248,7 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load technologies!");
 		ret = false;
 	}
+	_load_army_technologies(definition_manager);
 	definition_manager.get_modifier_manager().lock_base_country_modifier_effects();
 	if (!definition_manager.get_politics_manager().load_issues_file(
 		definition_manager.get_modifier_manager(),

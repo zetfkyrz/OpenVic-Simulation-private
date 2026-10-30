@@ -1309,6 +1309,107 @@ namespace {
 		}
 	}
 
+	// ---- the army technologies (research/ArmyTechnology.*, ov_data/common/ov_technology)
+
+	void test_army_technologies(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		ArmyTechnologyManager const& technologies = im.definition_manager.get_research_manager().get_army_technology_manager();
+		if (technologies.size() == 0) {
+			fmt::println("TEST INFO army technologies: no ov_data folder, not checked");
+			return;
+		}
+		r.check(technologies.size() == 23 && technologies.validate() == 0, "army technologies: the 23 technologies of the start are loaded from files, the validator finds nothing", fmt::format("{}", technologies.size()));
+		bool all_ok = true;
+		for (ArmyTechnology const& technology : technologies.get_technologies()) {
+			all_ok &= technology.research_days == 730 && technology.branch == "army" && technology.era >= 1 && technology.era <= 5 && technology.x >= 0 && technology.y >= 0;
+		}
+		r.check(all_ok, "army technologies: each has the branch army, an era 1-5, a cell and 730 days of research");
+		// The civilised start
+		std::vector<std::string> start;
+		for (ArmyTechnology const& technology : technologies.get_technologies()) {
+			if (technology.start == "civilised") {
+				start.emplace_back(technology.identifier);
+			}
+		}
+		std::sort(start.begin(), start.end());
+		r.check(start == std::vector<std::string> { "arms_making", "percussion_cap", "standardized_army" }, "army technologies: the civilised countries start with arms making, the percussion cap and the standardized army");
+		// AND between the blocks, OR inside a block
+		ArmyTechnology const* const operational = technologies.find("operational_planning");
+		r.check(
+			operational != nullptr && operational->prerequisites.size() == 2 && operational->prerequisites[0].size() == 1 && operational->prerequisites[1].size() == 2
+				&& technologies.get_prerequisite_indices(*operational).size() == 2,
+			"army technologies: operational planning needs mobilisation planning AND (skirmish order OR breech loading) - two blocks, the second has two technologies"
+		);
+		ArmyTechnology const* const magazine = technologies.find("magazine_rifle");
+		r.check(
+			magazine != nullptr && magazine->modifier.has_value() && !magazine->modifier->get_values().empty()
+				&& std::find(magazine->unlocks.begin(), magazine->unlocks.end(), "equipment:rifle_4") != magazine->unlocks.end(),
+			"army technologies: the unlocks and the modifiers of a file are read (magazine rifle: rifle_4 and the breakthrough of the infantry)"
+		);
+		// The layout: the prerequisites are above the technologies
+		bool above = true;
+		for (ArmyTechnology const& technology : technologies.get_technologies()) {
+			for (auto const& block : technology.prerequisites) {
+				for (memory::string const& id : block) {
+					ArmyTechnology const* const prerequisite = technologies.find(id);
+					above &= prerequisite != nullptr && prerequisite->y < technology.y;
+				}
+			}
+		}
+		r.check(above, "army technologies: the prerequisites of every technology are in the rows above it");
+
+		// A new technology comes with a file only, the broken ones are skipped, the validator finds the faults of the tree
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_techs";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		write_test_file(temp / "good.txt",
+			"alpha = { era = 1 x = 0 y = 0 }\n"
+			"beta = { era = 1 x = 0 y = 1 research_days = 100 prerequisite = { alpha } unlocks = { \"unit:guard_test\" } modifiers = { attack_mult = { all = 0.05 } } }\n"
+			"gamma = { era = 2 x = 1 y = 2 prerequisite = { alpha beta } prerequisite = { beta } }\n");
+		write_test_file(temp / "bad.txt",
+			"no_cell = { era = 1 x = 0 }\n"
+			"no_days = { era = 1 x = 3 y = 3 research_days = 0 }\n"
+			"alpha = { era = 1 x = 5 y = 5 }\n"
+			"bad_modifier = { era = 1 x = 6 y = 6 modifiers = { no_such_effect = 1 } }\n");
+		write_test_file(temp / "faults.txt",
+			"missing = { era = 1 x = 0 y = 0 prerequisite = { nowhere } }\n"
+			"same_a = { era = 1 x = 2 y = 2 }\n"
+			"same_b = { era = 1 x = 2 y = 2 }\n"
+			"low = { era = 1 x = 4 y = 1 prerequisite = { high } }\n"
+			"high = { era = 1 x = 4 y = 3 }\n"
+			"cycle_a = { era = 1 x = 6 y = 1 prerequisite = { cycle_b } }\n"
+			"cycle_b = { era = 1 x = 6 y = 0 prerequisite = { cycle_a } }\n");
+		ModifierManager const& modifier_manager = im.definition_manager.get_modifier_manager();
+		{
+			ArmyTechnologyManager fresh;
+			const ovdl::v2script::Parser good = Dataloader::parse_defines(temp / "good.txt");
+			const ovdl::v2script::Parser bad = Dataloader::parse_defines(temp / "bad.txt");
+			const std::size_t good_count = fresh.load_file("good.txt", good.get_file_node(), modifier_manager);
+			const std::size_t bad_count = fresh.load_file("bad.txt", bad.get_file_node(), modifier_manager);
+			ArmyTechnology const* const beta = fresh.find("beta");
+			ArmyTechnology const* const gamma = fresh.find("gamma");
+			r.check(
+				good_count == 3 && beta != nullptr && beta->research_days == 100 && beta->prerequisites.size() == 1 && beta->unlocks.size() == 1 && beta->modifier.has_value()
+					&& gamma != nullptr && gamma->prerequisites.size() == 2 && gamma->prerequisites[0].size() == 2 && fresh.find("alpha")->research_days == 730 && fresh.validate() == 0,
+				"army technologies: a new technology comes with one file, no code is needed (the days default to 730, each prerequisite key is a block)"
+			);
+			r.check(
+				fresh.find("no_cell") == nullptr && fresh.find("no_days") == nullptr && fresh.find("bad_modifier") == nullptr && fresh.find("alpha")->x == 0,
+				"army technologies: a technology without a cell or days, with an unknown modifier or with an id that is taken is skipped, the game goes on"
+			);
+			r.check(bad_count == 0, "army technologies: the broken file gives no technologies");
+		}
+		{
+			ArmyTechnologyManager faulty;
+			const ovdl::v2script::Parser parser = Dataloader::parse_defines(temp / "faults.txt");
+			faulty.load_file("faults.txt", parser.get_file_node(), modifier_manager);
+			// missing prerequisite 1, two in a cell 1, a prerequisite that is not above 1 (low), a cycle (reported on the way back) 1
+			const std::size_t problems = faulty.validate();
+			r.check(faulty.size() == 7 && problems >= 4, "army technologies: the validator finds a missing prerequisite, two technologies in a cell, a prerequisite that is not above and a cycle", fmt::format("{} problems", problems));
+		}
+		fs::remove_all(temp, ec);
+	}
+
 	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
 
 	void test_scoped_modifiers(Results& r, InstanceManager& im) {
@@ -3087,6 +3188,7 @@ namespace {
 		test_production_types(r, *im);
 		test_regiment_equipment(r, *im);
 		test_unit_types(r, *im);
+		test_army_technologies(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		game.end();

@@ -1003,6 +1003,8 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    -j : Use the given number of worker threads (the result must be the same for any number).");
 	fmt::println(file, "    --ov-data <folder> : The folder with the data of OpenVic (default: OPENVIC_DATA_PATH, else ov_data found near the executable or in the current folder).");
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
+	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
+	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
@@ -1213,7 +1215,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1263,6 +1265,83 @@ static void run_unit_dump(InstanceManager& instance_manager) {
 			static_cast<double>(type.reconnaissance), static_cast<double>(type.max_strength), static_cast<double>(type.ov.occupation_weight), scopes, cost,
 			type.ov.upgrades_to.empty() ? "-" : type.ov.upgrades_to
 		);
+	}
+}
+
+// --dump-tech / --dump-techtree: the army technologies (TECH lines: the data; TECHTREE lines: the rows of the grid and the lines between the cells)
+static std::string format_tech_modifier(ArmyTechnology const& technology) {
+	if (!technology.modifier.has_value()) {
+		return "-";
+	}
+	std::vector<std::pair<std::string, double>> entries;
+	for (auto const& [effect, value] : technology.modifier->get_values()) {
+		entries.emplace_back(std::string { effect->get_identifier() }, static_cast<double>(value));
+	}
+	std::sort(entries.begin(), entries.end());
+	std::string text;
+	for (auto const& [name, value] : entries) {
+		text += fmt::format("{}{}={:.3f}", text.empty() ? "" : ",", name, value);
+	}
+	return text.empty() ? "-" : text;
+}
+
+static void run_tech_dump(InstanceManager& instance_manager) {
+	ArmyTechnologyManager const& army_technologies = instance_manager.definition_manager.get_research_manager().get_army_technology_manager();
+	fmt::println("TECH_COUNT {} problems={}", army_technologies.size(), army_technologies.validate());
+	for (ArmyTechnology const& technology : army_technologies.get_technologies()) {
+		std::string prerequisites;
+		for (auto const& block : technology.prerequisites) {
+			std::string alternatives;
+			for (memory::string const& id : block) {
+				alternatives += (alternatives.empty() ? "" : "|") + std::string { id };
+			}
+			prerequisites += (prerequisites.empty() ? "" : "+") + alternatives;
+		}
+		std::string unlocks;
+		for (memory::string const& key : technology.unlocks) {
+			unlocks += (unlocks.empty() ? "" : ",") + std::string { key };
+		}
+		fmt::println(
+			"TECH {:<26} branch={} era={} x={} y={} days={} year_hint={} start={} prerequisites={} unlocks={} modifiers={}", technology.identifier, technology.branch,
+			technology.era, technology.x, technology.y, technology.research_days, technology.year_hint, technology.start.empty() ? "-" : technology.start,
+			prerequisites.empty() ? "-" : prerequisites, unlocks.empty() ? "-" : unlocks, format_tech_modifier(technology)
+		);
+	}
+}
+
+static void run_tech_tree_dump(InstanceManager& instance_manager) {
+	ArmyTechnologyManager const& army_technologies = instance_manager.definition_manager.get_research_manager().get_army_technology_manager();
+	for (memory::string const& branch : army_technologies.get_branches()) {
+		std::int32_t max_y = 0, max_x = 0;
+		for (ArmyTechnology const& technology : army_technologies.get_technologies()) {
+			if (technology.branch == branch) {
+				max_y = std::max(max_y, technology.y);
+				max_x = std::max(max_x, technology.x);
+			}
+		}
+		for (std::int32_t y = 0; y <= max_y; ++y) {
+			std::string row;
+			for (std::int32_t x = 0; x <= max_x; ++x) {
+				std::string cell = ".";
+				for (ArmyTechnology const& technology : army_technologies.get_technologies()) {
+					if (technology.branch == branch && technology.x == x && technology.y == y) {
+						cell = std::string { technology.identifier };
+					}
+				}
+				row += fmt::format("{:<26}", cell);
+			}
+			fmt::println("TECHTREE branch={} y={} | {}", branch, y, row);
+		}
+		for (ArmyTechnology const& technology : army_technologies.get_technologies()) {
+			if (technology.branch != branch) {
+				continue;
+			}
+			for (auto const& block : technology.prerequisites) {
+				for (memory::string const& id : block) {
+					fmt::println("TECHTREE_EDGE branch={} from={} to={} line={}", branch, id, technology.identifier, block.size() > 1 ? "dashed" : "solid");
+				}
+			}
+		}
 	}
 }
 
@@ -1561,6 +1640,12 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_units) {
 		run_unit_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_techs) {
+		run_tech_dump(*game_manager.get_instance_manager());
+	}
+	if (ret && dump_techtree) {
+		run_tech_tree_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -1792,6 +1877,10 @@ int main(int argc, char const* argv[]) {
 			dump_battles = true;
 		} else if (strcmp(arg, "--dump-unit") == 0) {
 			dump_units = true;
+		} else if (strcmp(arg, "--dump-tech") == 0) {
+			dump_techs = true;
+		} else if (strcmp(arg, "--dump-techtree") == 0) {
+			dump_techtree = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");
