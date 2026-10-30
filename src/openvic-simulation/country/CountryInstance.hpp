@@ -32,6 +32,7 @@
 #include "openvic-simulation/types/ClampedValue.hpp"
 #include "openvic-simulation/types/FlagStrings.hpp"
 #include "openvic-simulation/types/HasIndex.hpp"
+#include "openvic-simulation/military/Companies.hpp"
 #include "openvic-simulation/types/OrderedContainers.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
 #include "openvic-simulation/types/UnitBranchType.hpp"
@@ -127,6 +128,11 @@ namespace OpenVic {
 		static inline OpenVicEconomyDefines const* openvic_economy_defines = nullptr;
 		static void set_openvic_economy_defines(OpenVicEconomyDefines const& defines) {
 			openvic_economy_defines = &defines;
+		}
+		// The support companies (set by the InstanceManager, they belong to the definitions): their goods are used from the national stockpile every day
+		static inline CompanyTypeManager const* company_type_manager = nullptr;
+		static void set_company_type_manager(CompanyTypeManager const& manager) {
+			company_type_manager = &manager;
 		}
 		static inline OpenVicTradeDefines const* openvic_trade_defines = nullptr;
 		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
@@ -511,6 +517,8 @@ namespace OpenVic {
 		memory::vector<std::uint32_t> army_technologies_researched;
 		memory::vector<ArmyResearchProgress> army_research;
 		bool army_start_technologies_given = false;
+		// What the support companies work as today and how much of their goods the stockpile gave (CompanyState), one per company type; empty until the first day
+		memory::vector<CompanyState> company_states;
 		// The groups of armies (military/ArmyGroup.hpp)
 		memory::vector<ArmyGroup> army_groups;
 		std::uint32_t next_army_group_id = 1;
@@ -891,6 +899,12 @@ namespace OpenVic {
 		}
 		[[nodiscard]] memory::vector<ArmyResearchProgress>& get_army_research_mutable() {
 			return army_research;
+		}
+		[[nodiscard]] std::span<const CompanyState> get_company_states() const {
+			return company_states;
+		}
+		[[nodiscard]] memory::vector<CompanyState>& get_company_states_mutable() {
+			return company_states;
 		}
 		[[nodiscard]] bool are_army_start_technologies_given() const {
 			return army_start_technologies_given;

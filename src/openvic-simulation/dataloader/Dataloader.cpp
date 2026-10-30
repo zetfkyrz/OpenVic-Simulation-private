@@ -674,6 +674,21 @@ void Dataloader::_load_army_technologies(DefinitionManager& definition_manager) 
 	SPDLOG_INFO("Loaded {} army technologies ({} problems found)", loaded, problems);
 }
 
+void Dataloader::_load_companies(DefinitionManager& definition_manager) {
+	CompanyTypeManager& company_type_manager = definition_manager.get_military_manager().get_company_type_manager();
+	std::size_t loaded = 0;
+	for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_companies", ".txt", false)) {
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The company file {} is skipped, it has errors", file);
+			continue;
+		}
+		loaded += company_type_manager.load_file(file.string(), parser.get_file_node(), definition_manager.get_economy_manager().get_good_definition_manager());
+	}
+	company_type_manager.finish_loading();
+	SPDLOG_INFO("Loaded {} support companies", loaded);
+}
+
 bool Dataloader::_load_inventions(DefinitionManager& definition_manager) {
 	static constexpr std::string_view inventions_directory = "inventions";
 
@@ -1262,6 +1277,7 @@ bool Dataloader::load_defines(
 		ret = false;
 	}
 	_load_army_technologies(definition_manager);
+	_load_companies(definition_manager);
 	definition_manager.get_modifier_manager().lock_base_country_modifier_effects();
 	if (!definition_manager.get_politics_manager().load_issues_file(
 		definition_manager.get_modifier_manager(),

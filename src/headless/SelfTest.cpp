@@ -32,6 +32,7 @@
 #include <openvic-simulation/military/Leader.hpp>
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
+#include <openvic-simulation/military/Companies.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
 #include <openvic-simulation/research/ArmyResearch.hpp>
 #include <openvic-simulation/military/UnitEquipment.hpp>
@@ -3006,6 +3007,239 @@ namespace {
 		}
 	}
 
+	// ---- the support companies (military/Companies.*, ov_data/common/ov_companies)
+
+	void test_companies(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		CompanyTypeManager const& companies = im.definition_manager.get_military_manager().get_company_type_manager();
+		CompanyType const* const telegraph = companies.find("telegraph_company");
+		CompanyType const* const radio = companies.find("radio_company");
+		CompanyType const* const engineer = companies.find("engineer_company");
+		if (telegraph == nullptr || radio == nullptr || engineer == nullptr) {
+			fmt::println("TEST INFO companies: no ov_data folder, not checked");
+			return;
+		}
+		r.check(
+			telegraph->category == "signals" && radio->category == "signals" && engineer->category == "engineering" && radio->fallback_index == telegraph->index
+				&& telegraph->unlock_key == "support_company:telegraph" && !telegraph->goods.empty() && !radio->goods.empty() && engineer->goods.size() == 2,
+			"companies: the telegraph, radio and engineer companies are loaded from files (signals, signals with a fallback on the telegraph, engineering)"
+		);
+
+		// A new company comes with one file, a broken one is skipped
+		{
+			const fs::path temp = fs::temp_directory_path() / "openvic_selftest_companies";
+			std::error_code ec;
+			fs::remove_all(temp, ec);
+			write_test_file(temp / "good.txt",
+				"test_company = { category = machinegun goods = { ammunition = 0.2 } weight = 100 manpower = 0.1 buffs = { attack_mult = { infantry = 0.2 } fortification = 1 } }\n");
+			write_test_file(temp / "bad.txt",
+				"no_category = { goods = { ammunition = 0.2 } }\n"
+				"bad_good = { category = x goods = { no_such_good = 1 } }\n"
+				"bad_key = { category = x unlock_key = \"wrong\" }\n"
+				"bad_buff = { category = x buffs = { luck = 1 } }\n"
+				"test_company = { category = y }\n");
+			CompanyTypeManager fresh;
+			GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+			const ovdl::v2script::Parser good = Dataloader::parse_defines(temp / "good.txt");
+			const ovdl::v2script::Parser bad = Dataloader::parse_defines(temp / "bad.txt");
+			const std::size_t good_count = fresh.load_file("good.txt", good.get_file_node(), goods);
+			const std::size_t bad_count = fresh.load_file("bad.txt", bad.get_file_node(), goods);
+			CompanyType const* const test_company = fresh.find("test_company");
+			r.check(
+				good_count == 1 && test_company != nullptr && test_company->category == "machinegun" && test_company->buffs.size() == 2 && test_company->buffs[1].scope == "all"
+					&& fresh.get_categories().size() >= 1,
+				"companies: a new company and a new category come with one file, no code is needed (a buff without a scope is for all)"
+			);
+			r.check(bad_count <= 1 && fresh.find("no_category") == nullptr && fresh.find("bad_good") == nullptr && fresh.find("bad_key") == nullptr
+					&& fresh.find("test_company")->category == "machinegun",
+				"companies: a company without a category, with an unknown good or a wrong key is skipped, so is a repeated id", fmt::format("{}", bad_count));
+			fs::remove_all(temp, ec);
+		}
+
+		// A country with armies and a template (the regiments are put into the divisions of the template below)
+		CountryInstance* country = nullptr;
+		DivisionTemplate* division_template = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_organisation()) {
+				continue;
+			}
+			// an army with three regiments of line infantry (a template of three ranks of one line infantry regiment is made for the test)
+			for (ArmyInstance const& army : candidate.get_armies()) {
+				std::size_t line_infantry = 0;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					line_infantry += regiment.get_regiment_type().get_identifier() == "line_infantry";
+				}
+				if (line_infantry >= 3 && country == nullptr) {
+					country = &candidate;
+				}
+			}
+			if (country != nullptr) {
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO companies: no country with an army and a template, not checked");
+			return;
+		}
+		const std::vector<memory::string> keys_before { country->get_unlock_keys().begin(), country->get_unlock_keys().end() };
+		const std::vector<CompanyState> states_before { country->get_company_states().begin(), country->get_company_states().end() };
+		country->grant_unlock("mechanic:division_templates");
+		DivisionGrid test_grid {};
+		const std::size_t line_infantry_kind = regiment_kind(im, "line_infantry");
+		for (std::size_t rank = 0; rank < 3; ++rank) {
+			test_grid[DivisionTemplate::cell_index(rank, 0)] = static_cast<std::uint8_t>(line_infantry_kind + 1);
+		}
+		if (!im.run_game_action_now<create_division_template_argument_t>(country->index, test_grid)) {
+			fmt::println("TEST INFO companies: the template for the test cannot be made, not checked");
+			return;
+		}
+		division_template = &country->get_mutable_division_templates().back();
+		const DivisionCompanies companies_before = division_template->companies;
+		const std::uint32_t width = get_template_width(*division_template);
+		const std::uint32_t template_id = division_template->id;
+		for (std::string_view const key : { "support_company:telegraph", "support_company:radio", "support_company:engineer" }) {
+			country->revoke_unlock(key);
+		}
+		country->grant_unlock("mechanic:division_templates");
+		// the first three ranks that have a regiment
+		std::vector<std::size_t> ranks;
+		for (std::size_t rank = 0; rank < DIVISION_MAX_RANKS && ranks.size() < 3; ++rank) {
+			for (std::size_t row = 0; row < DIVISION_MAX_DEPTH; ++row) {
+				if (division_template->cells[DivisionTemplate::cell_index(rank, row)] != 0) {
+					ranks.push_back(rank);
+					break;
+				}
+			}
+		}
+		if (width != 3 || ranks.size() != 3) {
+			fmt::println("TEST INFO companies: the standard template does not have 3 ranks, the scale is not checked");
+			return;
+		}
+		const auto slot = [&](DivisionCompanies& layout, const std::size_t rank_number, const std::size_t slot_number, CompanyType const* company) {
+			layout[ranks[rank_number] * DIVISION_MAX_COMPANY_SLOTS + slot_number] = company == nullptr ? 0 : static_cast<std::uint8_t>(company->index + 1);
+		};
+		DivisionCompanies layout {};
+		slot(layout, 0, 0, radio);
+		slot(layout, 1, 0, radio);
+		slot(layout, 2, 0, telegraph);
+
+		// The keys
+		r.check(!is_valid_company_layout(im, *country, division_template->cells, layout), "companies: without the keys of the companies a layout is not allowed");
+		country->grant_unlock("support_company:telegraph");
+		country->grant_unlock("support_company:radio");
+		country->grant_unlock("support_company:engineer");
+		country->revoke_unlock("mechanic:division_templates");
+		r.check(!im.run_game_action_now<set_division_template_companies_argument_t>(country->index, template_id, layout), "companies: without mechanic:division_templates the companies cannot be changed");
+		country->grant_unlock("mechanic:division_templates");
+		const DivisionTemplateLimits limits = get_template_limits(im, *country);
+		r.check(is_valid_company_layout(im, *country, division_template->cells, layout) && limits.company_slots >= 1, "companies: with the keys the layout of three signal companies in three ranks is allowed");
+
+		// A rank holds one company of a category; a slot over the limit and a rank without regiments are refused
+		DivisionCompanies two_signals {};
+		slot(two_signals, 0, 0, radio);
+		slot(two_signals, 0, 1, telegraph);
+		r.check(!is_valid_company_layout(im, *country, division_template->cells, two_signals), "companies: two companies of the same category (signals) cannot be in one rank");
+		DivisionCompanies mixed {};
+		slot(mixed, 0, 0, radio);
+		slot(mixed, 0, 1, engineer);
+		r.check(limits.company_slots < 2 || is_valid_company_layout(im, *country, division_template->cells, mixed), "companies: companies of different categories fit in one rank (when the country has two slots)");
+		DivisionCompanies over_limit {};
+		over_limit[ranks[0] * DIVISION_MAX_COMPANY_SLOTS + limits.company_slots] = static_cast<std::uint8_t>(telegraph->index + 1);
+		r.check(!is_valid_company_layout(im, *country, division_template->cells, over_limit), "companies: a slot over the limit of the country is refused");
+		DivisionCompanies empty_rank {};
+		empty_rank[(DIVISION_MAX_RANKS - 1) * DIVISION_MAX_COMPANY_SLOTS] = static_cast<std::uint8_t>(telegraph->index + 1);
+		r.check(!is_valid_company_layout(im, *country, division_template->cells, empty_rank), "companies: a rank without regiments has no company slots");
+
+		r.check(im.run_game_action_now<set_division_template_companies_argument_t>(country->index, template_id, layout) && division_template->companies == layout,
+			"companies: the command sets the companies of the template");
+		const memory::vector<std::uint32_t> counts = count_template_companies(companies, *division_template);
+		r.check(counts[radio->index] == 2 && counts[telegraph->index] == 1 && counts[engineer->index] == 0, "companies: the template has 2 radio companies and 1 telegraph company");
+
+		// The scale: 2 radio + 1 telegraph in 3 ranks = 2/3 of the radio buff and 1/3 of the telegraph one
+		memory::vector<CompanyState>& states = country->get_company_states_mutable();
+		states.assign(companies.size(), CompanyState {});
+		for (std::size_t index = 0; index < companies.size(); ++index) {
+			states[index] = { index, fixed_point_t::_1 };
+		}
+		DivisionStats stats = compute_division_stats(im, *country, *division_template);
+		const fixed_point_t expected = fixed_point_t(2) / 3 * (fixed_point_t(1) / 10) + fixed_point_t(1) / 3 * (fixed_point_t(5) / 100);
+		r.check(stats.companies == 3 && near(stats.company_attack, expected, fixed_point_t(1) / 1000) && near(stats.company_defence, expected, fixed_point_t(1) / 1000)
+				&& near(stats.company_breakthrough, expected, fixed_point_t(1) / 1000),
+			"companies: 2 radio + 1 telegraph in 3 ranks give 2/3 x 10 % + 1/3 x 5 % to the attack, the defence and the breakthrough", fmt::format("{}", dbl(stats.company_attack)));
+		DivisionTemplate without = *division_template;
+		without.companies = DivisionCompanies {};
+		const DivisionStats plain = compute_division_stats(im, *country, without);
+		r.check(stats.attack > plain.attack && near(stats.attack / plain.attack, fixed_point_t::_1 + expected, fixed_point_t(1) / 100),
+			"companies: the buff is in the attack of the template", fmt::format("{} / {}", dbl(stats.attack), dbl(plain.attack)));
+
+		// Without radio in the stockpile the radio companies work as telegraph companies: 3 x 5 %
+		states[radio->index] = { telegraph->index, fixed_point_t::_1 };
+		stats = compute_division_stats(im, *country, *division_template);
+		r.check(near(stats.company_attack, fixed_point_t(5) / 100, fixed_point_t(1) / 1000), "companies: radio companies without radio work as telegraph companies (3 of 3 ranks x 5 %)", fmt::format("{}", dbl(stats.company_attack)));
+		// The buff is scaled by the share of the goods
+		states[radio->index] = { radio->index, fixed_point_t(1) / 2 };
+		states[telegraph->index] = { telegraph->index, fixed_point_t::_1 };
+		stats = compute_division_stats(im, *country, *division_template);
+		r.check(near(stats.company_attack, fixed_point_t(2) / 3 * (fixed_point_t(1) / 20) + fixed_point_t(1) / 3 * (fixed_point_t(5) / 100), fixed_point_t(1) / 1000),
+			"companies: half of the goods of the radio gives half of its buff", fmt::format("{}", dbl(stats.company_attack)));
+		// Companies cost goods and men
+		bool cost_ok = false, supply_ok = false;
+		for (DivisionGoodAmount const& entry : stats.cost) {
+			cost_ok |= entry.good == "radio" && entry.amount >= fixed_point_t(10) - fixed_point_t(1) / 100;
+		}
+		for (DivisionGoodAmount const& entry : stats.supply_per_day) {
+			supply_ok |= entry.good == "telegraph" && entry.amount >= fixed_point_t(1) / 10 - fixed_point_t(1) / 1000;
+		}
+		r.check(cost_ok && supply_ok && stats.men > plain.men && stats.weight > plain.weight, "companies: they are in the cost, the goods of a day, the men and the weight of the template");
+
+		// The daily use of the goods: the companies of the divisions of the template use their goods from the national stockpile
+		GoodDefinition const* const telegraph_good = telegraph->goods.front().first;
+		GoodDefinition const* const radio_good = radio->goods.front().first;
+		std::size_t division_count = 0;
+		for (ArmyInstance const& army : country->get_armies()) {
+			for (DivisionInstance const& division : army.get_divisions()) {
+				division_count += division.template_id == template_id;
+			}
+		}
+		if (division_count == 0) {
+			for (ArmyInstance& army : country->get_armies()) {
+				reform_army_to_template(im, army, 0, template_id);
+			}
+			for (ArmyInstance const& army : country->get_armies()) {
+				for (DivisionInstance const& division : army.get_divisions()) {
+					division_count += division.template_id == template_id;
+				}
+			}
+		}
+		const fixed_point_t telegraph_before = country->get_good_data(*telegraph_good).stockpile_amount;
+		const fixed_point_t radio_before = country->get_good_data(*radio_good).stockpile_amount;
+		country->get_good_data(*telegraph_good).stockpile_amount = fixed_point_t(1000);
+		country->get_good_data(*radio_good).stockpile_amount = fixed_point_t::_0;
+		im.force_tick_and_update();
+		const CompanyState radio_state = country->get_company_states()[radio->index];
+		r.check(radio_state.works_as == telegraph->index && radio_state.supplied > fixed_point_t(1) / 2,
+			"companies: without radio in the stockpile the radio companies fall back to the telegraph and are supplied by it");
+		const fixed_point_t used = fixed_point_t(1000) - country->get_good_data(*telegraph_good).stockpile_amount;
+		r.check(division_count > 0 && used >= fixed_point_t(3) / 10 * static_cast<std::int32_t>(division_count) / 2,
+			"companies: the telegraph companies of the divisions use their goods from the national stockpile in a day", fmt::format("used {} in {} divisions", dbl(used), division_count));
+		country->get_good_data(*radio_good).stockpile_amount = fixed_point_t(1000);
+		im.force_tick_and_update();
+		r.check(country->get_company_states()[radio->index].works_as == radio->index, "companies: with radio in the stockpile the radio companies work as radio companies");
+		country->get_good_data(*telegraph_good).stockpile_amount = telegraph_before;
+		country->get_good_data(*radio_good).stockpile_amount = radio_before;
+
+		// put the country back
+		division_template->companies = companies_before;
+		delete_division_template(*country, template_id);
+		country->get_company_states_mutable().assign(states_before.begin(), states_before.end());
+		for (memory::string const& key : std::vector<memory::string> { country->get_unlock_keys().begin(), country->get_unlock_keys().end() }) {
+			country->revoke_unlock(key);
+		}
+		for (memory::string const& key : keys_before) {
+			country->grant_unlock(key);
+		}
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -3609,6 +3843,7 @@ namespace {
 		test_unlock_gates(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
+		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();
 
 		// ---- the defines hash does not change while playing

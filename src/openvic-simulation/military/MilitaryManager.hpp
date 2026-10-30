@@ -1,5 +1,6 @@
 #pragma once
 
+#include "openvic-simulation/military/Companies.hpp"
 #include "openvic-simulation/military/Deployment.hpp"
 #include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
@@ -17,5 +18,6 @@ namespace OpenVic {
 		EquipmentManager PROPERTY_REF(equipment_manager);
 		ProvisionalUnlocks PROPERTY_REF(provisional_unlocks);
 		DefaultUnlocks PROPERTY_REF(default_unlocks);
+		CompanyTypeManager PROPERTY_REF(company_type_manager);
 	};
 }

@@ -168,6 +168,7 @@ InstanceManager::InstanceManager(
 	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
+	CountryInstance::set_company_type_manager(definition_manager.get_military_manager().get_company_type_manager());
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
 	CountryInstance::set_openvic_supply_defines(definition_manager.get_define_manager().get_openvic_defines().supply);
 	CountryInstance::set_equipment(

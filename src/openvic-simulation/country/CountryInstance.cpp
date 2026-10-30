@@ -9,6 +9,7 @@
 #include "openvic-simulation/map/State.hpp"
 
 #include <algorithm>
+#include <map>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -2451,6 +2452,48 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 			}
 		}
 	}
+	// The support companies of the divisions of the templates use their goods every day (the fallback type, when the goods of the type are not in the
+	// stockpile at all, uses its own goods); how much the stockpile gave is worked out below, when the goods are used up
+	memory::vector<std::size_t> company_works_as;
+	if (company_type_manager != nullptr && company_type_manager->size() > 0) {
+		const std::size_t company_count = company_type_manager->size();
+		memory::vector<std::uint32_t> company_totals(company_count, 0);
+		for (ArmyInstance const& army : armies) {
+			for (DivisionInstance const& division : army.get_divisions()) {
+				DivisionTemplate const* const division_template = division.template_id != 0 ? find_division_template(division.template_id) : nullptr;
+				if (division_template == nullptr) {
+					continue;
+				}
+				const memory::vector<std::uint32_t> counts = count_template_companies(*company_type_manager, *division_template);
+				for (std::size_t index = 0; index < company_count; ++index) {
+					company_totals[index] += counts[index];
+				}
+			}
+		}
+		company_works_as.resize(company_count);
+		for (std::size_t index = 0; index < company_count; ++index) {
+			CompanyType const& company = company_type_manager->at(index);
+			company_works_as[index] = index;
+			if (company.fallback_index != SIZE_MAX && !company.goods.empty()) {
+				bool any_in_stock = false;
+				for (auto const& [good, amount] : company.goods) {
+					any_in_stock |= goods_data.at_index(good->index).stockpile_amount > fixed_point_t::_0;
+				}
+				if (!any_in_stock) {
+					company_works_as[index] = company.fallback_index;
+				}
+			}
+			if (company_totals[index] == 0) {
+				continue;
+			}
+			for (auto const& [good, amount] : company_type_manager->at(company_works_as[index]).goods) {
+				good_data_t& good_data = goods_data.at_index(good->index);
+				const fixed_point_t need = amount * static_cast<std::int32_t>(company_totals[index]) * army_slider;
+				good_data.army_needs += need;
+				good_data.army_due += need;
+			}
+		}
+	}
 	for (NavyInstance const& navy : navies) {
 		const supply_state_t state = get_supply_state(navy);
 		for (ShipInstance const& ship : navy.get_ship_instances()) {
@@ -2482,6 +2525,7 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	fixed_point_t navy_needed_total = 0;
 	fixed_point_t navy_supplied_total = 0;
 
+	std::map<std::size_t, fixed_point_t> supplied_share; // by the index of the good; a good that is not here was given in full
 	for (auto [good_instance, good_data] : goods_data) {
 		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
 		const fixed_point_t due = good_data.army_due + good_data.navy_due;
@@ -2489,6 +2533,7 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		// The supplies of the day are used up
 		if (due > fixed_point_t::_0) {
 			const fixed_point_t consumed = std::min(due, good_data.stockpile_amount);
+			supplied_share[static_cast<std::size_t>(type_safe::get(good_instance.index))] = consumed / due;
 			good_data.stockpile_amount -= consumed;
 			good_data.stockpile_change_yesterday -= consumed;
 
@@ -2502,6 +2547,22 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		if (daily_need > fixed_point_t::_0) {
 			good_data.government_needs += daily_need * DAYS_OF_SUPPLY;
 			good_data.max_government_consumption += daily_need * DAYS_OF_SUPPLY;
+		}
+	}
+
+	// The companies: what each type works as today and how much of its goods it got (the slider of the army counts as it does for the regiments)
+	if (!company_works_as.empty()) {
+		const fixed_point_t company_paid_share = std::clamp(army_slider, fixed_point_t::_0, fixed_point_t::_1);
+		company_states.resize(company_works_as.size());
+		for (std::size_t index = 0; index < company_works_as.size(); ++index) {
+			fixed_point_t supplied = company_paid_share;
+			for (auto const& [good, amount] : company_type_manager->at(company_works_as[index]).goods) {
+				const auto share_it = supplied_share.find(static_cast<std::size_t>(type_safe::get(good->index)));
+				if (share_it != supplied_share.end()) {
+					supplied = std::min(supplied, share_it->second);
+				}
+			}
+			company_states[index] = { company_works_as[index], supplied };
 		}
 	}
 

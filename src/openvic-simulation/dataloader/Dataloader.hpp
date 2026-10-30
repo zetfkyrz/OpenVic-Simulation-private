@@ -42,6 +42,8 @@ namespace OpenVic {
 		bool _load_technologies(DefinitionManager& definition_manager);
 		/* The army technologies of OpenVic (common/ov_technology/**.txt); a broken file or technology is skipped with a warning */
 		void _load_army_technologies(DefinitionManager& definition_manager);
+		/* The support companies (common/ov_companies/*.txt); a broken file or company is skipped with a warning */
+		void _load_companies(DefinitionManager& definition_manager);
 		bool _load_inventions(DefinitionManager& definition_manager);
 		bool _load_events(DefinitionManager& definition_manager);
 		bool _load_map_dir(DefinitionManager& definition_manager) const;

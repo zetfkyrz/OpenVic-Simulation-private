@@ -36,6 +36,10 @@ namespace OpenVic {
 		fixed_point_t density; // strength points per rank, less by the density_reduction
 		fixed_point_t fortification;
 		fixed_point_t reliability; // the share of the best weapons the division really has (1 for a template)
+		// The support companies (military/Companies.hpp): their number and what they add to the attack, the defence, the breakthrough (shares) and the
+		// fortification (levels) of a regiment that counts in the scope all; the buff of a regiment type is worked out in its own scopes
+		std::uint32_t companies = 0;
+		fixed_point_t company_attack, company_defence, company_breakthrough, company_fortification;
 		// Cost
 		std::uint32_t regiments = 0;
 		fixed_point_t men;

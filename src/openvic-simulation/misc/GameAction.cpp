@@ -20,6 +20,7 @@
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/military/Companies.hpp"
 #include "openvic-simulation/research/ArmyResearch.hpp"
 
 using namespace OpenVic;
@@ -1263,6 +1264,16 @@ bool GameActionManager::VariantVisitor::operator() (upgrade_regiment_argument_t 
 		return false;
 	}
 	return instance_manager.get_unit_instance_manager().upgrade_regiment(country, *army, *regiment, *target);
+}
+
+// The support companies in the slots of a division template
+bool GameActionManager::VariantVisitor::operator() (set_division_template_companies_argument_t const& argument) const {
+	const auto [country_index, template_id, companies] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
+		return false;
+	}
+	return set_division_template_companies(instance_manager, country, template_id, companies);
 }
 
 // Research of the army technologies

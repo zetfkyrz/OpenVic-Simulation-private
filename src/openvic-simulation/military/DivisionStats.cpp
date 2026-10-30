@@ -9,6 +9,7 @@
 #include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/military/BattleFormulas.hpp"
+#include "openvic-simulation/military/Companies.hpp"
 #include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
@@ -56,6 +57,15 @@ DivisionStats OpenVic::compute_division_stats(
 	};
 
 	std::map<std::string, fixed_point_t> cost, supply, ammo;
+	// The support companies of the template: how many of every type, the width they are shared over, what they work as today (the country)
+	CompanyTypeManager const& company_types = definitions.get_military_manager().get_company_type_manager();
+	const memory::vector<std::uint32_t> company_counts = count_template_companies(company_types, division_template);
+	const std::uint32_t company_width = get_template_width(division_template);
+	fixed_point_t company_men = fixed_point_t::_0;
+	const std::span<const CompanyState> company_states = country.get_company_states();
+	const auto company_buff = [&](const scoped_effect_t effect, std::span<const ScopeWeight> weights) -> fixed_point_t {
+		return get_company_buff(company_types, company_states, company_counts, company_width, cache, effect, weights);
+	};
 	fixed_point_t fortification_sum = fixed_point_t::_0;
 	std::array<memory::vector<ScopeWeight>, DIVISION_MAX_TYPES> scope_weights;
 	std::array<bool, DIVISION_MAX_TYPES> scope_weights_made {};
@@ -98,9 +108,13 @@ DivisionStats OpenVic::compute_division_stats(
 
 			stats.regiments++;
 			cells_in_rank[rank]++;
-			stats.attack += regiment_type->attack * attack_ratio * row_weight;
-			stats.defence += regiment_type->defence * defence_ratio * row_weight;
-			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * row_weight;
+			memory::vector<ScopeWeight> const& weights = scope_weights_of(*regiment_type);
+			const fixed_point_t attack_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::ATTACK_MULT, weights);
+			const fixed_point_t defence_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::DEFENSE_MULT, weights);
+			const fixed_point_t breakthrough_factor = fixed_point_t::_1 + company_buff(scoped_effect_t::BREAKTHROUGH_MULT, weights);
+			stats.attack += regiment_type->attack * attack_ratio * attack_factor * row_weight;
+			stats.defence += regiment_type->defence * defence_ratio * defence_factor * row_weight;
+			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * breakthrough_factor * row_weight;
 			durability_sum += regiment_type->max_strength * defence_ratio;
 			strength_sum += regiment_type->max_strength;
 			organisation_sum += regiment_type->default_organisation;
@@ -109,7 +123,7 @@ DivisionStats OpenVic::compute_division_stats(
 			stats.weight += regiment_type->ov.weight > fixed_point_t::_0 ? regiment_type->ov.weight
 				: regiment_type->max_strength * defines.war.template_kit_weight_per_strength;
 			// The fortification is the average of the regiments (a regiment of cavalry with no bonus has 0)
-			fortification_sum += get_scoped_sum(country, cache, scoped_effect_t::FORTIFICATION, scope_weights_of(*regiment_type));
+			fortification_sum += get_scoped_sum(country, cache, scoped_effect_t::FORTIFICATION, weights) + company_buff(scoped_effect_t::FORTIFICATION, weights);
 
 			// The goods: the weapon of the line is the one of the best generation (the good of the first generation is the one of the base game)
 			const std::string base_good = has_weapon
@@ -145,6 +159,34 @@ DivisionStats OpenVic::compute_division_stats(
 	for (const std::uint32_t cells : cells_in_rank) {
 		stats.width += cells > 0;
 	}
+	// The companies are worth their cost, weight and men, and use their goods every day
+	for (std::size_t index = 0; index < company_counts.size(); ++index) {
+		if (company_counts[index] == 0) {
+			continue;
+		}
+		CompanyType const& company = company_types.at(index);
+		const std::int32_t count = static_cast<std::int32_t>(company_counts[index]);
+		stats.companies += company_counts[index];
+		stats.weight += company.weight * count;
+		company_men += company.manpower * count;
+		for (auto const& [good, amount] : company.cost) {
+			cost[std::string { good->get_identifier() }] += amount * count;
+		}
+		for (auto const& [good, amount] : company.goods) {
+			supply[std::string { good->get_identifier() }] += amount * count;
+		}
+	}
+	{
+		// The buff for a regiment of the scope all
+		memory::vector<ScopeWeight> all_scope;
+		if (const std::size_t all_index = cache.find_unit_scope("all"); all_index != ModifierEffectCache::NO_SCOPE) {
+			all_scope.push_back({ all_index, fixed_point_t::_1 });
+		}
+		stats.company_attack = company_buff(scoped_effect_t::ATTACK_MULT, all_scope);
+		stats.company_defence = company_buff(scoped_effect_t::DEFENSE_MULT, all_scope);
+		stats.company_breakthrough = company_buff(scoped_effect_t::BREAKTHROUGH_MULT, all_scope);
+		stats.company_fortification = company_buff(scoped_effect_t::FORTIFICATION, all_scope);
+	}
 	if (stats.regiments > 0) {
 		stats.depth = fixed_point_t(static_cast<std::int32_t>(stats.regiments)) / static_cast<std::int32_t>(stats.width);
 		stats.organisation = organisation_sum / static_cast<std::int32_t>(stats.regiments);
@@ -157,7 +199,7 @@ DivisionStats OpenVic::compute_division_stats(
 	stats.occupation_speed = defines.war.occupation_speed_base * (fixed_point_t::_1 + effect_value(cache.get_occupation_speed_pct()))
 		* get_effect_product(country, cache.get_occupation_speed_mult());
 	stats.occupation_instant = stats.occupation_speed * 100 >= fixed_point_t(defines.war.template_occupation_instant_percent);
-	stats.men = strength_sum * defines.war.template_men_per_strength;
+	stats.men = (strength_sum + company_men) * defines.war.template_men_per_strength;
 
 	const auto to_vector = [](std::map<std::string, fixed_point_t> const& map, memory::vector<DivisionGoodAmount>& out) {
 		for (auto const& [good, amount] : map) {

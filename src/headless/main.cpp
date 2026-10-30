@@ -32,6 +32,7 @@
 #include <openvic-simulation/economy/GoodInstance.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/BattleFormulas.hpp>
+#include <openvic-simulation/military/Companies.hpp>
 #include <openvic-simulation/military/DivisionStats.hpp>
 #include <openvic-simulation/military/UnitModifiers.hpp>
 #include <openvic-simulation/modifier/ModifierEffectCache.hpp>
@@ -1005,6 +1006,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
 	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
 	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
+	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
@@ -1215,7 +1217,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1341,6 +1343,51 @@ static void run_tech_tree_dump(InstanceManager& instance_manager) {
 					fmt::println("TECHTREE_EDGE branch={} from={} to={} line={}", branch, id, technology.identifier, block.size() > 1 ? "dashed" : "solid");
 				}
 			}
+		}
+	}
+}
+
+// --dump-company: the support companies (COMPANY lines) and what they add to the templates of the first countries (COMPANY_TEMPLATE lines)
+static void run_company_dump(InstanceManager& instance_manager) {
+	CompanyTypeManager const& companies = instance_manager.definition_manager.get_military_manager().get_company_type_manager();
+	const auto goods_text = [](memory::vector<std::pair<GoodDefinition const*, fixed_point_t>> const& goods) -> std::string {
+		std::string text;
+		for (auto const& [good, amount] : goods) {
+			text += fmt::format("{}{}={:.3f}", text.empty() ? "" : ",", good->get_identifier(), static_cast<double>(amount));
+		}
+		return text.empty() ? "-" : text;
+	};
+	for (CompanyType const& company : companies.get_company_types()) {
+		std::string buffs;
+		for (CompanyBuff const& buff : company.buffs) {
+			static constexpr std::string_view names[] = { "attack_mult", "defense_mult", "breakthrough_mult", "fortification", "casualties", "organisation" };
+			buffs += fmt::format("{}{}[{}]={:.3f}", buffs.empty() ? "" : ",", names[static_cast<std::size_t>(buff.effect)], buff.scope, static_cast<double>(buff.value));
+		}
+		fmt::println(
+			"COMPANY {:<20} category={} key={} fallback={} goods={} cost={} weight={:.0f} manpower={:.2f} buffs={}", company.identifier, company.category,
+			company.unlock_key.empty() ? "-" : company.unlock_key, company.fallback.empty() ? "-" : company.fallback, goods_text(company.goods), goods_text(company.cost),
+			static_cast<double>(company.weight), static_cast<double>(company.manpower), buffs.empty() ? "-" : buffs
+		);
+	}
+	std::size_t printed = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.has_army_organisation() || country.get_division_templates().empty() || printed >= 3) {
+			continue;
+		}
+		printed++;
+		for (DivisionTemplate const& division_template : country.get_division_templates()) {
+			const DivisionStats stats = compute_division_stats(instance_manager, country, division_template);
+			std::string states;
+			for (std::size_t index = 0; index < country.get_company_states().size(); ++index) {
+				CompanyState const& state = country.get_company_states()[index];
+				states += fmt::format("{}{}->{}:{:.2f}", states.empty() ? "" : ",", companies.at(index).identifier, companies.at(state.works_as).identifier, static_cast<double>(state.supplied));
+			}
+			fmt::println(
+				"COMPANY_TEMPLATE country={} template={} companies={} width={} attack_bonus={:.4f} defence_bonus={:.4f} breakthrough_bonus={:.4f} fortification_bonus={:.2f} state={}",
+				country.get_identifier(), division_template.id, stats.companies, stats.width, static_cast<double>(stats.company_attack),
+				static_cast<double>(stats.company_defence), static_cast<double>(stats.company_breakthrough), static_cast<double>(stats.company_fortification),
+				states.empty() ? "-" : states
+			);
 		}
 	}
 }
@@ -1646,6 +1693,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_techtree) {
 		run_tech_tree_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_companies) {
+		run_company_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -1881,6 +1931,8 @@ int main(int argc, char const* argv[]) {
 			dump_techs = true;
 		} else if (strcmp(arg, "--dump-techtree") == 0) {
 			dump_techtree = true;
+		} else if (strcmp(arg, "--dump-company") == 0) {
+			dump_companies = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");
