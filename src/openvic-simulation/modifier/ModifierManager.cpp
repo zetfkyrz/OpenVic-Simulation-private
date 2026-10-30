@@ -693,6 +693,10 @@ bool ModifierManager::setup_modifier_effects() {
 	ret &= register_leader_modifier_effect(
 		modifier_effect_cache.reliability, "reliability", FORMAT_x100_1DP_PC_POS, "TRAIT_RELIABILITY"
 	);
+	// A general speeds the occupation of the provinces up (docs/WAR_ASSUMPTIONS.md, section 5); no trait has it by default
+	ret &= register_leader_modifier_effect(
+		modifier_effect_cache.occupation_speed_leader, "occupation_speed_pct", FORMAT_x100_1DP_PC_POS, "TRAIT_OCCUPATION_SPEED"
+	);
 
 	return ret;
 }

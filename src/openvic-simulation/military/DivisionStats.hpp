@@ -25,8 +25,11 @@ namespace OpenVic {
 		fixed_point_t durability; // how long it lasts: all the cells count, so depth makes it last
 		fixed_point_t organisation; // the average of the regiments
 		fixed_point_t reconnaissance;
-		fixed_point_t occupation_speed; // 1 is the base; technologies add to it
-		bool occupation_instant = false;
+		fixed_point_t occupation_weight; // the average occupation weight of a regiment
+		fixed_point_t occupation_power; // the sum of the occupation weights over ov_war.OCCUPATION_REFERENCE_REGIMENTS (6 regiments of weight 1 are 1.0)
+		fixed_point_t occupation_speed; // the power times (1 + occupation_speed_pct) times occupation_speed_mult (of the country; a general adds its percent)
+		fixed_point_t occupation_days; // the days to take a province of ov_war.OCCUPATION_BASE_DAYS
+		bool occupation_instant = false; // the country has mechanic:instant_occupation
 		// Combat
 		fixed_point_t attack; // the possible damage; the cells of the rows weigh 1, 1/2, 1/4, ...
 		fixed_point_t defence; // is counted the same way

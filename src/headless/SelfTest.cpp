@@ -1826,6 +1826,110 @@ namespace {
 		country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache());
 	}
 
+	// ---- the occupation of a province (military/BattleFormulas.*, DivisionStats)
+
+	void test_occupation(Results& r, InstanceManager& im) {
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		using namespace battle_formulas;
+		const fixed_point_t eps = fixed_point_t(1) / 1000;
+		r.check(near(occupation_power(war, fixed_point_t(6)), fixed_point_t::_1, eps) && near(occupation_power(war, fixed_point_t(3)), fixed_point_t(1) / 2, eps),
+			"occupation: the power is the sum of the weights over 6 (six regiments of weight 1 are 6/6)");
+		const fixed_point_t speed = occupation_speed(fixed_point_t::_1, fixed_point_t(25) / 100, fixed_point_t(2));
+		r.check(near(speed, fixed_point_t(5) / 2, eps) && near(occupation_days(fixed_point_t(10), speed, false), fixed_point_t(4), eps),
+			"occupation: the speed with general_staff (+25 %) and operational_planning (x2) is x1.25 x2, the days are the base over the speed");
+		r.check(occupation_days(fixed_point_t(10), speed, true) == fixed_point_t::_0 && occupation_days(fixed_point_t(10), fixed_point_t::_0, false) > fixed_point_t(1000),
+			"occupation: mechanic:instant_occupation overrides all (0 days), no power never takes a province");
+
+		ModifierEffectCache const& cache = im.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+		r.check(cache.get_occupation_speed_leader() != nullptr, "occupation: a trait of a general can have occupation_speed_pct");
+
+		ArmyTechnologyManager const& technologies = im.definition_manager.get_research_manager().get_army_technology_manager();
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		RegimentType const* const line_infantry = unit_types.get_regiment_type_by_identifier("line_infantry");
+		RegimentType const* const artillery = unit_types.get_regiment_type_by_identifier("napoleonic_artillery");
+		ArmyTechnology const* const general_staff = technologies.find("general_staff");
+		ArmyTechnology const* const operational_planning = technologies.find("operational_planning");
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation()) {
+				country = &candidate;
+			}
+		}
+		if (line_infantry == nullptr || artillery == nullptr || general_staff == nullptr || operational_planning == nullptr || country == nullptr
+			|| !general_staff->modifier.has_value() || !operational_planning->modifier.has_value()) {
+			fmt::println("TEST INFO occupation: no ov_data folder, the templates are not checked");
+			return;
+		}
+		const auto make = [&](DivisionGrid const& grid) {
+			DivisionTemplate division_template;
+			division_template.id = 999;
+			division_template.cells = grid;
+			division_template.rebuild_counts();
+			return division_template;
+		};
+		const auto grid_of = [&](RegimentType const& regiment_type, const std::size_t ranks, const std::size_t rows) {
+			DivisionGrid grid {};
+			for (std::size_t rank = 0; rank < ranks; ++rank) {
+				for (std::size_t row = 0; row < rows; ++row) {
+					grid[DivisionTemplate::cell_index(rank, row)] = static_cast<std::uint8_t>(get_division_slot_kind(regiment_type) + 1);
+				}
+			}
+			return grid;
+		};
+		const bool had_key = country->has_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+		country->revoke_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+		const auto has_modifier = [&](Modifier const& modifier) -> bool {
+			for (Modifier const* const held : country->get_unlock_modifiers()) {
+				if (held == &modifier) {
+					return true;
+				}
+			}
+			return false;
+		};
+		const bool had_general_staff = has_modifier(*general_staff->modifier);
+		const bool had_operational = has_modifier(*operational_planning->modifier);
+		country->remove_unlock_modifier(*general_staff->modifier);
+		country->remove_unlock_modifier(*operational_planning->modifier);
+		const auto refresh = [&]() { country->update_modifier_sum(im.get_today(), im.definition_manager.get_modifier_manager().get_static_modifier_cache()); };
+		refresh();
+
+		const DivisionStats six = compute_division_stats(im, *country, make(grid_of(*line_infantry, 3, 2)));
+		r.check(six.regiments == 6 && near(six.occupation_power, fixed_point_t::_1, eps) && near(six.occupation_weight, fixed_point_t::_1, eps) && near(six.occupation_speed, fixed_point_t::_1, eps)
+				&& near(six.occupation_days, fixed_point_t(war.occupation_base_days), eps) && !six.occupation_instant,
+			"occupation: six regiments of infantry give the power 6/6 and the base days", fmt::format("power {} speed {} days {}", dbl(six.occupation_power), dbl(six.occupation_speed), dbl(six.occupation_days)));
+		const DivisionStats guns = compute_division_stats(im, *country, make(grid_of(*artillery, 3, 2)));
+		r.check(near(guns.occupation_power, fixed_point_t(1) / 2, eps), "occupation: artillery weighs 0.5, six guns are 3/6");
+
+		country->add_unlock_modifier(*general_staff->modifier);
+		country->add_unlock_modifier(*operational_planning->modifier);
+		refresh();
+		const DivisionStats fast = compute_division_stats(im, *country, make(grid_of(*line_infantry, 3, 2)));
+		r.check(near(fast.occupation_speed, fixed_point_t(5) / 2, eps) && near(fast.occupation_days, fixed_point_t(war.occupation_base_days) / fixed_point_t(5) * 2, eps),
+			"occupation: with general_staff and operational_planning the speed is x1.25 x2 and the days fall to 4", fmt::format("speed {} days {}", dbl(fast.occupation_speed), dbl(fast.occupation_days)));
+		// the companies do not count
+		DivisionTemplate with_company = make(grid_of(*line_infantry, 3, 2));
+		with_company.companies[0] = 1;
+		r.check(near(compute_division_stats(im, *country, with_company).occupation_power, fast.occupation_power, eps), "occupation: the companies do not change the power of capture");
+
+		country->grant_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+		const DivisionStats instant = compute_division_stats(im, *country, make(grid_of(*line_infantry, 3, 2)));
+		r.check(instant.occupation_instant && instant.occupation_days == fixed_point_t::_0, "occupation: mechanic:instant_occupation makes the capture instant");
+
+		country->revoke_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+		if (had_key) {
+			country->grant_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+		}
+		country->remove_unlock_modifier(*general_staff->modifier);
+		country->remove_unlock_modifier(*operational_planning->modifier);
+		if (had_general_staff) {
+			country->add_unlock_modifier(*general_staff->modifier);
+		}
+		if (had_operational) {
+			country->add_unlock_modifier(*operational_planning->modifier);
+		}
+		refresh();
+	}
+
 	// ---- the modifiers of the army with a scope (military/UnitModifiers.hpp)
 
 	void test_scoped_modifiers(Results& r, InstanceManager& im) {
@@ -3975,6 +4079,7 @@ namespace {
 		test_army_technologies(r, *im);
 		test_army_research(r, *im);
 		test_battle_rules(r, *im);
+		test_occupation(r, *im);
 		test_unlock_gates(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);

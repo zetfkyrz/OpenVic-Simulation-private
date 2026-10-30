@@ -291,8 +291,11 @@ namespace OpenVic {
 	/* kilograms per strength point, the occupation speed 1 is the base (technologies add to it, from this percent it is instant) */ \
 	INT(TEMPLATE_MEN_PER_STRENGTH, template_men_per_strength, 1000, 1, 100000) \
 	INT(TEMPLATE_KIT_WEIGHT_PER_STRENGTH, template_kit_weight_per_strength, 100000, 0, 10000000) \
-	FIXED(OCCUPATION_SPEED_BASE, occupation_speed_base, fixed_point_t::_1, 0, 100) \
-	INT(TEMPLATE_OCCUPATION_INSTANT_PERCENT, template_occupation_instant_percent, 1000, 100, 1000000) \
+	/* The occupation of a province (military/BattleFormulas.cpp): the power of a division is the sum of the occupation weights of its regiments over */ \
+	/* OCCUPATION_REFERENCE_REGIMENTS (6 = 3 ranks of 2); the days are the base days over (power x (1 + the sum of occupation_speed_pct) x the product of */ \
+	/* occupation_speed_mult); OCCUPATION_BASE_DAYS is the base of a plain province in the dump of the templates (the siege has its own days) */ \
+	INT(OCCUPATION_REFERENCE_REGIMENTS, occupation_reference_regiments, 6, 1, 1000) \
+	INT(OCCUPATION_BASE_DAYS, occupation_base_days, 10, 1, 3650) \
 	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \
 	/* halves the damage, the damage added by the density of the formation per point of density */ \
 	/* The weapons of the regiments (military/RegimentEquipment in CountryInstance.cpp): how many regiments a day get a weapon of a better */ \

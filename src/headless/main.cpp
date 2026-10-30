@@ -1230,13 +1230,14 @@ static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods)
 static void print_template_line(std::string_view tag, CountryInstance const& country, DivisionTemplate const& division_template, DivisionStats const& stats) {
 	fmt::println(
 		"{} country={} template={} regiments={} width={} depth={:.2f} raw_density={:.3f} density={:.3f} attack={:.2f} defence={:.2f} breakthrough={:.2f} casualties={:.3f} "
-		"durability={:.2f} organisation={:.1f} fortification={:.2f} weight={:.0f} speed={:.2f} reconnaissance={:.2f} occupation_speed={:.2f}{} reliability={:.2f} men={:.0f} "
+		"durability={:.2f} organisation={:.1f} fortification={:.2f} weight={:.0f} speed={:.2f} reconnaissance={:.2f} occupation_weight={:.2f} occupation_power={:.2f} occupation_speed={:.2f} occupation_days={:.1f}{} reliability={:.2f} men={:.0f} "
 		"companies={}",
 		tag, country.get_identifier(), division_template.id, stats.regiments, stats.width, static_cast<double>(stats.depth), static_cast<double>(stats.raw_density),
 		static_cast<double>(stats.density), static_cast<double>(stats.attack), static_cast<double>(stats.defence), static_cast<double>(stats.breakthrough),
 		static_cast<double>(stats.casualties_mult), static_cast<double>(stats.durability), static_cast<double>(stats.organisation),
 		static_cast<double>(stats.fortification), static_cast<double>(stats.weight), static_cast<double>(stats.speed), static_cast<double>(stats.reconnaissance),
-		static_cast<double>(stats.occupation_speed), stats.occupation_instant ? "(instant)" : "", static_cast<double>(stats.reliability), static_cast<double>(stats.men),
+		static_cast<double>(stats.occupation_weight), static_cast<double>(stats.occupation_power), static_cast<double>(stats.occupation_speed),
+		static_cast<double>(stats.occupation_days), stats.occupation_instant ? "(instant)" : "", static_cast<double>(stats.reliability), static_cast<double>(stats.men),
 		stats.companies
 	);
 	fmt::println("{}_COST country={} template={} {}", tag, country.get_identifier(), division_template.id, format_goods(stats.cost));

@@ -83,6 +83,22 @@ bool battle_formulas::breakthrough_day(OpenVicWarDefines const& defines, const f
 	return false;
 }
 
+fixed_point_t battle_formulas::occupation_power(OpenVicWarDefines const& defines, const fixed_point_t weight_sum) {
+	return weight_sum / defines.occupation_reference_regiments;
+}
+
+fixed_point_t battle_formulas::occupation_speed(const fixed_point_t power, const fixed_point_t speed_pct_sum, const fixed_point_t speed_mult_product) {
+	return power * (fixed_point_t::_1 + speed_pct_sum) * speed_mult_product;
+}
+
+fixed_point_t battle_formulas::occupation_days(const fixed_point_t base_days, const fixed_point_t speed, const bool instant) {
+	if (instant) {
+		return fixed_point_t::_0;
+	}
+	// A division with no power or speed never takes a province (a very big number of days)
+	return speed > fixed_point_t::_0 ? base_days / speed : fixed_point_t(36500);
+}
+
 fixed_point_t battle_formulas::weapon_ratio(const fixed_point_t first_points, const fixed_point_t best_points, const fixed_point_t fill) {
 	const fixed_point_t clamped_fill = fill < fixed_point_t::_0 ? fixed_point_t::_0 : fill > fixed_point_t::_1 ? fixed_point_t::_1 : fill;
 	return first_points + clamped_fill * (best_points - first_points);

@@ -54,6 +54,14 @@ namespace OpenVic {
 		// (0..1) the regiment has the best weapon in this share and the one it was made with in the rest
 		[[nodiscard]] fixed_point_t weapon_ratio(fixed_point_t first_points, fixed_point_t best_points, fixed_point_t fill);
 
+		// The occupation of a province (docs/WAR_ASSUMPTIONS.md, section 5): the power of a division is the sum of the occupation weights of its regiments over
+		// OCCUPATION_REFERENCE_REGIMENTS (six regiments of weight 1 are 6/6; artillery weighs 0.5; the companies do not count). The speed is the power times
+		// (1 + the sum of occupation_speed_pct of the country and of the general) times the product of occupation_speed_mult; the days are the base days over the
+		// speed. The key mechanic:instant_occupation (instant = true) overrides all: 0 days.
+		[[nodiscard]] fixed_point_t occupation_power(OpenVicWarDefines const& defines, fixed_point_t weight_sum);
+		[[nodiscard]] fixed_point_t occupation_speed(fixed_point_t power, fixed_point_t speed_pct_sum, fixed_point_t speed_mult_product);
+		[[nodiscard]] fixed_point_t occupation_days(fixed_point_t base_days, fixed_point_t speed, bool instant);
+
 		// Durability points a division loses in a day of battle against another one (the damage is in proportion to the attack, so to the width of the
 		// front: a division half as wide deals half the damage at the same depth; the defence of the one who gets it softens it and the casualties of its density change it)
 		// target_is_attacker: the one who takes the damage is the one who attacks, its defence softens the damage by ATTACKER_DEFENSE_FACTOR only

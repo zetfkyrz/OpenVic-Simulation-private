@@ -47,6 +47,8 @@ namespace OpenVic {
 	[[nodiscard]] fixed_point_t get_scoped_product(
 		CountryInstance const& country, ModifierEffectCache const& cache, scoped_effect_t effect, std::span<const ScopeWeight> weights
 	);
+	// The occupation_speed_pct that the traits of the general of the army give (0 without a general)
+	[[nodiscard]] fixed_point_t get_leader_occupation_pct(ModifierEffectCache const& cache, ArmyInstance const& army);
 	// The product of the values of the modifiers of a country that have the effect (1 if there are none)
 	[[nodiscard]] fixed_point_t get_effect_product(CountryInstance const& country, ModifierEffect const* effect);
 }

@@ -2,6 +2,9 @@
 
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/military/Leader.hpp"
+#include "openvic-simulation/military/LeaderTrait.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 
 using namespace OpenVic;
@@ -89,4 +92,18 @@ fixed_point_t OpenVic::get_effect_product(CountryInstance const& country, Modifi
 		product = product * value;
 	});
 	return product;
+}
+
+fixed_point_t OpenVic::get_leader_occupation_pct(ModifierEffectCache const& cache, ArmyInstance const& army) {
+	fixed_point_t sum = fixed_point_t::_0;
+	LeaderInstance const* const leader = army.get_leader();
+	if (leader == nullptr || cache.get_occupation_speed_leader() == nullptr) {
+		return sum;
+	}
+	for (LeaderTrait const* trait : { leader->get_personality(), leader->get_background() }) {
+		if (trait != nullptr) {
+			sum += trait->get_effect(*cache.get_occupation_speed_leader());
+		}
+	}
+	return sum;
 }

@@ -63,6 +63,7 @@ DivisionStats OpenVic::compute_division_stats(
 	const std::uint32_t company_width = get_template_width(division_template);
 	fixed_point_t company_men = fixed_point_t::_0;
 	fixed_point_t casualties_sum = fixed_point_t::_0; // the casualties_taken_mult of the regiments, to be averaged
+	fixed_point_t occupation_weight_sum = fixed_point_t::_0;
 	const std::span<const CompanyState> company_states = country.get_company_states();
 	const auto company_buff = [&](const scoped_effect_t effect, std::span<const ScopeWeight> weights) -> fixed_point_t {
 		return get_company_buff(company_types, company_states, company_counts, company_width, cache, effect, weights);
@@ -118,6 +119,7 @@ DivisionStats OpenVic::compute_division_stats(
 			const fixed_point_t breakthrough_factor = fixed_point_t::_1 + get_scoped_sum(country, cache, scoped_effect_t::BREAKTHROUGH_MULT, weights)
 				+ company_buff(scoped_effect_t::BREAKTHROUGH_MULT, weights);
 			casualties_sum += get_scoped_product(country, cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, weights);
+			occupation_weight_sum += regiment_type->ov.occupation_weight;
 			stats.attack += regiment_type->attack * attack_ratio * attack_factor * row_weight;
 			stats.defence += regiment_type->defence * defence_ratio * defence_factor * row_weight;
 			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * breakthrough_factor * row_weight;
@@ -214,9 +216,13 @@ DivisionStats OpenVic::compute_division_stats(
 	}
 	stats.fortification = fortification_sum / static_cast<std::int32_t>(std::max<std::uint32_t>(stats.regiments, 1));
 	stats.reconnaissance += effect_value(cache.get_division_reconnaissance());
-	stats.occupation_speed = defines.war.occupation_speed_base * (fixed_point_t::_1 + effect_value(cache.get_occupation_speed_pct()))
-		* get_effect_product(country, cache.get_occupation_speed_mult());
-	stats.occupation_instant = stats.occupation_speed * 100 >= fixed_point_t(defines.war.template_occupation_instant_percent);
+	stats.occupation_weight = stats.regiments > 0 ? occupation_weight_sum / static_cast<std::int32_t>(stats.regiments) : fixed_point_t::_0;
+	stats.occupation_power = battle_formulas::occupation_power(defines.war, occupation_weight_sum);
+	stats.occupation_speed = battle_formulas::occupation_speed(
+		stats.occupation_power, effect_value(cache.get_occupation_speed_pct()), get_effect_product(country, cache.get_occupation_speed_mult())
+	);
+	stats.occupation_instant = country.has_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
+	stats.occupation_days = battle_formulas::occupation_days(fixed_point_t(defines.war.occupation_base_days), stats.occupation_speed, stats.occupation_instant);
 	stats.men = (strength_sum + company_men) * defines.war.template_men_per_strength;
 
 	const auto to_vector = [](std::map<std::string, fixed_point_t> const& map, memory::vector<DivisionGoodAmount>& out) {

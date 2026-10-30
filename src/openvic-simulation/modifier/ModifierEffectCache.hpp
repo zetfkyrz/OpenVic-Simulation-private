@@ -249,6 +249,7 @@ namespace OpenVic {
 		/* Military Modifier Effects */
 		ModifierEffect const* PROPERTY(attack_leader, nullptr);
 		ModifierEffect const* PROPERTY(attrition_leader, nullptr);
+		ModifierEffect const* PROPERTY(occupation_speed_leader, nullptr);
 		ModifierEffect const* PROPERTY(defence_leader, nullptr);
 		ModifierEffect const* PROPERTY(experience, nullptr);
 		ModifierEffect const* PROPERTY(morale_leader, nullptr);
