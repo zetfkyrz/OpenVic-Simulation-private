@@ -3667,6 +3667,42 @@ namespace {
 		war.marshal_max_attached = max_before;
 	}
 
+	// ---- a fleet goes into a port of its country
+
+	void test_fleet_to_port(Results& r, InstanceManager& im) {
+		NavyInstance* navy = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && !country.is_rebel_country() && !country.get_navies().empty()) {
+				navy = &country.get_navies().front().get();
+				break;
+			}
+		}
+		if (navy == nullptr) {
+			fmt::println("TEST INFO fleet to port: no fleet, not checked");
+			return;
+		}
+		CountryInstance& owner = navy->get_country();
+		std::size_t ports = 0, ordered = 0, failed_without_path = 0;
+		std::string example;
+		for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+			if (province.province_definition.is_water() || !province.province_definition.has_port() || province.get_owner() != &owner) {
+				continue;
+			}
+			ports++;
+			navy->clear_path();
+			if (im.run_game_action_now<move_army_argument_t>(navy->unique_id, province.index)) {
+				ordered++;
+				failed_without_path += navy->get_path().empty() && &navy->get_location() != &province;
+			} else if (example.empty()) {
+				example = std::string { province.get_identifier() };
+			}
+		}
+		navy->clear_path();
+		fmt::println("TEST INFO fleet to port: {} of {} ports of {} accepted, the fleet is in {} (water: {})", ordered, ports, owner.get_identifier(), navy->get_location().get_identifier(), navy->get_location().province_definition.is_water());
+		r.check(ports > 0 && ordered > 0, "fleet to port: a fleet can be ordered to the ports of its country", fmt::format("{} of {} ports ordered, e.g. refused: {}", ordered, ports, example));
+		r.check(failed_without_path == 0, "fleet to port: an accepted order has a route");
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -4259,6 +4295,7 @@ namespace {
 		test_regiment_upgrade(r, *im);
 		test_army_groups(r, *im);
 		test_group_limit(r, *im);
+		test_fleet_to_port(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);
 		test_fronts(r, *im);
