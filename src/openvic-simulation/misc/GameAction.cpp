@@ -1037,7 +1037,10 @@ bool GameActionManager::VariantVisitor::operator() (delete_army_group_argument_t
 bool GameActionManager::VariantVisitor::operator() (set_army_group_argument_t const& argument) const {
 	const auto [army_id, group_id] = argument;
 	ArmyInstance* const army = find_army(instance_manager, army_id);
-	return army != nullptr && set_army_group(army->get_country(), *army, group_id);
+	return army != nullptr && set_army_group(
+		army->get_country(), *army, group_id,
+		static_cast<std::uint32_t>(instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.marshal_max_attached)
+	);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_army_group_marshal_argument_t const& argument) const {
@@ -1264,6 +1267,12 @@ bool GameActionManager::VariantVisitor::operator() (upgrade_regiment_argument_t 
 		return false;
 	}
 	return instance_manager.get_unit_instance_manager().upgrade_regiment(country, *army, *regiment, *target);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_orders_argument_t const& argument) const {
+	const auto [country_index, group_id, execute] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_orders(country, group_id, execute);
 }
 
 // The support companies in the slots of a division template

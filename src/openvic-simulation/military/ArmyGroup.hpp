@@ -22,6 +22,7 @@ namespace OpenVic {
 	struct ArmyGroup {
 		std::uint32_t id = 0;
 		unique_id_t marshal_id = 0; // the unique id of the general, 0 if there is none
+		bool execute_orders = true; // the armies of the group follow the orders of the marshal (the switch of the panel of the commanders)
 	};
 
 	// The bonus of a general to the supply of the army he leads (the third factor of the supply limit): the traits that reduce the attrition
@@ -38,7 +39,9 @@ namespace OpenVic {
 	bool create_army_group(CountryInstance& country);
 	bool delete_army_group(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id);
 	// group_id 0 takes the army out of its group
-	bool set_army_group(CountryInstance const& country, ArmyInstance& army, std::uint32_t group_id);
+	// A group holds at most max_attached armies
+	bool set_army_group(CountryInstance const& country, ArmyInstance& army, std::uint32_t group_id, std::uint32_t max_attached);
+	bool set_army_group_orders(CountryInstance& country, std::uint32_t group_id, bool execute);
 	// leader_id 0 takes the marshal off; the general must not be a marshal already and must be usable; if he leads an army he leaves it
 	bool set_army_group_marshal(
 		InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, unique_id_t leader_id

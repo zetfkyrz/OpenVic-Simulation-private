@@ -48,7 +48,8 @@ namespace OpenVic {
 		//     researches the first available technology of the files
 		// 30: the supply of an army does not go through the provinces that an enemy controls (one and two provinces between), support companies in the templates,
 		//     the upgrade of a regiment, the density and the occupation by the new formulas (the statistics of the templates only)
-		inline constexpr int SIMULATION_VERSION = 30;
+		// 31: the commanders: a group holds at most ov_war.MARSHAL_MAX_ATTACHED (8) armies, the switch of the orders of a group (set_army_group_orders)
+		inline constexpr int SIMULATION_VERSION = 31;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

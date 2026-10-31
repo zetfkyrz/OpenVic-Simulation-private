@@ -464,7 +464,7 @@ bool UnitInstanceGroupBranched<NAVAL>::load_army(ArmyInstance& army) {
 		|| army.is_in_combat() || army.get_transport_navy() != nullptr || get_location().province_definition.is_water()) {
 		return false;
 	}
-	if (get_carried_regiment_count() + army.get_unit_count() > get_transport_capacity()) {
+	if (war_defines->transport_unlimited == 0 && get_carried_regiment_count() + army.get_unit_count() > get_transport_capacity()) {
 		return false;
 	}
 	army.set_transport_navy(this);
@@ -1405,7 +1405,7 @@ void UnitInstanceManager::destroy_leader(LeaderInstance& leader) {
 
 void UnitInstanceManager::enforce_transport_capacity(NavyInstance& navy) {
 	// Armies that do not fit in the remaining transports sink, the last loaded first
-	while (navy.get_carried_regiment_count() > navy.get_transport_capacity() && !navy.get_carried_armies().empty()) {
+	while (UnitInstanceGroup::war_defines->transport_unlimited == 0 && navy.get_carried_regiment_count() > navy.get_transport_capacity() && !navy.get_carried_armies().empty()) {
 		ArmyInstance& army = navy.get_carried_armies().back().get();
 		navy.forget_carried_army(army);
 		army.set_transport_navy(nullptr);

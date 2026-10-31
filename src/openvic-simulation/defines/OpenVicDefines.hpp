@@ -296,6 +296,10 @@ namespace OpenVic {
 	/* occupation_speed_mult); OCCUPATION_BASE_DAYS is the base of a plain province in the dump of the templates (the siege has its own days) */ \
 	INT(OCCUPATION_REFERENCE_REGIMENTS, occupation_reference_regiments, 6, 1, 1000) \
 	INT(OCCUPATION_BASE_DAYS, occupation_base_days, 10, 1, 3650) \
+	/* The armies (their generals) that can be attached to the field marshal of a group; the technologies will raise it */ \
+	INT(MARSHAL_MAX_ATTACHED, marshal_max_attached, 8, 1, 64) \
+	/* 1: the transports carry any number of regiments (for now); 0: REGIMENTS_PER_TRANSPORT of every transport ship */ \
+	INT(TRANSPORT_UNLIMITED, transport_unlimited, 1, 0, 1) \
 	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \
 	/* halves the damage, the damage added by the density of the formation per point of density */ \
 	/* The weapons of the regiments (military/RegimentEquipment in CountryInstance.cpp): how many regiments a day get a weapon of a better */ \

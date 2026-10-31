@@ -66,15 +66,40 @@ bool OpenVic::delete_army_group(InstanceManager& instance_manager, CountryInstan
 	return true;
 }
 
-bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army, const std::uint32_t group_id) {
+bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army, const std::uint32_t group_id, const std::uint32_t max_attached) {
 	if (!country.has_army_organisation() || army.get_army_group_id() == group_id) {
 		return false;
 	}
 	if (group_id != 0 && country.find_army_group(group_id) == nullptr) {
 		return false;
 	}
+	if (group_id != 0) {
+		std::uint32_t attached = 0;
+		for (ArmyInstance const& other : country.get_armies()) {
+			attached += other.get_army_group_id() == group_id;
+		}
+		if (attached >= max_attached) {
+			return false;
+		}
+	}
 	army.set_army_group_id(group_id);
 	return true;
+}
+
+bool OpenVic::set_army_group_orders(CountryInstance& country, const std::uint32_t group_id, const bool execute) {
+	if (!country.has_army_organisation()) {
+		return false;
+	}
+	for (ArmyGroup& group : country.get_mutable_army_groups()) {
+		if (group.id == group_id) {
+			if (group.execute_orders == execute) {
+				return false;
+			}
+			group.execute_orders = execute;
+			return true;
+		}
+	}
+	return false;
 }
 
 bool OpenVic::set_army_group_marshal(

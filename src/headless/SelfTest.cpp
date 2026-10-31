@@ -3630,6 +3630,43 @@ namespace {
 		}
 	}
 
+	// ---- the commanders: the limit of the armies of a group and the switch of the orders
+
+	void test_group_limit(Results& r, InstanceManager& im) {
+		OpenVicWarDefines& war = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 2
+				&& candidate.get_army_groups().size() < MAX_ARMY_GROUPS) {
+				country = &candidate;
+				break;
+			}
+		}
+		r.check(war.marshal_max_attached == 8, "commanders: a field marshal holds 8 armies by default");
+		if (country == nullptr) {
+			fmt::println("TEST INFO commanders: no country with two armies, not checked");
+			return;
+		}
+		const std::int32_t max_before = war.marshal_max_attached;
+		war.marshal_max_attached = 1;
+		create_army_group(*country);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		ArmyInstance& first = country->get_armies()[0].get();
+		ArmyInstance& second = country->get_armies()[1].get();
+		const std::uint32_t first_before = first.get_army_group_id();
+		const std::uint32_t second_before = second.get_army_group_id();
+		first.set_army_group_id(0);
+		second.set_army_group_id(0);
+		r.check(set_army_group(*country, first, group_id, 1) && !set_army_group(*country, second, group_id, 1), "commanders: a group holds no more armies than the limit");
+		r.check(set_army_group_orders(*country, group_id, false) && !country->get_army_groups().back().execute_orders && !set_army_group_orders(*country, group_id, false)
+				&& set_army_group_orders(*country, group_id, true) && country->get_army_groups().back().execute_orders,
+			"commanders: the orders of a group are switched on and off");
+		first.set_army_group_id(first_before);
+		second.set_army_group_id(second_before);
+		delete_army_group(im, *country, group_id);
+		war.marshal_max_attached = max_before;
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -4221,6 +4258,7 @@ namespace {
 		test_unlock_mechanics(r, *im);
 		test_regiment_upgrade(r, *im);
 		test_army_groups(r, *im);
+		test_group_limit(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);
 		test_fronts(r, *im);
