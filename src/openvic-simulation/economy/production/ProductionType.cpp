@@ -82,6 +82,13 @@ bool ProductionType::parse_scripts(DefinitionManager const& definition_manager) 
 	return ret;
 }
 
+void ProductionTypeManager::scale_rgo_output(GoodDefinition const& good, const fixed_point_t multiplier) {
+	ProductionType const* const production_type = good_to_rgo_production_type.at(good);
+	if (production_type != nullptr && multiplier > 0) {
+		const_cast<ProductionType*>(production_type)->base_output_quantity *= multiplier; // the registry owns it non-const
+	}
+}
+
 ProductionType const* ProductionTypeManager::get_good_to_rgo_production_type(GoodDefinition const& key) const {
 	return good_to_rgo_production_type.at(key);
 }

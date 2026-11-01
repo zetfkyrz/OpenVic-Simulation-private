@@ -69,7 +69,7 @@ namespace OpenVic {
 		GoodDefinition const& output_good;
 		const template_type_t template_type;
 		const pop_size_t base_workforce_size;
-		const fixed_point_t base_output_quantity;
+		fixed_point_t base_output_quantity; // not const: the multipliers of the defines are applied once after the loading (ProductionTypeManager::scale_rgo_output)
 
 		ProductionType(
 			GameRulesManager const& new_game_rules_manager,
@@ -162,6 +162,9 @@ namespace OpenVic {
 		[[nodiscard]] std::span<const FactoryRecipe> get_extra_recipes() const {
 			return extra_recipes;
 		}
+
+		// Multiplies the output of the resource gathering operation of the good (the base of the files is kept elsewhere as it is: once, after the loading)
+		void scale_rgo_output(GoodDefinition const& good, fixed_point_t multiplier);
 
 		bool parse_scripts(DefinitionManager const& definition_manager);
 	};

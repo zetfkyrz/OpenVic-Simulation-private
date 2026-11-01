@@ -1243,6 +1243,9 @@ bool Dataloader::load_defines(
 	}
 	{
 		OpenVicEconomyDefines const& openvic_economy = definition_manager.get_define_manager().get_openvic_defines().economy;
+		if (GoodDefinition const* const fish = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("fish")) {
+			definition_manager.get_economy_manager().get_production_type_manager().scale_rgo_output(*fish, openvic_economy.fish_output_multiplier);
+		}
 		definition_manager.get_economy_manager().get_building_type_manager().set_wood_rules(
 			openvic_economy.lumber_per_cement, fixed_point_t(openvic_economy.timber_per_cement_building)
 		);

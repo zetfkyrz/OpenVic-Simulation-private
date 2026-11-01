@@ -1402,6 +1402,17 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 		CountryInstance const& country = *countries[index];
 		fmt::println("POP_BUDGET country={} cash={:.0f} military_cut={} administration_cut={} education_cut={} social_cut={}", country.get_identifier(), static_cast<double>(country.get_cash_stockpile().load()),
 			country.get_was_military_budget_cut_yesterday(), country.get_was_administration_budget_cut_yesterday(), country.get_was_education_budget_cut_yesterday(), country.get_was_social_budget_cut_yesterday());
+		{
+			std::string tax;
+			for (Strata const& strata : definitions.get_pop_manager().get_stratas()) {
+				tax += fmt::format(" {}:taxable={:.0f}@slider{:.2f}", strata.get_identifier(), static_cast<double>(country.get_taxable_income_by_strata(strata)),
+					static_cast<double>(country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked()));
+			}
+			fmt::println("POP_INCOME country={} income_yesterday={:.0f} tax_efficiency={:.2f} military_unscaled={:.0f}@slider{:.2f} administration_unscaled={:.0f} education_unscaled={:.0f}{}",
+				country.get_identifier(), static_cast<double>(country.get_income_yesterday()), static_cast<double>(country.get_tax_efficiency_untracked()),
+				static_cast<double>(country.get_projected_military_spending_unscaled_by_slider_untracked()), static_cast<double>(country.get_military_spending_slider_value().get_value_untracked()),
+				static_cast<double>(country.get_projected_administration_spending_unscaled_by_slider_untracked()), static_cast<double>(country.get_projected_education_spending_unscaled_by_slider_untracked()), tax);
+		}
 		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
 			double life_sum = 0.0, size_sum = 0.0;
 			Pop const* sample = nullptr;

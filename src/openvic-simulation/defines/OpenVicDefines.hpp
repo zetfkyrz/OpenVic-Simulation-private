@@ -124,7 +124,7 @@ namespace OpenVic {
 	INT(MAX_RECRUITS_PER_MONTH, max_recruits_per_month, 3, 0, 1000) \
 	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
-	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(35, 100), 0, 1) \
+	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(20, 100), 0, 1) \
 	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \
 	RATE(GROWTH_FULL_LIFE_NEEDS, growth_full_life_needs, Rate(80, 100), 0, 1) \
 	/* The growth of a pop with no rule in ov_data/common/ov_population/growth.txt (the file has its own default; this one is used when there is none) */ \
@@ -149,7 +149,7 @@ namespace OpenVic {
 	RATE(HUNGER_LIFE_NEEDS_THRESHOLD, hunger_life_needs_threshold, Rate(50, 100), 0, 1) \
 	INT(HUNGER_DAYS_BEFORE_DEATH, hunger_days_before_death, 28, 1, 31) \
 	RATE(EMIGRATION_SHARE, emigration_share, Rate(1, 100), 0, 1) \
-	RATE(SURPLUS_DEATH_SHARE, surplus_death_share, Rate(99, 100), 0, 1) \
+	RATE(SURPLUS_DEATH_SHARE, surplus_death_share, Rate(80, 100), 0, 1) \
 	/* The surplus moves inside the country to provinces with free jobs of the same pop type, and abroad only when the whole country */ \
 	/* has no free jobs; at most this share of the free jobs of a destination is filled per month */ \
 	RATE(IMMIGRATION_FILL_SHARE, immigration_fill_share, Rate(50, 100), 0, 1) \
@@ -470,7 +470,9 @@ namespace OpenVic {
 	INT(TIMBER_PER_CEMENT_BUILDING, timber_per_cement_building, 100, 0, 100000) \
 	/* A factory is checked for expansion every this many months from its completion: it is expanded when its workplaces were filled */ \
 	/* (EXPANSION_MIN_EMPLOYMENT) in every one of the months since the last check */ \
-	INT(EXPANSION_CHECK_MONTHS, expansion_check_months, 3, 1, 120)
+	INT(EXPANSION_CHECK_MONTHS, expansion_check_months, 3, 1, 120) \
+	/* The output of the fishing grounds (the fish RGO) of the whole world is multiplied by this once after the loading: fish was always cheap, 1 = the game as it is */ \
+	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(2), 0.1, 20)
 	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(TERM_SHORT_DAYS, term_short_days, 1825, 30, 36500) \

@@ -3811,6 +3811,19 @@ namespace {
 		fs::remove_all(temp, ec);
 	}
 
+	// The fish of the whole world: the output of the fishing grounds is multiplied by FISH_OUTPUT_MULTIPLIER once after the loading (the files give 2.2)
+	void test_fish_output(Results& r, InstanceManager& im) {
+		DefinitionManager const& definitions = im.definition_manager;
+		GoodDefinition const* const fish = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("fish");
+		ProductionType const* const wharf = fish == nullptr ? nullptr : definitions.get_economy_manager().get_production_type_manager().get_good_to_rgo_production_type(*fish);
+		const fixed_point_t multiplier = definitions.get_define_manager().get_openvic_defines().economy.fish_output_multiplier;
+		r.check(wharf != nullptr && near(wharf->base_output_quantity, fixed_point_t(22) / 10 * multiplier, fixed_point_t(1) / 1000),
+			"fish: the output of the fishing grounds is the 2.2 of the files times FISH_OUTPUT_MULTIPLIER (twice by default)");
+		GoodDefinition const* const grain = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("grain");
+		ProductionType const* const farm = grain == nullptr ? nullptr : definitions.get_economy_manager().get_production_type_manager().get_good_to_rgo_production_type(*grain);
+		r.check(farm != nullptr && near(farm->base_output_quantity, fixed_point_t(18) / 10, fixed_point_t(1) / 1000), "fish: the other goods are not touched (grain stays at 1.8)");
+	}
+
 	// The growth comes once a month: the world total changes on the first days of the months only
 	void test_population_monthly(Results& r, InstanceManager& im) {
 		std::int64_t before = 0;
@@ -4258,6 +4271,7 @@ namespace {
 		}
 		test_population_start(r, *im);
 		test_population_growth(r, *im);
+		test_fish_output(r, *im);
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);
