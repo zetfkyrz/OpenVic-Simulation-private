@@ -1245,6 +1245,21 @@ bool Dataloader::load_defines(
 		ret = false;
 	}
 	{
+		// The buildings of the RGOs (ov_data/common/ov_rgo_buildings)
+		std::size_t rgo_building_count = 0;
+		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_rgo_buildings", ".txt", false)) {
+			const v2script::Parser parser = parse_defines(file);
+			if (parser.has_fatal_error() || parser.has_error()) {
+				spdlog::warn_s("The RGO buildings file {} is skipped, it has errors", file);
+				continue;
+			}
+			rgo_building_count += definition_manager.get_economy_manager().get_production_type_manager().get_rgo_buildings().load_file(
+				file.string(), parser.get_file_node(), definition_manager.get_economy_manager().get_good_definition_manager()
+			);
+		}
+		SPDLOG_INFO("Loaded {} buildings of the RGOs", rgo_building_count);
+	}
+	{
 		OpenVicEconomyDefines const& openvic_economy = definition_manager.get_define_manager().get_openvic_defines().economy;
 		if (GoodDefinition const* const fish = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("fish")) {
 			definition_manager.get_economy_manager().get_production_type_manager().scale_rgo_output(*fish, openvic_economy.fish_output_multiplier);

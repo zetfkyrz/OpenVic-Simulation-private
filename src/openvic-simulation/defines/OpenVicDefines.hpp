@@ -485,7 +485,18 @@ namespace OpenVic {
 	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(2), 0.1, 20) \
 	/* Every ship has this much lumber in its build cost for each piece of the rest of the cost (clipper_convoy, artillery...): man-of-war 25 pieces x 4 = 100 lumber, */ \
 	/* and it needs 1 % of it every month (NAVY_SUPPLY_DURABLE_SHARE). 0 = the ships need no lumber */ \
-	FIXED(SHIP_LUMBER_PER_PIECE, ship_lumber_per_piece, fixed_point_t(4), 0, 100)
+	FIXED(SHIP_LUMBER_PER_PIECE, ship_lumber_per_piece, fixed_point_t(4), 0, 100) \
+	/* The buildings of the RGOs (docs/RGO_BUILDINGS.md): a level gives the staff and the output of the RGO this much more; max level, days and lumber are the */ \
+	/* defaults of a building (its file may name its own); STOCK_STARTS: the lumber of this many starts the government keeps in the stockpile; STARTS_PER_MONTH */ \
+	/* is the most a country starts in a month. RGO_BUILDING_ENABLED 0 turns the buildings off */ \
+	INT(RGO_BUILDING_ENABLED, rgo_building_enabled, 1, 0, 1) \
+	RATE(RGO_BUILDING_STAFF_PER_LEVEL, rgo_building_staff_per_level, Rate(5, 100), 0, 10) \
+	RATE(RGO_BUILDING_OUTPUT_PER_LEVEL, rgo_building_output_per_level, Rate(5, 100), 0, 10) \
+	INT(RGO_BUILDING_MAX_LEVEL, rgo_building_max_level, 2, 0, 100) \
+	INT(RGO_BUILDING_BUILD_DAYS, rgo_building_build_days, 90, 1, 3650) \
+	FIXED(RGO_BUILDING_LUMBER, rgo_building_lumber, fixed_point_t(10), 0, 100000) \
+	INT(RGO_BUILDING_STOCK_STARTS, rgo_building_stock_starts, 4, 0, 1000) \
+	INT(RGO_BUILDING_STARTS_PER_MONTH, rgo_building_starts_per_month, 30, 0, 10000)
 	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(TERM_SHORT_DAYS, term_short_days, 1825, 30, 36500) \

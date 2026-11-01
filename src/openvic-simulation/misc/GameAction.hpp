@@ -92,6 +92,7 @@ X(set_mobilise, country_index_t, bool) \
 X(start_land_unit_recruitment, regiment_type_index_t, province_index_t, pop_id_in_province_t) \
 X(diplomatic_action, country_index_t, country_index_t, std::uint32_t) \
 X(build_factory, country_index_t, province_index_t, building_type_index_t) \
+X(build_rgo_building, country_index_t, province_index_t) \
 X(set_factory_open, country_index_t, province_index_t, building_type_index_t, bool) \
 X(set_factory_subsidised, country_index_t, province_index_t, building_type_index_t, bool) \
 X(set_all_factories_open, country_index_t, bool) \

@@ -2507,6 +2507,17 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		}
 	}
 
+	// The buildings of the RGOs: the government keeps the lumber of a few starts in the stockpile (the pops of the provinces and the AI start them)
+	if (openvic_economy_defines->rgo_building_enabled != 0 && openvic_economy_defines->rgo_building_stock_starts > 0 && good_definition_manager != nullptr
+		&& !owned_provinces.empty()) {
+		if (GoodDefinition const* const lumber = good_definition_manager->get_good_definition_by_identifier("lumber")) {
+			good_data_t& good_data = goods_data.at_index(lumber->index);
+			const fixed_point_t reserve = openvic_economy_defines->rgo_building_lumber * openvic_economy_defines->rgo_building_stock_starts;
+			good_data.government_needs += reserve;
+			good_data.max_government_consumption += reserve;
+		}
+	}
+
 	// Factories under construction use goods of the stockpile (the construction slider is the allocation to the
 	// investment fund, it does not slow the construction down)
 	{

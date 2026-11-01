@@ -13,6 +13,7 @@
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/economy/production/RgoBuilding.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/population/PopManager.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
@@ -282,6 +283,7 @@ namespace {
 }
 
 void CountryAI::monthly_update(InstanceManager& instance_manager) {
+	RgoBuildingData::monthly_update(instance_manager); // the pops of every country, the player's too
 	OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 	const Date today = instance_manager.get_today();
 

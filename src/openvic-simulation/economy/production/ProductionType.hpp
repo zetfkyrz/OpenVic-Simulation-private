@@ -8,6 +8,7 @@
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/population/PopSize.hpp"
+#include "openvic-simulation/economy/production/RgoBuilding.hpp"
 #include "openvic-simulation/scripts/ConditionScript.hpp"
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 #include "openvic-simulation/types/IndexedFlatMap.hpp"
@@ -111,6 +112,7 @@ namespace OpenVic {
 	struct ProductionTypeManager {
 	private:
 		memory::vector<FactoryRecipe> extra_recipes;
+		RgoBuildingData rgo_buildings;
 		IdentifierRegistry<ProductionType> IDENTIFIER_REGISTRY(production_type);
 		pop_sprite_t PROPERTY(rgo_owner_sprite, 0);
 		OV_IFLATMAP_PROPERTY(GoodDefinition, ProductionType const*, good_to_rgo_production_type);
@@ -159,6 +161,12 @@ namespace OpenVic {
 			std::span<ovdl::v2script::Parser const* const> extra_parsers = {}
 		);
 		// The production types of the files of ov_production_types: what a building can make besides its own type
+		[[nodiscard]] RgoBuildingData& get_rgo_buildings() {
+			return rgo_buildings;
+		}
+		[[nodiscard]] RgoBuildingData const& get_rgo_buildings() const {
+			return rgo_buildings;
+		}
 		[[nodiscard]] std::span<const FactoryRecipe> get_extra_recipes() const {
 			return extra_recipes;
 		}

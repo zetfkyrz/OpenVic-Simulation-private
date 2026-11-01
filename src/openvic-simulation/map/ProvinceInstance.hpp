@@ -120,6 +120,10 @@ namespace OpenVic {
 		ResourceGatheringOperation PROPERTY(rgo);
 		memory::FixedVector<BuildingInstance, province_building_index_t> buildings;
 	public:
+		// For the building of the RGO (RgoBuildingData::start_building), between ticks
+		ResourceGatheringOperation& get_mutable_rgo() {
+			return rgo;
+		}
 		constexpr TypedSpan<province_building_index_t, const BuildingInstance> get_buildings() const {
 			return buildings;
 		}

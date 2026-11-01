@@ -95,7 +95,22 @@ void ResourceGatheringOperation::initialise_rgo_size_multiplier() {
 		).floor();
 	}
 
-	max_employee_count_cache = (size_modifier * size_multiplier * base_workforce_size).floor<type_safe::underlying_type<pop_size_t>>();
+	max_employee_count_without_building = (size_modifier * size_multiplier * base_workforce_size).floor<type_safe::underlying_type<pop_size_t>>();
+	recalculate_max_employees();
+}
+
+void ResourceGatheringOperation::recalculate_max_employees() {
+	// The levels of the building give more workplaces (the unemployed can take them)
+	if (building_level <= 0 || economy_defines == nullptr) {
+		max_employee_count_cache = max_employee_count_without_building;
+		return;
+	}
+	const fixed_point_t staff = fixed_point_t::_1 + economy_defines->rgo_building_staff_per_level.fixed() * building_level;
+	max_employee_count_cache = (staff * max_employee_count_without_building).floor<type_safe::underlying_type<pop_size_t>>();
+}
+
+void ResourceGatheringOperation::begin_building(const std::int32_t days) {
+	building_days_left = std::max(1, days);
 }
 
 fixed_point_t ResourceGatheringOperation::calculate_size_modifier() const {
@@ -178,6 +193,10 @@ fixed_point_t ResourceGatheringOperation::calculate_subsistence(const fixed_poin
 
 void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusable_vector) {
 	ProvinceInstance& location = *location_ptr;
+	if (building_days_left > 0 && --building_days_left == 0) {
+		building_level++;
+		recalculate_max_employees();
+	}
 	if (production_type_nullable == nullptr || location.get_owner() == nullptr) {
 		output_quantity_yesterday = 0;
 		revenue_yesterday = 0;
@@ -384,6 +403,9 @@ fixed_point_t ResourceGatheringOperation::produce() {
 	auto const& good_effects = modifier_effect_cache.get_good_effects(production_type.output_good);
 	throughput_multiplier += location.get_modifier_effect_value(*good_effects.get_rgo_goods_throughput());
 	output_multiplier += location.get_modifier_effect_value(*good_effects.get_rgo_goods_output());
+	if (building_level > 0 && economy_defines != nullptr) {
+		output_multiplier += economy_defines->rgo_building_output_per_level.fixed() * building_level;
+	}
 
 	fixed_point_t throughput_from_workers = 0;
 	fixed_point_t output_from_workers = 1;

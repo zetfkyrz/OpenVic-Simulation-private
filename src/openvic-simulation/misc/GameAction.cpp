@@ -16,6 +16,7 @@
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
+#include "openvic-simulation/economy/production/RgoBuilding.hpp"
 #include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
@@ -556,6 +557,17 @@ namespace {
 		target.building_type = building_type;
 		return target;
 	}
+}
+
+bool GameActionManager::VariantVisitor::operator() (build_rgo_building_argument_t const& argument) const {
+	const auto [country_index, province_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr || province->get_owner() != &country) {
+		return false;
+	}
+	// The state pays: the lumber comes out of the national stockpile (which the treasury fills), the pops build by themselves every month
+	return RgoBuildingData::start_building(instance_manager, *province, rgo_builder_t::STATE) == rgo_build_result_t::OK;
 }
 
 bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t const& argument) const {

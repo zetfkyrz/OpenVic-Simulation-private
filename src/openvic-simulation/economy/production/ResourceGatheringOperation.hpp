@@ -14,6 +14,7 @@
 namespace OpenVic {
 	struct MarketInstance;
 	struct ModifierEffectCache;
+	struct OpenVicEconomyDefines;
 	struct OpenVicTradeDefines;
 	struct Pop;
 	struct PopType;
@@ -43,6 +44,11 @@ namespace OpenVic {
 		fixed_point_t PROPERTY_RW(size_multiplier);
 		memory::vector<Employee> SPAN_PROPERTY(employees);
 		pop_size_t PROPERTY(max_employee_count_cache, 0);
+		// The building of the RGO (RgoBuildingData): the levels built, and the days to the next level (0 = nothing is being built)
+		std::int32_t PROPERTY(building_level, 0);
+		std::int32_t PROPERTY(building_days_left, 0);
+		pop_size_t max_employee_count_without_building = 0;
+		void recalculate_max_employees();
 		pop_size_t PROPERTY(total_employees_count_cache, 0);
 		pop_size_t PROPERTY(total_paid_employees_count_cache, 0);
 		fixed_point_t PROPERTY(total_owner_income_cache);
@@ -53,6 +59,7 @@ namespace OpenVic {
 		> SPAN_PROPERTY(employee_count_per_type_cache);
 
 		static inline OpenVicTradeDefines const* trade_defines = nullptr;
+		static inline OpenVicEconomyDefines const* economy_defines = nullptr;
 		// The part of the output that the workers keep
 		fixed_point_t calculate_subsistence(const fixed_point_t output) const;
 
@@ -78,6 +85,11 @@ namespace OpenVic {
 		static void set_openvic_trade_defines(OpenVicTradeDefines const& defines) {
 			trade_defines = &defines;
 		}
+		static void set_openvic_economy_defines(OpenVicEconomyDefines const& defines) {
+			economy_defines = &defines;
+		}
+		// Starts the next level of the building (RgoBuildingData::start_building checks everything and pays); the days go by in the tick of the RGO
+		void begin_building(std::int32_t days);
 		// How much of the subsistence pool the pop may eat today (its share of the employees of yesterday)
 		fixed_point_t get_subsistence_entitlement(Pop const& pop) const;
 		// The good of the pool (the output of the RGO)

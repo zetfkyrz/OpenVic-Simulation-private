@@ -33,6 +33,7 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Companies.hpp>
+#include <openvic-simulation/economy/production/RgoBuilding.hpp>
 #include <openvic-simulation/population/PopulationGrowth.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
 #include <openvic-simulation/research/ArmyResearch.hpp>
@@ -3834,6 +3835,116 @@ namespace {
 		r.check(over_the_top == 0 && player_changed == 0, "AI budget: the taxes stay under BUDGET_MAX_TAX and the sliders of a player are not touched");
 	}
 
+	// The buildings of the RGOs (RgoBuildingData, ov_data/common/ov_rgo_buildings): the goods, the files, the levels, the payment, the staff
+	void test_rgo_buildings(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		DefinitionManager const& definitions = im.definition_manager;
+		OpenVicEconomyDefines const& defines = definitions.get_define_manager().get_openvic_defines().economy;
+		GoodDefinitionManager const& goods = definitions.get_economy_manager().get_good_definition_manager();
+		RgoBuildingData const& data = definitions.get_economy_manager().get_production_type_manager().get_rgo_buildings();
+		const auto building_of = [&](std::string_view good_identifier) -> std::string {
+			GoodDefinition const* const good = goods.get_good_definition_by_identifier(good_identifier);
+			RgoBuildingType const* const type = good == nullptr ? nullptr : data.get_type_for_good(*good);
+			return type == nullptr ? std::string {} : std::string { type->identifier };
+		};
+		if (data.get_types().empty()) {
+			fmt::println("TEST INFO RGO buildings: no ov_data folder, the buildings are not checked");
+		} else {
+			r.check(building_of("fish") == "fishing_harbour" && building_of("cattle") == "farm" && building_of("wool") == "farm" && building_of("grain") == "harvest_field"
+					&& building_of("tea") == "plantation" && building_of("coffee") == "plantation" && building_of("fruit") == "plantation",
+				"RGO buildings: the fishing harbour is for fish, the farm for cattle and wool, the harvest field for grain, the plantation for tea, coffee and fruit");
+			std::size_t rgo_goods = 0, without_building = 0;
+			for (ProductionType const& production_type : definitions.get_economy_manager().get_production_type_manager().get_production_types()) {
+				if (production_type.template_type == ProductionType::template_type_t::RGO) {
+					rgo_goods++;
+					without_building += building_of(production_type.output_good.get_identifier()).empty();
+				}
+			}
+			r.check(rgo_goods > 0 && without_building == 0, "RGO buildings: every good that an RGO makes has a building", fmt::format("{} RGO goods, {} without a building", rgo_goods, without_building));
+		}
+
+		// The files: a new building and the good of a later file, the broken ones are skipped
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_rgo_buildings";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		write_test_file(temp / "good.txt", "tea_house = { goods = { tea } max_level = 4 build_days = 30 lumber = 3 }\nsalt_pan = { goods = { fish no_such_good } }\n");
+		write_test_file(temp / "bad.txt", "nothing = { }\nnothing_either = { goods = { no_such_good } }\nwrong = { goods = { tea } max_level = -1 }\n");
+		RgoBuildingData fresh;
+		const ovdl::v2script::Parser good = Dataloader::parse_defines(temp / "good.txt");
+		const ovdl::v2script::Parser bad = Dataloader::parse_defines(temp / "bad.txt");
+		const std::size_t good_count = fresh.load_file("good.txt", good.get_file_node(), goods);
+		const std::size_t bad_count = fresh.load_file("bad.txt", bad.get_file_node(), goods);
+		GoodDefinition const* const tea = goods.get_good_definition_by_identifier("tea");
+		RgoBuildingType const* const tea_house = tea == nullptr ? nullptr : fresh.get_type_for_good(*tea);
+		r.check(good_count == 2 && bad_count == 0 && tea_house != nullptr && tea_house->max_level == 4 && tea_house->build_days == 30 && tea_house->lumber == fixed_point_t(3),
+			"RGO buildings: a new building comes with a file with its own level, days and lumber; buildings with no goods or errors are skipped");
+		fs::remove_all(temp, ec);
+
+		// The levels: the maximum is 2 and the technologies open the next ones
+		CountryInstance* player_like = nullptr;
+		ProvinceInstance* target = nullptr;
+		for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+			ResourceGatheringOperation const& rgo = province.get_mutable_rgo();
+			if (province.get_owner() != nullptr && rgo.is_valid() && rgo.get_building_level() == 0 && rgo.get_building_days_left() == 0
+				&& rgo.get_max_employee_count_cache() >= 100 && !building_of(rgo.get_production_type_nullable()->output_good.get_identifier()).empty()) {
+				target = &province;
+				player_like = province.get_owner();
+				break;
+			}
+		}
+		if (target == nullptr || player_like == nullptr) {
+			r.check(false, "RGO buildings: a province with an RGO was found for the checks");
+			return;
+		}
+		ResourceGatheringOperation& rgo = target->get_mutable_rgo();
+		RgoBuildingType const* const type = data.get_type_for_good(rgo.get_production_type_nullable()->output_good);
+		const std::int32_t default_max = RgoBuildingData::get_max_level(*type, defines, *player_like);
+		const std::string key = "rgo_level:" + std::string { type->identifier } + ":" + std::to_string(default_max + 1);
+		const bool granted = player_like->grant_unlock(key);
+		const std::int32_t opened_max = RgoBuildingData::get_max_level(*type, defines, *player_like);
+		player_like->revoke_unlock(key);
+		r.check(default_max == defines.rgo_building_max_level && granted && opened_max == default_max + 1 && RgoBuildingData::get_max_level(*type, defines, *player_like) == default_max,
+			"RGO buildings: the maximum level is RGO_BUILDING_MAX_LEVEL (2), a technology key opens the next level, taking it away closes it");
+
+		// A start: no lumber in the stockpile - no building; with it the state or the pops pay, a second start waits for the first
+		GoodDefinition const* const lumber = goods.get_good_definition_by_identifier("lumber");
+		CountryInstance::good_data_t& lumber_data = player_like->get_good_data(*lumber);
+		lumber_data.stockpile_amount = fixed_point_t::_0;
+		const rgo_build_result_t without_lumber = RgoBuildingData::start_building(im, *target, rgo_builder_t::STATE);
+		lumber_data.stockpile_amount = fixed_point_t(100);
+		const pop_size_t cap_before = rgo.get_max_employee_count_cache();
+		fixed_point_t pops_cash_before = fixed_point_t::_0;
+		for (Pop const& pop : target->get_pops()) {
+			pops_cash_before += pop.get_cash().get_copy_of_value();
+		}
+		const fixed_point_t treasury_before = player_like->get_cash_stockpile().load();
+		const rgo_build_result_t started = RgoBuildingData::start_building(im, *target, rgo_builder_t::POPS);
+		fixed_point_t pops_cash_after = fixed_point_t::_0;
+		for (Pop const& pop : target->get_pops()) {
+			pops_cash_after += pop.get_cash().get_copy_of_value();
+		}
+		const fixed_point_t paid = pops_cash_before - pops_cash_after;
+		r.check(without_lumber == rgo_build_result_t::NO_LUMBER && (started == rgo_build_result_t::OK || started == rgo_build_result_t::NO_MONEY),
+			"RGO buildings: without lumber in the national stockpile nothing is built");
+		if (started != rgo_build_result_t::OK) {
+			// the pops of this province are too poor: the state pays
+			r.check(RgoBuildingData::start_building(im, *target, rgo_builder_t::STATE) == rgo_build_result_t::OK, "RGO buildings: the state can start a level when the pops are too poor");
+		} else {
+			r.check(paid > fixed_point_t::_0 && player_like->get_cash_stockpile().load() - treasury_before == paid && lumber_data.stockpile_amount == fixed_point_t(100) - RgoBuildingData::get_lumber(*type, defines),
+				"RGO buildings: the pops pay the price of the lumber to the treasury and the lumber leaves the stockpile",
+				fmt::format("paid {} treasury +{} lumber left {}", static_cast<double>(paid), static_cast<double>(player_like->get_cash_stockpile().load() - treasury_before), static_cast<double>(lumber_data.stockpile_amount)));
+		}
+		r.check(RgoBuildingData::start_building(im, *target, rgo_builder_t::STATE) == rgo_build_result_t::BUSY && rgo.get_building_days_left() == RgoBuildingData::get_build_days(*type, defines),
+			"RGO buildings: a level takes RGO_BUILDING_BUILD_DAYS (90) days and the next one waits for it");
+		for (int day = 0; day < defines.rgo_building_build_days + 2; ++day) {
+			im.force_tick_and_update();
+		}
+		const pop_size_t cap_after = rgo.get_max_employee_count_cache();
+		const double expected_cap = static_cast<double>(type_safe::get(cap_before)) * (1.0 + static_cast<double>(defines.rgo_building_staff_per_level.fixed()));
+		r.check(rgo.get_building_level() >= 1 && type_safe::get(cap_after) > type_safe::get(cap_before) && static_cast<double>(type_safe::get(cap_after)) >= expected_cap - 1.0,
+			"RGO buildings: after the days the level is built and the RGO has 5 % more workplaces", fmt::format("level {} cap {} -> {} (expected {})", rgo.get_building_level(), type_safe::get(cap_before), type_safe::get(cap_after), expected_cap));
+	}
+
 	// The lumber of the ships (SHIP_LUMBER_PER_PIECE): in the build cost of every ship, and 1 % of it (the navy durable share) is the supply of a month
 	void test_ship_lumber(Results& r, InstanceManager& im) {
 		DefinitionManager const& definitions = im.definition_manager;
@@ -4511,6 +4622,7 @@ namespace {
 		test_trade_and_hunger(r, *im);
 		test_population_monthly(r, *im); // ticks days too
 		test_ai_budget(r, *im);
+		test_rgo_buildings(r, *im); // ticks days too
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();
 

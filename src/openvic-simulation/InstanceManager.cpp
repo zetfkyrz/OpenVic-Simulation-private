@@ -179,6 +179,7 @@ InstanceManager::InstanceManager(
 	SupplyContext::set(country_instance_manager, war_manager);
 	Pop::set_openvic_population_defines(definition_manager.get_define_manager().get_openvic_defines().population);
 	ResourceGatheringOperation::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
+	ResourceGatheringOperation::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 }
 
 void InstanceManager::set_gamestate_needs_update() {

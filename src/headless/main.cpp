@@ -1440,6 +1440,36 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 			fmt::println("POP_NEEDS country={} type={} people={:.0f} life_needs_avg={:.3f} life_needs_goods={}", country.get_identifier(), pop_type.get_identifier(), size_sum, life_sum / size_sum, goods);
 		}
 	}
+	{
+		// The buildings of the RGOs of the world (docs/RGO_BUILDINGS.md): how many provinces have each level, how many are being built
+		struct counts_t {
+			std::size_t provinces = 0, building = 0, jobs_without = 0, jobs_with = 0;
+			std::map<std::int32_t, std::size_t> levels;
+		};
+		std::map<std::string, counts_t> by_type;
+		RgoBuildingData const& rgo_buildings = definitions.get_economy_manager().get_production_type_manager().get_rgo_buildings();
+		for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+			ResourceGatheringOperation const& rgo = province.get_rgo();
+			if (!rgo.is_valid() || province.get_owner() == nullptr) {
+				continue;
+			}
+			RgoBuildingType const* const type = rgo_buildings.get_type_for_good(rgo.get_production_type_nullable()->output_good);
+			if (type == nullptr) {
+				continue;
+			}
+			counts_t& counts = by_type[std::string(type->identifier)];
+			counts.provinces++;
+			counts.building += rgo.get_building_days_left() > 0;
+			counts.levels[rgo.get_building_level()]++;
+		}
+		for (auto const& [name, counts] : by_type) {
+			std::string levels;
+			for (auto const& [level, count] : counts.levels) {
+				levels += fmt::format(" level{}={}", level, count);
+			}
+			fmt::println("RGO_BUILDINGS type={} provinces={} building_now={}{}", name, counts.provinces, counts.building, levels);
+		}
+	}
 	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
 
 	std::int64_t history_total = 0, instance_total = 0;
