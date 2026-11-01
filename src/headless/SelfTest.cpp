@@ -3834,6 +3834,32 @@ namespace {
 		r.check(over_the_top == 0 && player_changed == 0, "AI budget: the taxes stay under BUDGET_MAX_TAX and the sliders of a player are not touched");
 	}
 
+	// The lumber of the ships (SHIP_LUMBER_PER_PIECE): in the build cost of every ship, and 1 % of it (the navy durable share) is the supply of a month
+	void test_ship_lumber(Results& r, InstanceManager& im) {
+		DefinitionManager const& definitions = im.definition_manager;
+		GoodDefinition const* const lumber = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("lumber");
+		const fixed_point_t per_piece = definitions.get_define_manager().get_openvic_defines().economy.ship_lumber_per_piece;
+		std::size_t ships = 0, with_lumber = 0, right_amount = 0, in_supply = 0;
+		for (ShipType const& ship_type : definitions.get_military_manager().get_unit_type_manager().get_ship_types()) {
+			ships++;
+			fixed_point_t pieces = fixed_point_t::_0, lumber_cost = fixed_point_t::_0;
+			for (auto const& [good, quantity] : ship_type.get_build_cost()) {
+				if (good == lumber) {
+					lumber_cost = quantity;
+				} else {
+					pieces += quantity;
+				}
+			}
+			with_lumber += lumber_cost > fixed_point_t::_0;
+			right_amount += near(lumber_cost, pieces * per_piece, fixed_point_t(1) / 100);
+			for (auto const& item : ship_type.get_supply_items()) {
+				in_supply += item.good == lumber && !item.consumable && near(item.construction_amount, lumber_cost, fixed_point_t(1) / 100);
+			}
+		}
+		r.check(lumber != nullptr && ships > 0 && with_lumber == ships && right_amount == ships, "ship lumber: every ship has the lumber of SHIP_LUMBER_PER_PIECE for each piece of its cost in the build cost", fmt::format("{} ships, {} with lumber, {} right", ships, with_lumber, right_amount));
+		r.check(in_supply == ships, "ship lumber: the lumber is a durable supply item of the ship (its monthly share is NAVY_SUPPLY_DURABLE_SHARE of the build amount)");
+	}
+
 	// The fish of the whole world: the output of the fishing grounds is multiplied by FISH_OUTPUT_MULTIPLIER once after the loading (the files give 2.2)
 	void test_fish_output(Results& r, InstanceManager& im) {
 		DefinitionManager const& definitions = im.definition_manager;
@@ -4295,6 +4321,7 @@ namespace {
 		test_population_start(r, *im);
 		test_population_growth(r, *im);
 		test_fish_output(r, *im);
+		test_ship_lumber(r, *im);
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);

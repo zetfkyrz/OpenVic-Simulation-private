@@ -482,7 +482,10 @@ namespace OpenVic {
 	/* (EXPANSION_MIN_EMPLOYMENT) in every one of the months since the last check */ \
 	INT(EXPANSION_CHECK_MONTHS, expansion_check_months, 3, 1, 120) \
 	/* The output of the fishing grounds (the fish RGO) of the whole world is multiplied by this once after the loading: fish was always cheap, 1 = the game as it is */ \
-	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(2), 0.1, 20)
+	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(2), 0.1, 20) \
+	/* Every ship has this much lumber in its build cost for each piece of the rest of the cost (clipper_convoy, artillery...): man-of-war 25 pieces x 4 = 100 lumber, */ \
+	/* and it needs 1 % of it every month (NAVY_SUPPLY_DURABLE_SHARE). 0 = the ships need no lumber */ \
+	FIXED(SHIP_LUMBER_PER_PIECE, ship_lumber_per_piece, fixed_point_t(4), 0, 100)
 	// Credits (docs/CREDITS.md). Lengths and delays are in days; the delay is the time before the first payment.
 #define OV_CREDIT_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(TERM_SHORT_DAYS, term_short_days, 1825, 30, 36500) \

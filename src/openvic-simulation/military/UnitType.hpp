@@ -96,6 +96,10 @@ namespace OpenVic {
 		const Timespan build_time;
 		const fixed_point_t supply_consumption;
 
+		// Wood in the build of a ship (ov_economy SHIP_LUMBER_PER_PIECE): the lumber is in the construction cost and so in the monthly supply (NAVY_SUPPLY_DURABLE_SHARE
+		// of the construction cost, 1 % by default, a month)
+		void add_construction_good(GoodDefinition const& good, fixed_point_t quantity);
+
 		UnitType(UnitType&&) = default;
 	};
 
@@ -218,6 +222,8 @@ namespace OpenVic {
 	public:
 		void reserve_all_unit_types(size_t size);
 		void lock_all_unit_types();
+		// Adds to the build cost of every ship `per_piece` of the good for each piece of the cost it has now (once, after the loading)
+		void add_ship_construction_good(GoodDefinition const& good, fixed_point_t per_piece);
 
 		bool add_regiment_type(
 			std::string_view identifier, UnitType::unit_type_args_t& unit_args,

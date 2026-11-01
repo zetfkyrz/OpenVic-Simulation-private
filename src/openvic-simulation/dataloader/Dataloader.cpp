@@ -565,6 +565,9 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 	);
 
 	unit_type_manager.lock_all_unit_types();
+	if (GoodDefinition const* const lumber = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("lumber")) {
+		unit_type_manager.add_ship_construction_good(*lumber, definition_manager.get_define_manager().get_openvic_defines().economy.ship_lumber_per_piece);
+	}
 
 	if (!unit_type_manager.generate_modifiers(definition_manager.get_modifier_manager())) {
 		spdlog::critical_s("Failed to generate unit-based modifiers!");

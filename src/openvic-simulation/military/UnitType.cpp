@@ -113,6 +113,37 @@ void UnitTypeManager::reserve_all_unit_types(size_t size) {
 	reserve_more_ship_types(size);
 }
 
+void UnitType::add_construction_good(GoodDefinition const& good, const fixed_point_t quantity) {
+	if (quantity <= fixed_point_t::_0) {
+		return;
+	}
+	if (auto it = build_cost.find(&good); it != build_cost.end()) {
+		it.value() += quantity;
+	} else {
+		build_cost.emplace(&good, quantity);
+	}
+	for (supply_item_t& item : supply_items) {
+		if (item.good == &good) {
+			item.construction_amount += quantity;
+			return;
+		}
+	}
+	supply_items.push_back({ &good, quantity, false, false });
+}
+
+void UnitTypeManager::add_ship_construction_good(GoodDefinition const& good, const fixed_point_t per_piece) {
+	if (per_piece <= fixed_point_t::_0) {
+		return;
+	}
+	for (ShipType const& ship_type : get_ship_types()) {
+		fixed_point_t pieces = fixed_point_t::_0;
+		for (auto const& [cost_good, quantity] : ship_type.get_build_cost()) {
+			pieces += quantity;
+		}
+		const_cast<ShipType&>(ship_type).add_construction_good(good, pieces * per_piece); // the registry owns the types non-const
+	}
+}
+
 void UnitTypeManager::lock_all_unit_types() {
 	unit_types.lock();
 	regiment_types.lock();
