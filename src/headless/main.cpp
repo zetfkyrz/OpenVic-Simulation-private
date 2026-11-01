@@ -1007,6 +1007,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
 	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
 	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
+	fmt::println(file, "    --dump-front : Stage a war of two neighbours (the AI plans for both), run 60 days and print the FRONT lines: the fronts, the armies on them, the provinces that changed hands.");
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
@@ -1220,7 +1221,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false, dump_front = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1542,6 +1543,175 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 		}
 	}
 	fmt::println("POP_HISTORY date={} instance_total={} history_total={} equal={}", instance_manager.get_today(), instance_total, history_total, instance_total == history_total);
+}
+
+// --dump-front: a war of two neighbouring countries with armies, run for -e days (60 by default); every 10 days the FRONT lines show the fronts of both,
+// the armies assigned to them and where they stand, and at the end who holds which provinces. What works and what does not is read from these lines
+// (docs/COMMAND.md, B3).
+static std::size_t military_manager_palette_size(InstanceManager& instance_manager) {
+	return instance_manager.definition_manager.get_military_manager().get_command_palette().size();
+}
+
+static void run_front_dump(InstanceManager& instance_manager) {
+	WarManager& war_manager = instance_manager.get_war_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	CountryInstance* side_a = nullptr;
+	CountryInstance* side_b = nullptr;
+	// The pair of civilised countries with armies that has the longest land border (the most provinces of the first that touch the second)
+	std::size_t longest_border = 0;
+	for (CountryInstance& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!candidate.exists() || candidate.is_rebel_country() || candidate.get_armies().size() < 3 || !candidate.is_civilised()) {
+			continue;
+		}
+		std::unordered_map<CountryInstance*, std::size_t> border_counts;
+		for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
+					continue;
+				}
+				CountryInstance* const neighbour = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_owner();
+				if (neighbour != nullptr && neighbour != &candidate) {
+					border_counts[neighbour]++;
+				}
+			}
+		}
+		for (auto const& [other, count] : border_counts) {
+			if (count > longest_border && other->exists() && !other->is_rebel_country() && other->get_armies().size() >= 3 && other->is_civilised()
+				&& war_manager.can_declare_war(candidate, *other, instance_manager.get_today())) {
+				longest_border = count;
+				side_a = &candidate;
+				side_b = other;
+			}
+		}
+	}
+	// OV_FRONT_PAIR=FRA,PRU (the tags of the two countries) and OV_FRONT_DAYS=120 choose the war and its length
+	if (const char* const pair = std::getenv("OV_FRONT_PAIR"); pair != nullptr) {
+		const std::string_view text { pair };
+		const std::size_t comma = text.find(',');
+		if (comma != std::string_view::npos) {
+			CountryInstance* const first = instance_manager.get_country_instance_manager().get_country_instance_by_identifier(text.substr(0, comma));
+			CountryInstance* const second = instance_manager.get_country_instance_manager().get_country_instance_by_identifier(text.substr(comma + 1));
+			if (first != nullptr && second != nullptr) {
+				side_a = first;
+				side_b = second;
+			}
+		}
+	}
+	if (side_a == nullptr) {
+		fmt::println("FRONT FAIL no two neighbours with armies that can fight");
+		return;
+	}
+	fmt::println("FRONT war {} vs {}: armies {} and {}", side_a->get_identifier(), side_b->get_identifier(), side_a->get_armies().size(), side_b->get_armies().size());
+	if (!war_manager.declare_war(instance_manager, *side_a, *side_b)) {
+		fmt::println("FRONT FAIL the war was not declared");
+		return;
+	}
+	// OV_FRONT_GROUP=1: the first country is a country of a player (no automatic plan); his field marshal holds a front against the enemy and
+	// runs the plan; OV_FRONT_STOP=<day> stops the plan on that day (the check mark of the panel)
+	std::uint32_t scenario_group_id = 0;
+	const bool group_scenario = std::getenv("OV_FRONT_GROUP") != nullptr;
+	if (group_scenario) {
+		side_a->set_ai(false);
+		const std::size_t palette_size = military_manager_palette_size(instance_manager);
+		create_army_group(*side_a, palette_size);
+		scenario_group_id = side_a->get_army_groups().back().id;
+		const std::uint32_t max_attached = get_marshal_max_attached(instance_manager, *side_a);
+		for (ArmyInstance& army : side_a->get_armies()) {
+			set_army_group(*side_a, army, scenario_group_id, max_attached);
+		}
+		for (LeaderInstance const& leader : side_a->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(instance_manager, *side_a, scenario_group_id, leader.unique_id)) {
+				break;
+			}
+		}
+		const std::uint32_t front_id = war_manager.create_front(instance_manager, *side_a, side_b);
+		// one after the other: the order in which the arguments of a call are evaluated is not defined
+		const bool held = set_army_group_front(instance_manager, *side_a, scenario_group_id, front_id, true);
+		const bool planned = set_army_group_plan(instance_manager, *side_a, scenario_group_id, front_id, 0);
+		const bool started = set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, true);
+		fmt::println(
+			"FRONT_GROUP setup group={} marshal={} front={} held={} plan={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0, front_id,
+			held, planned, started
+		);
+	}
+	const std::size_t stop_day = std::getenv("OV_FRONT_STOP") != nullptr ? static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_STOP")))) : 0;
+	const std::size_t days = std::getenv("OV_FRONT_DAYS") != nullptr ? static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_DAYS")))) : 60;
+	const auto count_held = [&](CountryInstance const& owner, CountryInstance const& holder) -> std::size_t {
+		std::size_t count = 0;
+		for (ProvinceInstance const* province : owner.get_owned_provinces()) {
+			count += province->get_controller() == &holder;
+		}
+		return count;
+	};
+	const auto print_state = [&](std::size_t day) -> void {
+		for (CountryInstance* const side : { side_a, side_b }) {
+			std::size_t fronts = 0;
+			for (Front const& front : war_manager.get_fronts()) {
+				if (front.country != side) {
+					continue;
+				}
+				fronts++;
+				std::size_t divisions = 0;
+				std::size_t moving = 0;
+				for (const unique_id_t army_id : front.army_ids) {
+					UnitInstanceGroup const* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+					if (group != nullptr) {
+						moving += group->is_moving();
+						divisions += static_cast<ArmyInstance const*>(group)->get_divisions().size();
+					}
+				}
+				fmt::println(
+					"FRONT_LINE day={} country={} id={} enemy={} mode={} provinces={} armies={} divisions={} moving={}", day, side->get_identifier(), front.id,
+					front.enemy != nullptr ? front.enemy->get_identifier() : std::string_view { "-" }, front.mode == Front::mode_t::ATTACK ? "attack" : "defend",
+					front.provinces.size(), front.army_ids.size(), divisions, moving
+				);
+			}
+			std::size_t assigned_armies = 0;
+			for (ArmyInstance const& army : side->get_armies()) {
+				for (Front const& front : war_manager.get_fronts()) {
+					if (front.country == side && std::find(front.army_ids.begin(), front.army_ids.end(), army.unique_id) != front.army_ids.end()) {
+						assigned_armies++;
+						break;
+					}
+				}
+			}
+			fmt::println(
+				"FRONT_COUNTRY day={} country={} fronts={} armies={} on_fronts={} auto_plan={} at_war={}", day, side->get_identifier(), fronts, side->get_armies().size(),
+				assigned_armies, war_manager.is_auto_plan_enabled(*side) ? 1 : 0, side->is_at_war() ? 1 : 0
+			);
+		}
+		if (group_scenario && !side_a->get_army_groups().empty()) {
+			ArmyGroup const& group = side_a->get_army_groups().back();
+			Front const* const plan_front = war_manager.get_front_by_id(group.plan_front_id);
+			std::size_t group_armies = 0;
+			std::size_t group_moving = 0;
+			for (ArmyInstance const& army : side_a->get_armies()) {
+				if (army.get_army_group_id() == group.id) {
+					group_armies++;
+					group_moving += army.is_moving();
+				}
+			}
+			fmt::println(
+				"FRONT_GROUP day={} group={} plan_active={} plan_mode={} front_commanded={} group_armies={} moving={} front_armies={}", day, group.id, group.plan_active ? 1 : 0,
+				group.plan_mode, plan_front != nullptr && war_manager.is_front_commanded(*plan_front) ? 1 : 0, group_armies, group_moving, plan_front != nullptr ? plan_front->army_ids.size() : 0
+			);
+		}
+		fmt::println(
+			"FRONT_HELD day={} {}_holds_of_{}={} {}_holds_of_{}={}", day, side_a->get_identifier(), side_b->get_identifier(), count_held(*side_b, *side_a),
+			side_b->get_identifier(), side_a->get_identifier(), count_held(*side_a, *side_b)
+		);
+	};
+	print_state(0);
+	for (std::size_t day = 1; day <= days; ++day) {
+		if (group_scenario && day == stop_day) {
+			fmt::println("FRONT_GROUP stop plan={}", set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, false));
+		}
+		instance_manager.force_tick_and_update();
+		if (day % 10 == 0) {
+			print_state(day);
+		}
+	}
+	fmt::println("FRONT_SUMMARY days={} fronts_total={}", days, war_manager.get_fronts().size());
 }
 
 // --dump-command: the command of the field marshals (B1): COMMAND_PALETTE (the colours), COMMAND_LIMIT (the base, the limit of the defines) and for
@@ -1944,6 +2114,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_command) {
 		run_command_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_front) {
+		run_front_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -2185,6 +2358,8 @@ int main(int argc, char const* argv[]) {
 			dump_techtree = true;
 		} else if (strcmp(arg, "--dump-company") == 0) {
 			dump_companies = true;
+		} else if (strcmp(arg, "--dump-front") == 0) {
+			dump_front = true;
 		} else if (strcmp(arg, "--dump-command") == 0) {
 			dump_command = true;
 		} else if (strcmp(arg, "--dump-pop") == 0) {

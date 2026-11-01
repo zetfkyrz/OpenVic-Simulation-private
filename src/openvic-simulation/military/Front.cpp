@@ -4,6 +4,7 @@
 #include "War.hpp"
 
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
@@ -176,6 +177,40 @@ bool WarManager::toggle_front_province(CountryInstance const& country, const std
 	// A hand drawn line is no longer the generated border
 	front->enemy = nullptr;
 	return true;
+}
+
+bool WarManager::set_front_group(CountryInstance const& country, const std::uint32_t front_id, const std::uint32_t group_id) {
+	Front* const front = find_front(front_id);
+	if (front == nullptr || front->country != &country || front->group_id == group_id) {
+		return false;
+	}
+	if (group_id != 0 && country.find_army_group(group_id) == nullptr) {
+		return false;
+	}
+	front->group_id = group_id;
+	return true;
+}
+
+bool WarManager::is_front_commanded(Front const& front) const {
+	if (front.group_id == 0) {
+		return true;
+	}
+	ArmyGroup const* const group = front.country->find_army_group(front.group_id);
+	return group != nullptr && group->plan_active && group->plan_front_id == front.id;
+}
+
+void WarManager::stop_front_armies(InstanceManager& instance_manager, const std::uint32_t front_id) {
+	Front const* const front = get_front_by_id(front_id);
+	if (front == nullptr) {
+		return;
+	}
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	for (const unique_id_t army_id : front->army_ids) {
+		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		if (group != nullptr && group->branch == unit_branch_t::LAND && !group->is_in_combat()) {
+			group->clear_path();
+		}
+	}
 }
 
 bool WarManager::set_front_mode(CountryInstance const& country, const std::uint32_t front_id, const Front::mode_t mode) {
@@ -357,7 +392,7 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 
 		// Remove the generated fronts of enemies that are gone
 		std::erase_if(fronts, [&country](Front const& front) -> bool {
-			return front.country == &country && front.enemy != nullptr && !country.is_at_war_with(*front.enemy);
+			return front.country == &country && front.enemy != nullptr && front.group_id == 0 && !country.is_at_war_with(*front.enemy);
 		});
 
 		std::vector<std::uint32_t> own_fronts; // ids, the fronts vector may reallocate
@@ -368,6 +403,11 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 					front = &candidate;
 					break;
 				}
+			}
+
+			// A front that a field marshal holds is his: the automatic plan leaves its line, its mode and its armies alone
+			if (front != nullptr && front->group_id != 0) {
+				continue;
 			}
 
 			memory::vector<ProvinceInstance*> line = build_border_line(instance_manager.get_map_instance(), country, enemy);
@@ -425,6 +465,9 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 	});
 
 	for (Front& front : fronts) {
+		if (!is_front_commanded(front)) {
+			continue;
+		}
 		spread_front_divisions(instance_manager, front);
 		order_front_armies(instance_manager, front);
 	}

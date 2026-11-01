@@ -10,6 +10,7 @@
 #include "openvic-simulation/military/Leader.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
 #include "openvic-simulation/military/MilitaryManager.hpp"
+#include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/modifier/ModifierManager.hpp"
@@ -97,6 +98,109 @@ bool OpenVic::create_army_group(CountryInstance& country, const std::size_t pale
 	return true;
 }
 
+namespace {
+	ArmyGroup* find_mutable_group(CountryInstance& country, const std::uint32_t group_id) {
+		for (ArmyGroup& group : country.get_mutable_army_groups()) {
+			if (group.id == group_id) {
+				return &group;
+			}
+		}
+		return nullptr;
+	}
+
+	// The plan stops: the armies of its front stop where they are
+	void stop_plan(InstanceManager& instance_manager, ArmyGroup& group) {
+		if (group.plan_active) {
+			instance_manager.get_war_manager().stop_front_armies(instance_manager, group.plan_front_id);
+			group.plan_active = false;
+		}
+	}
+
+	// The fronts that name a group which is gone are nobody's again
+	void release_orphan_fronts(InstanceManager& instance_manager, CountryInstance const& country) {
+		WarManager& war_manager = instance_manager.get_war_manager();
+		std::vector<std::uint32_t> orphans;
+		for (Front const& front : war_manager.get_fronts()) {
+			if (front.country == &country && front.group_id != 0 && country.find_army_group(front.group_id) == nullptr) {
+				orphans.push_back(front.id);
+			}
+		}
+		for (const std::uint32_t front_id : orphans) {
+			war_manager.set_front_group(country, front_id, 0);
+		}
+	}
+}
+
+bool OpenVic::set_army_group_front(
+	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const std::uint32_t front_id, const bool held
+) {
+	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	WarManager& war_manager = instance_manager.get_war_manager();
+	Front const* const front = war_manager.get_front_by_id(front_id);
+	if (group == nullptr || front == nullptr || front->country != &country) {
+		return false;
+	}
+	if (held) {
+		return front->group_id == 0 && war_manager.set_front_group(country, front_id, group_id);
+	}
+	if (front->group_id != group_id) {
+		return false;
+	}
+	if (group->plan_front_id == front_id) {
+		stop_plan(instance_manager, *group);
+		group->plan_front_id = 0;
+	}
+	return war_manager.set_front_group(country, front_id, 0);
+}
+
+bool OpenVic::set_army_group_plan(
+	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const std::uint32_t front_id, const std::uint32_t mode
+) {
+	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	Front const* const front = instance_manager.get_war_manager().get_front_by_id(front_id);
+	if (group == nullptr || front == nullptr || front->country != &country || front->group_id != group_id || mode > 1) {
+		return false;
+	}
+	if (group->plan_front_id == front_id && group->plan_mode == mode) {
+		return false;
+	}
+	stop_plan(instance_manager, *group);
+	group->plan_front_id = front_id;
+	group->plan_mode = mode;
+	return true;
+}
+
+bool OpenVic::set_army_group_plan_active(
+	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const bool active
+) {
+	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	if (group == nullptr || group->plan_active == active) {
+		return false;
+	}
+	if (!active) {
+		stop_plan(instance_manager, *group);
+		return true;
+	}
+	WarManager& war_manager = instance_manager.get_war_manager();
+	Front const* const front = war_manager.get_front_by_id(group->plan_front_id);
+	if (group->plan_front_id == 0 || front == nullptr || front->group_id != group_id || group->marshal_id == 0) {
+		return false;
+	}
+	war_manager.set_front_mode(country, front->id, group->plan_mode == 0 ? Front::mode_t::ATTACK : Front::mode_t::DEFEND);
+	// The armies of the group go on the front (an army is on one front at a time)
+	std::vector<unique_id_t> army_ids;
+	for (ArmyInstance const& army : country.get_armies()) {
+		if (army.get_army_group_id() == group_id) {
+			army_ids.push_back(army.unique_id);
+		}
+	}
+	for (const unique_id_t army_id : army_ids) {
+		war_manager.set_front_army(instance_manager, country, front->id, army_id, true);
+	}
+	group->plan_active = true;
+	return true;
+}
+
 bool OpenVic::set_army_group_colour(CountryInstance& country, const std::uint32_t group_id, const std::uint32_t colour_index, const std::size_t palette_size) {
 	if (!country.has_army_organisation() || colour_index >= palette_size) {
 		return false;
@@ -134,7 +238,9 @@ bool OpenVic::delete_army_group(InstanceManager& instance_manager, CountryInstan
 		return false;
 	}
 	free_marshal(instance_manager, *it);
+	stop_plan(instance_manager, *it);
 	groups.erase(it);
+	release_orphan_fronts(instance_manager, country);
 	for (ArmyInstance& army : country.get_armies()) {
 		if (army.get_army_group_id() == group_id) {
 			army.set_army_group_id(0);
@@ -220,10 +326,14 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 		for (ArmyGroup& group : groups) {
 			free_marshal(instance_manager, group);
 		}
+		for (ArmyGroup& group : groups) {
+			stop_plan(instance_manager, group);
+		}
 		groups.clear();
 		for (ArmyInstance& army : country.get_armies()) {
 			army.set_army_group_id(0);
 		}
+		release_orphan_fronts(instance_manager, country);
 		return;
 	}
 	for (ArmyGroup& group : groups) {
@@ -238,6 +348,20 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 	}
 	// A colour out of the palette (an old save, another palette) is replaced by the first colour of the palette; the armies over the limit of
 	// the field marshal (the limit fell) leave the group, the last armies of the country first
+	// The plan of a group needs its front (that the group holds) and, while it runs, a field marshal
+	for (ArmyGroup& group : groups) {
+		if (group.plan_front_id == 0) {
+			continue;
+		}
+		Front const* const plan_front = instance_manager.get_war_manager().get_front_by_id(group.plan_front_id);
+		if (plan_front == nullptr || plan_front->group_id != group.id) {
+			group.plan_active = false; // the front is gone, there are no armies to stop
+			group.plan_front_id = 0;
+		} else if (group.plan_active && group.marshal_id == 0) {
+			stop_plan(instance_manager, group);
+		}
+	}
+	release_orphan_fronts(instance_manager, country);
 	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
 	const std::uint32_t max_attached = get_marshal_max_attached(instance_manager, country);
 	for (ArmyGroup& group : groups) {

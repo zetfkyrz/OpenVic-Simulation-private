@@ -3784,6 +3784,86 @@ namespace {
 		}
 	}
 
+	// ---- the plan of a field marshal (B3): the front he holds, the check mark that starts and stops it
+
+	void test_command_plan(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 2
+				&& candidate.get_army_groups().empty()) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO command plan: no country with two armies and without groups, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		r.check(create_army_group(*country, palette_size), "plan: a group is created");
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t front_id = war_manager.create_front(im, *country, nullptr);
+		r.check(front_id != 0 && war_manager.get_front_by_id(front_id)->group_id == 0, "plan: a hand drawn front belongs to nobody");
+		r.check(war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front without a group always gets orders (the automatic plan and the player as before)");
+
+		// The front first, then the plan
+		r.check(!set_army_group_plan(im, *country, group_id, front_id, 0), "plan: a plan needs a front that the group holds");
+		r.check(set_army_group_front(im, *country, group_id, front_id, true) && war_manager.get_front_by_id(front_id)->group_id == group_id
+				&& !set_army_group_front(im, *country, group_id, front_id, true) && !set_army_group_front(im, *country, 9999, front_id, true),
+			"plan: a group holds a front (once, a known group)");
+		r.check(!war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front of a group gets no orders without an active plan");
+		r.check(set_army_group_plan(im, *country, group_id, front_id, 0) && !set_army_group_plan(im, *country, group_id, front_id, 0) && !set_army_group_plan(im, *country, group_id, front_id, 2),
+			"plan: a plan is set (attack), a change is needed, the modes are 0 and 1");
+		r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: a plan does not start without a field marshal");
+
+		// A field marshal
+		unique_id_t leader_id = 0;
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used()) {
+				leader_id = leader.unique_id;
+				break;
+			}
+		}
+		ArmyInstance& first = country->get_armies()[0].get();
+		const std::uint32_t first_group_before = first.get_army_group_id();
+		if (leader_id == 0) {
+			fmt::println("TEST INFO command plan: no free general, the start of the plan is not checked");
+		} else {
+			r.check(set_army_group_marshal(im, *country, group_id, leader_id), "plan: a marshal is set");
+			first.set_army_group_id(group_id);
+			r.check(set_army_group_plan_active(im, *country, group_id, true) && country->get_army_groups().back().plan_active, "plan: the check mark starts the plan");
+			Front const* const front = war_manager.get_front_by_id(front_id);
+			r.check(war_manager.is_front_commanded(*front) && front->mode == Front::mode_t::ATTACK
+					&& std::find(front->army_ids.begin(), front->army_ids.end(), first.unique_id) != front->army_ids.end(),
+				"plan: the front gets orders, in the mode of the plan, with the armies of the group");
+			r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: a plan that runs is not started again");
+			r.check(set_army_group_plan(im, *country, group_id, front_id, 1) && !country->get_army_groups().back().plan_active,
+				"plan: a change of the plan stops it");
+			r.check(set_army_group_plan_active(im, *country, group_id, true) && war_manager.get_front_by_id(front_id)->mode == Front::mode_t::DEFEND,
+				"plan: the hold plan sets the front to defend");
+			r.check(set_army_group_plan_active(im, *country, group_id, false) && !war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)),
+				"plan: the check mark stops the plan, the front gets no orders again");
+			// the marshal leaves while the plan runs: the daily update stops it
+			set_army_group_plan_active(im, *country, group_id, true);
+			set_army_group_marshal(im, *country, group_id, 0);
+			update_army_groups(im, *country);
+			r.check(!country->get_army_groups().back().plan_active, "plan: a plan without a field marshal is stopped by the daily update");
+		}
+
+		// Letting go and deleting
+		r.check(set_army_group_front(im, *country, group_id, front_id, false) && war_manager.get_front_by_id(front_id)->group_id == 0
+				&& country->get_army_groups().back().plan_front_id == 0,
+			"plan: a front that is let go is nobody's and the plan is gone");
+		set_army_group_front(im, *country, group_id, front_id, true);
+		set_army_group_plan(im, *country, group_id, front_id, 0);
+		delete_army_group(im, *country, group_id);
+		r.check(war_manager.get_front_by_id(front_id) != nullptr && war_manager.get_front_by_id(front_id)->group_id == 0,
+			"plan: the front of a group that is deleted is nobody's");
+		first.set_army_group_id(first_group_before);
+		war_manager.delete_front(*country, front_id);
+	}
+
 	// ---- a fleet goes into a port of its country
 
 	void test_fleet_to_port(Results& r, InstanceManager& im) {
@@ -4753,6 +4833,7 @@ namespace {
 		test_army_groups(r, *im);
 		test_group_limit(r, *im);
 		test_command_colours(r, *im);
+		test_command_plan(r, *im);
 		test_fleet_to_port(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);

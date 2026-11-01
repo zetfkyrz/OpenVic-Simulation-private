@@ -98,6 +98,9 @@ namespace OpenVic {
 		mode_t mode = mode_t::DEFEND;
 		memory::vector<ProvinceInstance*> provinces;
 		memory::vector<unique_id_t> army_ids;
+		// The group of armies (the field marshal) that holds the front, 0 if none (B3, docs/COMMAND.md). A front of a group is commanded only while the plan
+		// of the group for this front is active: the armies of it get no orders otherwise and the automatic plan does not touch it
+		std::uint32_t group_id = 0;
 	};
 
 	struct WarManager {
@@ -276,6 +279,12 @@ namespace OpenVic {
 		// Assigns every army of the country that is not on a front yet to the front
 		bool assign_free_armies(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t front_id);
 		void set_auto_plan(CountryInstance const& country, bool enabled);
+		// The group of the front (0 takes it from the group); the front has to be the country's
+		bool set_front_group(CountryInstance const& country, std::uint32_t front_id, std::uint32_t group_id);
+		// Does the front get orders: a front without a group always does, a front of a group only while its plan is active
+		[[nodiscard]] bool is_front_commanded(Front const& front) const;
+		// The armies of the front stop where they are (the moves are cancelled, the armies in a battle stay in it)
+		void stop_front_armies(InstanceManager& instance_manager, std::uint32_t front_id);
 
 		void tick(InstanceManager& instance_manager);
 	};

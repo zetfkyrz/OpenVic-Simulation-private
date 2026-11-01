@@ -111,6 +111,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army_group.marshal_id));
 			hasher.add(army_group.execute_orders ? 1 : 0);
 			hasher.add(static_cast<std::uint64_t>(army_group.colour_index));
+			hasher.add(static_cast<std::uint64_t>(army_group.plan_front_id));
+			hasher.add(static_cast<std::uint64_t>(army_group.plan_mode));
+			hasher.add(army_group.plan_active ? 1 : 0);
 		}
 		for (DivisionTemplate const& division_template : country.get_division_templates()) {
 			hasher.add(static_cast<std::uint64_t>(division_template.id));
@@ -176,6 +179,13 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	}
 
 	hasher.add(instance_manager.get_war_manager().get_wars().size());
+	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+		hasher.add(static_cast<std::uint64_t>(front.id));
+		hasher.add(static_cast<std::uint64_t>(front.group_id));
+		hasher.add(static_cast<std::uint64_t>(front.mode));
+		hasher.add(static_cast<std::uint64_t>(front.provinces.size()));
+		hasher.add(static_cast<std::uint64_t>(front.army_ids.size()));
+	}
 	hasher.add(instance_manager.get_colonisation_manager().get_projects().size());
 	hasher.add(instance_manager.get_notification_log().get_entries().size());
 	return hasher.value;

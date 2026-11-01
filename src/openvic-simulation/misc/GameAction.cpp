@@ -1284,6 +1284,24 @@ bool GameActionManager::VariantVisitor::operator() (set_army_group_colour_argume
 	return set_army_group_colour(country, group_id, colour_index, instance_manager.definition_manager.get_military_manager().get_command_palette().size());
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_army_group_front_argument_t const& argument) const {
+	const auto [country_index, group_id, front_id, held] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_front(instance_manager, country, group_id, front_id, held);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_argument_t const& argument) const {
+	const auto [country_index, group_id, front_id, mode] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_plan(instance_manager, country, group_id, front_id, mode);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_active_argument_t const& argument) const {
+	const auto [country_index, group_id, active] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_plan_active(instance_manager, country, group_id, active);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_army_group_orders_argument_t const& argument) const {
 	const auto [country_index, group_id, execute] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

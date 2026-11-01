@@ -34,6 +34,11 @@ namespace OpenVic {
 		unique_id_t marshal_id = 0; // the unique id of the general, 0 if there is none
 		bool execute_orders = true; // the armies of the group follow the orders of the marshal (the switch of the panel of the commanders)
 		std::uint32_t colour_index = 0; // the index in the palette of the command
+		// The plan of the marshal (B3): one front that the group holds (Front::group_id) and the orders for it; the plan runs while plan_active is true
+		// (the check mark of the panel). Stopping it cancels the moves of the armies of the front, they stay where they are
+		std::uint32_t plan_front_id = 0; // 0: no plan
+		std::uint32_t plan_mode = 0; // 0: attack the enemy land next to the line, 1: hold the line
+		bool plan_active = false;
 	};
 
 	// The palette of the colours of the field marshals (ov_data/common/ov_command/palette.txt: colour = { r g b } lines). A new group takes the first
@@ -72,6 +77,12 @@ namespace OpenVic {
 	bool create_army_group(CountryInstance& country, std::size_t palette_size);
 	// The colour of the group (an index of the palette): the player recolours his field marshal
 	bool set_army_group_colour(CountryInstance& country, std::uint32_t group_id, std::uint32_t colour_index, std::size_t palette_size);
+	// The front is held by the group (held) or let go; the front is the country's and is not held by another group
+	bool set_army_group_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, std::uint32_t front_id, bool held);
+	// The plan of the group: a front it holds and the mode (0 attack, 1 hold); a plan that runs is stopped first
+	bool set_army_group_plan(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, std::uint32_t front_id, std::uint32_t mode);
+	// Starts or stops the plan (the check mark): it needs a plan and a field marshal; the armies of the group go on the front
+	bool set_army_group_plan_active(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool active);
 	bool delete_army_group(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id);
 	// group_id 0 takes the army out of its group
 	// A group holds at most max_attached armies
