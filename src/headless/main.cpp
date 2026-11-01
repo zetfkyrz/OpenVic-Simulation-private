@@ -1395,6 +1395,38 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 			static_cast<double>(country.get_average_literacy()), unemployed, hungry_pop_size, starved, types
 		);
 	}
+	// What the pops of the first three countries need to live (POP_NEEDS): the average life needs fulfilled by pop type, and the goods of the life needs of
+	// one pop of the type with the price against the base price and the supply and demand of the good in the world (where the hunger comes from)
+	GoodInstanceManager const& good_instances = instance_manager.get_good_instance_manager();
+	for (std::size_t index = 0; index < countries.size() && index < 3; ++index) {
+		CountryInstance const& country = *countries[index];
+		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
+			double life_sum = 0.0, size_sum = 0.0;
+			Pop const* sample = nullptr;
+			for (ProvinceInstance const* province : country.get_owned_provinces()) {
+				for (Pop const& pop : province->get_pops()) {
+					if (&pop.get_type() == &pop_type && type_safe::get(pop.get_size()) > 0) {
+						life_sum += static_cast<double>(pop.get_life_needs_fulfilled()) * type_safe::get(pop.get_size());
+						size_sum += type_safe::get(pop.get_size());
+						sample = sample == nullptr ? &pop : sample;
+					}
+				}
+			}
+			if (sample == nullptr || size_sum < 100000.0) {
+				continue;
+			}
+			std::string goods;
+			for (auto const& [good_index, quantity] : sample->get_life_needs()) {
+				GoodInstance const* const good = good_instances.get_good_instance_by_index(good_index);
+				goods += fmt::format(
+					"{}{}:{:.4f}@{:.2f}/{:.2f}(s{:.0f} d{:.0f})", goods.empty() ? "" : ",", good->good_definition.get_identifier(), static_cast<double>(quantity),
+					static_cast<double>(good->get_price()), static_cast<double>(good->good_definition.base_price), static_cast<double>(good->get_total_supply_yesterday()),
+					static_cast<double>(good->get_total_demand_yesterday())
+				);
+			}
+			fmt::println("POP_NEEDS country={} type={} people={:.0f} life_needs_avg={:.3f} life_needs_goods={}", country.get_identifier(), pop_type.get_identifier(), size_sum, life_sum / size_sum, goods);
+		}
+	}
 	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
 
 	std::int64_t history_total = 0, instance_total = 0;
