@@ -3967,6 +3967,64 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- B5: the technologies that raise the number of generals a field marshal commands (+12 each: 12, 24, 36, 48)
+
+	void test_attached_generals_technologies(Results& r, InstanceManager& im) {
+		ArmyTechnologyManager const& manager = im.definition_manager.get_research_manager().get_army_technology_manager();
+		ModifierManager const& modifier_manager = im.definition_manager.get_modifier_manager();
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.is_civilised() && candidate.is_ai()) {
+				country = &candidate;
+				break;
+			}
+		}
+		const std::array<std::string_view, 3> ids { "general_staff", "mobilisation_planning", "operational_planning" };
+		if (country == nullptr || manager.size() == 0) {
+			fmt::println("TEST INFO attached generals: no country or no technologies, not checked");
+			return;
+		}
+		const auto refresh = [&]() { country->update_modifier_sum(im.get_today(), modifier_manager.get_static_modifier_cache()); };
+		bool all_have_effect = true;
+		std::vector<std::size_t> done;
+		refresh();
+		const std::uint32_t base = get_marshal_max_attached(im, *country);
+		r.check(base == 12, "attached generals: without the technologies a marshal commands 12");
+		std::vector<std::uint32_t> limits;
+		for (const std::string_view id : ids) {
+			ArmyTechnology const* const technology = manager.find(id);
+			bool has_effect = false;
+			if (technology != nullptr && technology->modifier.has_value()) {
+				for (auto const& [effect, value] : technology->modifier->get_values()) {
+					has_effect |= effect->get_identifier() == "attached_generals_add" && value == fixed_point_t(12);
+				}
+			}
+			all_have_effect &= has_effect;
+			if (technology != nullptr && !country->has_army_technology(static_cast<std::uint32_t>(technology->index))) {
+				complete_army_technology(im, *country, technology->index);
+				done.push_back(technology->index);
+			}
+			refresh();
+			limits.push_back(get_marshal_max_attached(im, *country));
+		}
+		r.check(all_have_effect, "attached generals: general_staff, mobilisation_planning and operational_planning give attached_generals_add = 12 in their files");
+		r.check(limits.size() == 3 && limits[0] == 24 && limits[1] == 36 && limits[2] == 48, "attached generals: with the three technologies a marshal commands 24, 36 and 48 generals",
+			fmt::format("{} {} {}", limits.size() > 0 ? limits[0] : 0, limits.size() > 1 ? limits[1] : 0, limits.size() > 2 ? limits[2] : 0));
+		// put the country back
+		for (const std::size_t index : done) {
+			ArmyTechnology const& technology = manager.at(index);
+			country->unmark_army_technology_researched(static_cast<std::uint32_t>(index));
+			for (memory::string const& key : technology.unlocks) {
+				country->revoke_unlock(key);
+			}
+			if (technology.modifier.has_value()) {
+				country->remove_unlock_modifier(*technology.modifier);
+			}
+		}
+		refresh();
+		r.check(get_marshal_max_attached(im, *country) == base, "attached generals: the country is back to the base limit");
+	}
+
 	// ---- a fleet goes into a port of its country
 
 	void test_fleet_to_port(Results& r, InstanceManager& im) {
@@ -4938,6 +4996,7 @@ namespace {
 		test_command_colours(r, *im);
 		test_command_plan(r, *im);
 		test_theatres(r, *im);
+		test_attached_generals_technologies(r, *im);
 		test_fleet_to_port(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);
