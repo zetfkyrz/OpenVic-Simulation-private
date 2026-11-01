@@ -5,6 +5,7 @@
 #include "openvic-simulation/population/Culture.hpp"
 #include "openvic-simulation/population/Religion.hpp"
 #include "openvic-simulation/population/PopType.hpp"
+#include "openvic-simulation/population/PopulationGrowth.hpp"
 
 namespace OpenVic {
 	struct GoodDefinitionManager;
@@ -46,6 +47,7 @@ namespace OpenVic {
 
 		CultureManager PROPERTY_REF(culture_manager);
 		ReligionManager PROPERTY_REF(religion_manager);
+		PopulationGrowthData PROPERTY_REF(growth_data);
 
 	public:
 		PopManager();

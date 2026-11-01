@@ -49,7 +49,9 @@ namespace OpenVic {
 		// 30: the supply of an army does not go through the provinces that an enemy controls (one and two provinces between), support companies in the templates,
 		//     the upgrade of a regiment, the density and the occupation by the new formulas (the statistics of the templates only)
 		// 31: the commanders: a group holds at most ov_war.MARSHAL_MAX_ATTACHED (8) armies, the switch of the orders of a group (set_army_group_orders)
-		inline constexpr int SIMULATION_VERSION = 31;
+		// 32: the natural growth of the population from ov_data/common/ov_population/growth.txt (by country, culture group, culture, year), the medicine and the
+		//     sanitation multiply it; the population change of the month in the top bar
+		inline constexpr int SIMULATION_VERSION = 32;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

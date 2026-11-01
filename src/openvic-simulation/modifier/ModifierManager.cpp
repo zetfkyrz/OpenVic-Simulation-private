@@ -213,6 +213,10 @@ bool ModifierManager::setup_modifier_effects() {
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.occupation_speed_pct, "occupation_speed_pct", FORMAT_x100_1DP_PC_POS, "OCCUPATION_SPEED_TECH"
 	);
+	// The sanitation and the technologies of the health will multiply the natural growth of the population with it (docs/POPULATION.md, A2)
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.population_growth_pct, "population_growth_pct", FORMAT_x100_1DP_PC_POS, "POPULATION_GROWTH_TECH"
+	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.occupation_speed_mult, "occupation_speed_mult", FORMAT_x1_2DP_POS, "OCCUPATION_SPEED_MULT_TECH"
 	);

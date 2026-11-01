@@ -689,6 +689,20 @@ void Dataloader::_load_companies(DefinitionManager& definition_manager) {
 	SPDLOG_INFO("Loaded {} support companies", loaded);
 }
 
+void Dataloader::_load_population_growth(DefinitionManager& definition_manager) {
+	PopManager& pop_manager = definition_manager.get_pop_manager();
+	std::size_t rules = 0;
+	for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_population", ".txt", false)) {
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The population growth file {} is skipped, it has errors", file);
+			continue;
+		}
+		rules += pop_manager.get_growth_data().load_file(file.string(), parser.get_file_node(), pop_manager.get_culture_manager());
+	}
+	SPDLOG_INFO("Loaded {} rules of the natural growth of the population", rules);
+}
+
 bool Dataloader::_load_inventions(DefinitionManager& definition_manager) {
 	static constexpr std::string_view inventions_directory = "inventions";
 
@@ -1389,6 +1403,7 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load decisions!");
 		ret = false;
 	}
+	_load_population_growth(definition_manager); // after the cultures (the rules name culture groups and cultures)
 	if (!_load_history(definition_manager, false)) {
 		spdlog::critical_s("Failed to load history!");
 		ret = false;

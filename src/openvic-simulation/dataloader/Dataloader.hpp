@@ -44,6 +44,8 @@ namespace OpenVic {
 		void _load_army_technologies(DefinitionManager& definition_manager);
 		/* The support companies (common/ov_companies/*.txt); a broken file or company is skipped with a warning */
 		void _load_companies(DefinitionManager& definition_manager);
+		/* The natural growth of the population (common/ov_population/growth.txt) */
+		void _load_population_growth(DefinitionManager& definition_manager);
 		bool _load_inventions(DefinitionManager& definition_manager);
 		bool _load_events(DefinitionManager& definition_manager);
 		bool _load_map_dir(DefinitionManager& definition_manager) const;

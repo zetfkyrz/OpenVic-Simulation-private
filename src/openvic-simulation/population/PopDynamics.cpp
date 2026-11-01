@@ -17,6 +17,9 @@
 #include "openvic-simulation/population/Pop.hpp"
 #include "openvic-simulation/population/PopManager.hpp"
 #include "openvic-simulation/population/PopType.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/military/UnitModifiers.hpp"
+#include "openvic-simulation/population/PopulationGrowth.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
@@ -221,6 +224,13 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		return moved;
 	};
 
+	// The data of the growth, the year and the multipliers of the countries (medicine, sanitation), worked out once for the month
+	PopulationGrowthData const& growth_data = pop_manager.get_growth_data();
+	const std::int32_t year = static_cast<std::int32_t>(instance_manager.get_today().get_year());
+	ModifierEffectCache const& effect_cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	std::unordered_map<CountryInstance const*, fixed_point_t> growth_multipliers;
+	const std::array<ScopeWeight, 1> all_weights { { { effect_cache.find_unit_scope("all"), fixed_point_t::_1 } } };
+
 	std::int32_t starved_total = 0;
 	std::int32_t emigrated_internal_total = 0;
 	std::int32_t emigrated_external_total = 0;
@@ -279,15 +289,27 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				continue;
 			}
 
-			// ---- Growth: positive from half met life needs, starvation shrinks the pop faster
+			// ---- Growth: the base of the data (country, culture, region, year), by the life needs and the modifiers of the country; starvation shrinks the pop
 			const fixed_point_t life = pop->get_life_needs_fulfilled();
-			const fixed_point_t breakeven = defines.growth_breakeven_life_needs.fixed();
-			fixed_point_t yearly_rate;
-			if (life >= breakeven) {
-				yearly_rate = defines.growth_per_year.of((life - breakeven) / (fixed_point_t::_1 - breakeven));
-			} else {
-				yearly_rate = defines.decline_per_year.of(-(breakeven - life) / breakeven);
+			fixed_point_t base_yearly = growth_data.get_yearly_rate(
+				owner != nullptr ? owner->get_identifier() : std::string_view {}, pop->culture.group.get_identifier(), pop->culture.get_identifier(),
+				province.province_definition.has_region() ? province.province_definition.get_region()->get_identifier() : std::string_view {}, year,
+				defines.growth_per_year.fixed()
+			);
+			fixed_point_t growth_multiplier = fixed_point_t::_1;
+			if (owner != nullptr) {
+				const auto cached = growth_multipliers.find(owner);
+				if (cached != growth_multipliers.end()) {
+					growth_multiplier = cached->second;
+				} else {
+					growth_multiplier = population_growth::growth_multiplier(
+						defines, effect_cache.get_population_growth_pct() != nullptr ? owner->get_modifier_effect_value(*effect_cache.get_population_growth_pct()) : fixed_point_t::_0,
+						get_scoped_product(*owner, effect_cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, all_weights)
+					);
+					growth_multipliers.emplace(owner, growth_multiplier);
+				}
 			}
+			const fixed_point_t yearly_rate = population_growth::monthly_yearly_rate(defines, base_yearly, life, growth_multiplier);
 			pop->growth_remainder += yearly_rate * size / 12;
 			if (pop->growth_remainder >= fixed_point_t::_1) {
 				const std::int32_t whole = take_whole(pop->growth_remainder);

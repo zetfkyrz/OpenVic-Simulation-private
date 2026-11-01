@@ -125,8 +125,13 @@ namespace OpenVic {
 	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(35, 100), 0, 1) \
-	RATE(GROWTH_PER_YEAR, growth_per_year, Rate(25, 1000), 0, 10) \
+	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \
+	RATE(GROWTH_FULL_LIFE_NEEDS, growth_full_life_needs, Rate(80, 100), 0, 1) \
+	/* The growth of a pop with no rule in ov_data/common/ov_population/growth.txt (the file has its own default; this one is used when there is none) */ \
+	RATE(GROWTH_PER_YEAR, growth_per_year, Rate(7, 1000), 0, 10) \
 	RATE(DECLINE_PER_YEAR, decline_per_year, Rate(60, 1000), 0, 10) \
+	/* The medicine: the growth is multiplied by 1 + this x (1 - the casualties taken of the country); casualties_taken_mult 0.8 gives +10 % at 0.5 */ \
+	RATE(MEDICINE_GROWTH_WEIGHT, medicine_growth_weight, Rate(50, 100), 0, 10) \
 	RATE(ASSIMILATION_PER_MONTH, assimilation_per_month, Rate(1, 1000), 0, 1) \
 	INT(ASSIMILATION_SAME_GROUP_MULTIPLIER, assimilation_same_group_multiplier, 2, 1, 100) \
 	RATE(PROMOTION_PER_MONTH, promotion_per_month, Rate(4, 100), 0, 1) \

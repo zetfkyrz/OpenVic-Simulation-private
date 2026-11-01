@@ -1769,9 +1769,6 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_companies) {
 		run_company_dump(*game_manager.get_instance_manager());
 	}
-	if (ret && dump_pop) {
-		run_pop_dump(*game_manager.get_instance_manager());
-	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -1879,6 +1876,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			std::ofstream file(replay_save_path);
 			file << Replay::serialise(game_manager.get_instance_manager()->get_action_history());
 		}
+	}
+
+	if (ret && dump_pop) { // after the days of -e, so the growth of the months is in it
+		run_pop_dump(*game_manager.get_instance_manager());
 	}
 
 	SPDLOG_INFO("===== Ending game session... =====");

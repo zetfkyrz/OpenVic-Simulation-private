@@ -73,6 +73,7 @@ namespace OpenVic {
 		ModifierEffect const* PROPERTY(density_reduction, nullptr);
 		ModifierEffect const* PROPERTY(row_weight_shift, nullptr);
 		ModifierEffect const* PROPERTY(occupation_speed_pct, nullptr);
+		ModifierEffect const* PROPERTY(population_growth_pct, nullptr);
 		ModifierEffect const* PROPERTY(occupation_speed_mult, nullptr);
 		ModifierEffect const* PROPERTY(mobilisation_speed_pct, nullptr);
 		ModifierEffect const* PROPERTY(mobilisation_speed_mult, nullptr);

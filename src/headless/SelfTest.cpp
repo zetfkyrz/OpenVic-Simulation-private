@@ -33,6 +33,7 @@
 #include <openvic-simulation/military/Division.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Companies.hpp>
+#include <openvic-simulation/population/PopulationGrowth.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
 #include <openvic-simulation/research/ArmyResearch.hpp>
 #include <openvic-simulation/military/UnitEquipment.hpp>
@@ -3746,6 +3747,94 @@ namespace {
 		r.check(changes_ok, "population: on the first day the change of the month is 0 and the month starts with the whole population");
 	}
 
+	// ---- the natural growth of the population (population/PopulationGrowth.*, ov_data/common/ov_population/growth.txt)
+
+	void test_population_growth(Results& r, InstanceManager& im) {
+		namespace fs = std::filesystem;
+		OpenVicPopulationDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().population;
+		PopManager const& pop_manager = im.definition_manager.get_pop_manager();
+		PopulationGrowthData const& data = pop_manager.get_growth_data();
+		const fixed_point_t eps = fixed_point_t(1) / 10000;
+		const fixed_point_t fallback = defines.growth_per_year.fixed();
+		const auto rate = [&](std::string_view tag, std::string_view group, std::string_view culture, const std::int32_t year) {
+			return data.get_yearly_rate(tag, group, culture, "", year, fallback);
+		};
+		if (!data.is_loaded()) {
+			fmt::println("TEST INFO population growth: no ov_data folder, the rules are not checked");
+		} else {
+			r.check(near(rate("ENG", "british", "english", 1836), fixed_point_t(12) / 1000, eps) && near(rate("RUS", "east_slavic", "russian", 1836), fixed_point_t(13) / 1000, eps)
+					&& near(rate("USA", "american_cultures", "yankee", 1850), fixed_point_t(25) / 1000, eps) && near(rate("FRA", "french", "french", 1836), fixed_point_t(4) / 1000, eps),
+				"population growth: the countries of the data grow by their yearly rates (UK 1.2 %, Russia 1.3 %, the USA 2.5 %, France 0.4 %)");
+			r.check(near(rate("PRU", "germanic", "prussian", 1836), fixed_point_t(1) / 100, eps) && near(rate("AUS", "germanic", "austrian", 1836), fixed_point_t(8) / 1000, eps),
+				"population growth: a culture group gives its rate, a tag is more specific than a group (Prussia 1.0 %, Austria 0.8 % although its Germans are of the group)");
+			r.check(near(rate("JAP", "east_asian", "japanese", 1850), fixed_point_t(15) / 10000, eps) && near(rate("JAP", "east_asian", "japanese", 1868), fixed_point_t(7) / 1000, eps),
+				"population growth: Japan grows by 0.15 % until 1868 and by 0.7 % from 1868 (the periods of a rule)");
+			r.check(near(rate("ENG", "british", "irish", 1840), fixed_point_t(12) / 1000, eps) && rate("ENG", "british", "irish", 1848) < fixed_point_t::_0
+					&& near(rate("ENG", "british", "irish", 1860), fixed_point_t(3) / 1000, eps) && near(rate("ENG", "british", "english", 1848), fixed_point_t(12) / 1000, eps),
+				"population growth: the Irish of the UK grow until 1845, shrink in 1846-1851 and grow slowly after, the English do not (a culture inside a country)");
+			r.check(near(rate("XXX", "nowhere", "nobody", 1900), fixed_point_t(7) / 1000, eps), "population growth: a pop that no rule is for grows by the default of the file (0.7 %)");
+		}
+
+		// The rate of the month: the life needs, the famine of the data, the modifiers of the country
+		using population_growth::monthly_yearly_rate;
+		const fixed_point_t base = fixed_point_t(12) / 1000;
+		const fixed_point_t breakeven = defines.growth_breakeven_life_needs.fixed();
+		r.check(near(monthly_yearly_rate(defines, base, fixed_point_t::_1, fixed_point_t::_1), base, eps), "population growth: a pop with all its life needs met grows by the whole base");
+		r.check(monthly_yearly_rate(defines, base, breakeven, fixed_point_t::_1) == fixed_point_t::_0 && monthly_yearly_rate(defines, base, (breakeven + fixed_point_t::_1) / 2, fixed_point_t::_1) > fixed_point_t::_0,
+			"population growth: at the breakeven of the life needs the growth stops, above it grows with the life needs");
+		r.check(monthly_yearly_rate(defines, base, fixed_point_t::_0, fixed_point_t::_1) < fixed_point_t::_0 && near(monthly_yearly_rate(defines, base, fixed_point_t::_0, fixed_point_t(5)), -defines.decline_per_year.fixed(), eps),
+			"population growth: a hungry pop shrinks, and the modifiers do not make the decline bigger");
+		r.check(monthly_yearly_rate(defines, fixed_point_t(-2) / 100, fixed_point_t::_1, fixed_point_t::_1) == fixed_point_t(-2) / 100 && monthly_yearly_rate(defines, fixed_point_t(-2) / 100, fixed_point_t::_0, fixed_point_t::_1) < fixed_point_t(-2) / 100,
+			"population growth: a negative base of the data (a famine) always counts, a hunger comes on top of it");
+		r.check(near(monthly_yearly_rate(defines, base, fixed_point_t::_1, fixed_point_t(3) / 2), base * 3 / 2, eps), "population growth: the multiplier of the country multiplies the growth");
+		r.check(near(population_growth::growth_multiplier(defines, fixed_point_t(1) / 10, fixed_point_t::_1), fixed_point_t(11) / 10, eps)
+				&& population_growth::growth_multiplier(defines, fixed_point_t::_0, fixed_point_t(8) / 10) > fixed_point_t::_1
+				&& near(population_growth::growth_multiplier(defines, fixed_point_t::_0, fixed_point_t::_1), fixed_point_t::_1, eps),
+			"population growth: the sanitation (population_growth_pct) and the medicine (the casualties taken under 1) raise the growth, nothing changes without them");
+
+		// A file: a new rule comes with the file, the broken ones are skipped
+		const fs::path temp = fs::temp_directory_path() / "openvic_selftest_growth";
+		std::error_code ec;
+		fs::remove_all(temp, ec);
+		write_test_file(temp / "good.txt", "default = 0.01\nrule = { tag = AAA yearly = 0.02 }\nrule = { tag = BBB periods = { 1900 = 0.03 1800 = 0.01 } }\n");
+		write_test_file(temp / "bad.txt",
+			"rule = { yearly = 0.02 }\nrule = { tag = AAA }\nrule = { tag = AAA yearly = 0.02 periods = { 1900 = 0.01 } }\nrule = { group = no_such_group_at_all yearly = 0.01 }\nrule = { tag = AAA periods = { year = 0.01 } }\n");
+		PopulationGrowthData fresh;
+		const ovdl::v2script::Parser good = Dataloader::parse_defines(temp / "good.txt");
+		const ovdl::v2script::Parser bad = Dataloader::parse_defines(temp / "bad.txt");
+		const std::size_t good_count = fresh.load_file("good.txt", good.get_file_node(), pop_manager.get_culture_manager());
+		const std::size_t bad_count = fresh.load_file("bad.txt", bad.get_file_node(), pop_manager.get_culture_manager());
+		r.check(good_count == 2 && near(fresh.get_yearly_rate("AAA", "", "", "", 1836, fallback), fixed_point_t(2) / 100, eps) && near(fresh.get_yearly_rate("ZZZ", "", "", "", 1836, fallback), fixed_point_t(1) / 100, eps)
+				&& near(fresh.get_yearly_rate("BBB", "", "", "", 1950, fallback), fixed_point_t(3) / 100, eps),
+			"population growth: a new rule and the default come with a file, no code is needed (the periods are sorted)");
+		r.check(bad_count == 0, "population growth: a rule with no condition, with both yearly and periods or neither, a group that does not exist or a period that is not a year is skipped");
+		fs::remove_all(temp, ec);
+	}
+
+	// The growth comes once a month: the world total changes on the first days of the months only
+	void test_population_monthly(Results& r, InstanceManager& im) {
+		std::int64_t before = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			before += type_safe::get(country.get_total_population());
+		}
+		std::size_t changes_off_month_start = 0, changes = 0;
+		for (int day = 0; day < 70; ++day) {
+			im.force_tick_and_update();
+			std::int64_t total = 0;
+			for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+				total += type_safe::get(country.get_total_population());
+			}
+			if (total != before) {
+				changes++;
+				const auto day_of_month = im.get_today().get_day();
+				// the monthly update runs on the first day, the totals of the countries are worked out the day after
+				changes_off_month_start += !(day_of_month == 1 || day_of_month == 2);
+			}
+			before = total;
+		}
+		r.check(changes >= 1 && changes_off_month_start == 0, "population growth: the population changes once a month, on the first days of the months only", fmt::format("{} changes, {} off the month start", changes, changes_off_month_start));
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -4168,6 +4257,7 @@ namespace {
 			return;
 		}
 		test_population_start(r, *im);
+		test_population_growth(r, *im);
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);
@@ -4355,6 +4445,7 @@ namespace {
 		test_unlock_gates(r, *im);
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
+		test_population_monthly(r, *im); // ticks days too
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();
 
