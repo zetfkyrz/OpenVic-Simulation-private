@@ -110,6 +110,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army_group.id));
 			hasher.add(static_cast<std::uint64_t>(army_group.marshal_id));
 			hasher.add(army_group.execute_orders ? 1 : 0);
+			hasher.add(static_cast<std::uint64_t>(army_group.colour_index));
 		}
 		for (DivisionTemplate const& division_template : country.get_division_templates()) {
 			hasher.add(static_cast<std::uint64_t>(division_template.id));

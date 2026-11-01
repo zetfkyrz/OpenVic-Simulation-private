@@ -204,6 +204,10 @@ bool ModifierManager::setup_modifier_effects() {
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.max_company_slots, "max_company_slots", FORMAT_x1_0DP_POS, "MAX_COMPANY_SLOTS_TECH"
 	);
+	// The armies (generals) a field marshal commands: adds to ov_war.MARSHAL_MAX_ATTACHED, see military/ArmyGroup.hpp
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.attached_generals_add, "attached_generals_add", FORMAT_x1_0DP_POS, "ATTACHED_GENERALS_TECH"
+	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.density_reduction, "density_reduction", FORMAT_x100_1DP_PC_POS, "DENSITY_REDUCTION_TECH"
 	);

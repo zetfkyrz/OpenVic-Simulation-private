@@ -3679,14 +3679,14 @@ namespace {
 				break;
 			}
 		}
-		r.check(war.marshal_max_attached == 8, "commanders: a field marshal holds 8 armies by default");
+		r.check(war.marshal_max_attached == 12 && war.marshal_max_attached_limit == 48, "commanders: a field marshal holds 12 armies by default, 48 at most with the technologies");
 		if (country == nullptr) {
 			fmt::println("TEST INFO commanders: no country with two armies, not checked");
 			return;
 		}
 		const std::int32_t max_before = war.marshal_max_attached;
 		war.marshal_max_attached = 1;
-		create_army_group(*country);
+		create_army_group(*country, im.definition_manager.get_military_manager().get_command_palette().size());
 		const std::uint32_t group_id = country->get_army_groups().back().id;
 		ArmyInstance& first = country->get_armies()[0].get();
 		ArmyInstance& second = country->get_armies()[1].get();
@@ -3702,6 +3702,86 @@ namespace {
 		second.set_army_group_id(second_before);
 		delete_army_group(im, *country, group_id);
 		war.marshal_max_attached = max_before;
+	}
+
+	// ---- the command of a field marshal (B1): the palette, the colours of the groups, the limit of the generals
+
+	void test_command_colours(Results& r, InstanceManager& im) {
+		MilitaryManager const& military = im.definition_manager.get_military_manager();
+		CommandPalette const& palette = military.get_command_palette();
+		r.check(palette.size() >= 12, "command: the palette of the field marshals has at least 12 colours", fmt::format("{}", palette.size()));
+		bool distinct = true;
+		for (std::size_t a = 0; a < palette.size(); ++a) {
+			for (std::size_t b = a + 1; b < palette.size(); ++b) {
+				distinct &= palette.get_colours()[a] != palette.get_colours()[b];
+			}
+		}
+		r.check(distinct, "command: the colours of the palette are all different");
+
+		// A palette file: the colours are read, a broken one gives what could be read
+		{
+			CommandPalette loaded;
+			r.check(loaded.size() == 0, "command: a palette is empty before it is loaded");
+			loaded.use_builtin_colours();
+			r.check(loaded.size() == 12, "command: the built-in palette has 12 colours");
+		}
+
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_army_groups().empty()) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO command: no country without groups, the colours of the groups are not checked");
+		} else {
+			const std::size_t size = palette.size();
+			r.check(create_army_group(*country, size) && create_army_group(*country, size) && create_army_group(*country, size), "command: a country creates three groups");
+			auto const groups = country->get_army_groups();
+			r.check(groups[0].colour_index == 0 && groups[1].colour_index == 1 && groups[2].colour_index == 2,
+				"command: the groups take the first free colours of the palette in order (the same in every run)");
+			r.check(set_army_group_colour(*country, groups[0].id, 5, size) && country->get_army_groups()[0].colour_index == 5
+					&& !set_army_group_colour(*country, groups[0].id, 5, size) && !set_army_group_colour(*country, groups[0].id, static_cast<std::uint32_t>(size), size)
+					&& !set_army_group_colour(*country, 9999, 1, size),
+				"command: the player recolours a marshal (a colour of the palette, a known group, a change)");
+			// the colour freed by the recolouring is the first free one again
+			r.check(create_army_group(*country, size) && country->get_army_groups().back().colour_index == 0, "command: a new group takes the colour that was freed");
+			// a colour out of the palette (another palette, an old save) is put back into it by the daily update
+			country->get_mutable_army_groups().back().colour_index = static_cast<std::uint32_t>(size) + 7;
+			update_army_groups(im, *country);
+			r.check(country->get_army_groups().back().colour_index < size, "command: a colour out of the palette is replaced by the daily update");
+			const std::vector<std::uint32_t> ids { country->get_army_groups()[0].id, country->get_army_groups()[1].id, country->get_army_groups()[2].id, country->get_army_groups()[3].id };
+			for (const std::uint32_t id : ids) {
+				delete_army_group(im, *country, id);
+			}
+			r.check(country->get_army_groups().empty(), "command: the test groups are deleted");
+		}
+
+		// The limit of the generals: the base of the defines, the modifier, never above the limit
+		OpenVicWarDefines& war = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		ModifierEffectCache const& cache = im.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+		r.check(cache.get_attached_generals_add() != nullptr, "command: the modifier attached_generals_add exists");
+		CountryInstance* any = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country()) {
+				any = &candidate;
+				break;
+			}
+		}
+		if (any != nullptr) {
+			const std::int32_t base_before = war.marshal_max_attached;
+			const std::int32_t limit_before = war.marshal_max_attached_limit;
+			r.check(get_marshal_max_attached(im, *any) == static_cast<std::uint32_t>(base_before), "command: without the modifier a marshal holds the base number of armies");
+			war.marshal_max_attached = 60;
+			war.marshal_max_attached_limit = 48;
+			r.check(get_marshal_max_attached(im, *any) == 48, "command: a marshal never holds more than the limit");
+			war.marshal_max_attached = 12;
+			war.marshal_max_attached_limit = 10;
+			r.check(get_marshal_max_attached(im, *any) == 10, "command: the limit holds the base too");
+			war.marshal_max_attached = base_before;
+			war.marshal_max_attached_limit = limit_before;
+		}
 	}
 
 	// ---- a fleet goes into a port of its country
@@ -4672,6 +4752,7 @@ namespace {
 		test_regiment_upgrade(r, *im);
 		test_army_groups(r, *im);
 		test_group_limit(r, *im);
+		test_command_colours(r, *im);
 		test_fleet_to_port(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);

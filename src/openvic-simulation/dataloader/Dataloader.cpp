@@ -253,6 +253,22 @@ std::size_t Dataloader::load_default_unlocks(DefaultUnlocks& default_unlocks) co
 	return default_unlocks.load_file(file.string(), parser.get_file_node());
 }
 
+std::size_t Dataloader::load_command_palette(CommandPalette& palette) const {
+	const fs::path file = lookup_file("common/ov_command/palette.txt", false);
+	if (!file.empty()) {
+		const v2script::Parser parser = parse_defines(file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The palette of the command {} is skipped, it has errors", file);
+		} else {
+			palette.load_file(file.string(), parser.get_file_node());
+		}
+	}
+	if (palette.size() == 0) {
+		palette.use_builtin_colours();
+	}
+	return palette.size();
+}
+
 std::size_t Dataloader::load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const {
 	static constexpr std::string_view provisional_unlocks_file = "common/ov_equipment/provisional_unlocks.txt";
 
@@ -1192,6 +1208,7 @@ bool Dataloader::load_defines(
 		SPDLOG_INFO(
 			"Loaded {} default unlock keys", load_default_unlocks(definition_manager.get_military_manager().get_default_unlocks())
 		);
+		SPDLOG_INFO("Loaded {} colours of the command palette", load_command_palette(definition_manager.get_military_manager().get_command_palette()));
 	}
 	if (!definition_manager.get_pop_manager().get_culture_manager().load_graphical_culture_type_file(
 		parse_defines(lookup_file(graphical_culture_type_file)).get_file_node()

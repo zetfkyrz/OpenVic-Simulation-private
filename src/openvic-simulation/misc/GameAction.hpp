@@ -154,7 +154,8 @@ X(start_army_research, country_index_t, std::uint32_t) \
 X(cancel_army_research, country_index_t, std::uint32_t) \
 X(upgrade_regiment, country_index_t, unique_id_t) \
 X(set_division_template_companies, country_index_t, std::uint32_t, DivisionCompanies) \
-X(set_army_group_orders, country_index_t, std::uint32_t, bool)
+X(set_army_group_orders, country_index_t, std::uint32_t, bool) \
+X(set_army_group_colour, country_index_t, std::uint32_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

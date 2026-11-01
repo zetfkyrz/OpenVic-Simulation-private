@@ -1037,7 +1037,7 @@ bool GameActionManager::VariantVisitor::operator() (reform_army_to_template_argu
 // Groups of armies and field marshals
 bool GameActionManager::VariantVisitor::operator() (create_army_group_argument_t const& argument) const {
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument));
-	return create_army_group(country);
+	return create_army_group(country, instance_manager.definition_manager.get_military_manager().get_command_palette().size());
 }
 
 bool GameActionManager::VariantVisitor::operator() (delete_army_group_argument_t const& argument) const {
@@ -1049,10 +1049,7 @@ bool GameActionManager::VariantVisitor::operator() (delete_army_group_argument_t
 bool GameActionManager::VariantVisitor::operator() (set_army_group_argument_t const& argument) const {
 	const auto [army_id, group_id] = argument;
 	ArmyInstance* const army = find_army(instance_manager, army_id);
-	return army != nullptr && set_army_group(
-		army->get_country(), *army, group_id,
-		static_cast<std::uint32_t>(instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.marshal_max_attached)
-	);
+	return army != nullptr && set_army_group(army->get_country(), *army, group_id, get_marshal_max_attached(instance_manager, army->get_country()));
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_army_group_marshal_argument_t const& argument) const {
@@ -1279,6 +1276,12 @@ bool GameActionManager::VariantVisitor::operator() (upgrade_regiment_argument_t 
 		return false;
 	}
 	return instance_manager.get_unit_instance_manager().upgrade_regiment(country, *army, *regiment, *target);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_colour_argument_t const& argument) const {
+	const auto [country_index, group_id, colour_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return set_army_group_colour(country, group_id, colour_index, instance_manager.definition_manager.get_military_manager().get_command_palette().size());
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_army_group_orders_argument_t const& argument) const {

@@ -28,6 +28,7 @@
 #include <openvic-simulation/politics/PoliticsDynamics.hpp>
 #include <openvic-simulation/politics/PoliticsManager.hpp>
 #include <openvic-simulation/country/CountryParty.hpp>
+#include <openvic-simulation/military/ArmyGroup.hpp>
 #include <openvic-simulation/military/UnitInstanceGroup.hpp>
 #include <openvic-simulation/economy/GoodInstance.hpp>
 #include <openvic-simulation/military/Equipment.hpp>
@@ -1006,6 +1007,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
 	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
 	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
+	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
@@ -1218,7 +1220,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1540,6 +1542,48 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 		}
 	}
 	fmt::println("POP_HISTORY date={} instance_total={} history_total={} equal={}", instance_manager.get_today(), instance_total, history_total, instance_total == history_total);
+}
+
+// --dump-command: the command of the field marshals (B1): COMMAND_PALETTE (the colours), COMMAND_LIMIT (the base, the limit of the defines) and for
+// the countries with the organisation of the army COMMAND_COUNTRY (the armies, the limit of generals of the country, the groups) with a COMMAND_GROUP
+// line for every group (its colour, its marshal, the armies attached). The armies without a group are grey.
+static void run_command_dump(InstanceManager& instance_manager) {
+	MilitaryManager const& military = instance_manager.definition_manager.get_military_manager();
+	CommandPalette const& palette = military.get_command_palette();
+	for (std::size_t index = 0; index < palette.size(); ++index) {
+		colour_t const colour = palette.get_colours()[index];
+		fmt::println("COMMAND_PALETTE index={} rgb={},{},{}", index, static_cast<int>(colour.red), static_cast<int>(colour.green), static_cast<int>(colour.blue));
+	}
+	OpenVicWarDefines const& war = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
+	fmt::println("COMMAND_LIMIT base={} limit={} max_groups={}", war.marshal_max_attached, war.marshal_max_attached_limit, MAX_ARMY_GROUPS);
+	std::size_t with_organisation = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country() || !country.has_army_organisation()) {
+			continue;
+		}
+		with_organisation++;
+		std::size_t ungrouped = 0;
+		for (ArmyInstance const& army : country.get_armies()) {
+			ungrouped += army.get_army_group_id() == 0;
+		}
+		fmt::println(
+			"COMMAND_COUNTRY country={} armies={} generals={} max_attached={} groups={} ungrouped_armies={}", country.get_identifier(), country.get_armies().size(),
+			country.get_leader_count(), get_marshal_max_attached(instance_manager, country), country.get_army_groups().size(), ungrouped
+		);
+		for (ArmyGroup const& group : country.get_army_groups()) {
+			std::size_t attached = 0;
+			for (ArmyInstance const& army : country.get_armies()) {
+				attached += army.get_army_group_id() == group.id;
+			}
+			LeaderInstance const* const marshal = group.marshal_id != 0
+				? instance_manager.get_unit_instance_manager().get_leader_instance_by_unique_id(group.marshal_id) : nullptr;
+			fmt::println(
+				"COMMAND_GROUP country={} id={} colour_index={} marshal={} attached={}/{} execute_orders={}", country.get_identifier(), group.id, group.colour_index,
+				marshal != nullptr ? marshal->get_name() : std::string_view { "-" }, attached, get_marshal_max_attached(instance_manager, country), group.execute_orders ? 1 : 0
+			);
+		}
+	}
+	fmt::println("COMMAND_SUMMARY countries_with_organisation={}", with_organisation);
 }
 
 // --dump-company: the support companies (COMPANY lines) and what they add to the templates of the first countries (COMPANY_TEMPLATE lines)
@@ -1897,6 +1941,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_companies) {
 		run_company_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_command) {
+		run_command_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -2138,6 +2185,8 @@ int main(int argc, char const* argv[]) {
 			dump_techtree = true;
 		} else if (strcmp(arg, "--dump-company") == 0) {
 			dump_companies = true;
+		} else if (strcmp(arg, "--dump-command") == 0) {
+			dump_command = true;
 		} else if (strcmp(arg, "--dump-pop") == 0) {
 			dump_pop = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {

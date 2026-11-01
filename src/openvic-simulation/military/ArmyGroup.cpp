@@ -1,16 +1,22 @@
 #include "ArmyGroup.hpp"
 
 #include <algorithm>
+#include <limits>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/military/Leader.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
+#include "openvic-simulation/military/MilitaryManager.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/modifier/ModifierManager.hpp"
+#include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
+using namespace OpenVic::NodeTools;
 
 fixed_point_t OpenVic::calculate_leader_supply_bonus(
 	LeaderInstance const& leader, ModifierEffectCache const& modifier_effect_cache, OpenVicSupplyDefines const& defines
@@ -28,12 +34,83 @@ fixed_point_t OpenVic::calculate_leader_supply_bonus(
 	return bonus;
 }
 
-bool OpenVic::create_army_group(CountryInstance& country) {
+std::size_t CommandPalette::load_file(std::string_view source, ast::NodeCPtr root) {
+	colours.clear();
+	const bool parsed = expect_dictionary_keys_and_default(
+		[source](std::string_view key, ast::NodeCPtr) -> bool {
+			spdlog::warn_s("Unknown key \"{}\" in the palette of the command {}", key, source);
+			return true;
+		},
+		"colour", ZERO_OR_MORE, expect_colour([this](colour_t colour) -> bool {
+			colours.push_back(colour);
+			return true;
+		})
+	)(root);
+	if (!parsed) {
+		spdlog::warn_s("The palette of the command {} is broken, what could be read is loaded", source);
+	}
+	return colours.size();
+}
+
+void CommandPalette::use_builtin_colours() {
+	colours.clear();
+	// Distinct hues that read on the map and on the dark panel
+	static constexpr std::uint8_t builtin[][3] = {
+		{ 214, 62, 62 }, { 62, 120, 214 }, { 70, 170, 84 }, { 224, 168, 40 }, { 150, 84, 190 }, { 54, 176, 176 },
+		{ 224, 112, 40 }, { 200, 80, 150 }, { 130, 170, 40 }, { 90, 90, 200 }, { 170, 120, 70 }, { 120, 200, 140 }
+	};
+	for (auto const& rgb : builtin) {
+		colours.push_back(colour_t::from_rgb((static_cast<std::uint32_t>(rgb[0]) << 16) | (static_cast<std::uint32_t>(rgb[1]) << 8) | rgb[2]));
+	}
+}
+
+std::uint32_t OpenVic::get_marshal_max_attached(InstanceManager const& instance_manager, CountryInstance const& country) {
+	OpenVicWarDefines const& war = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	std::int32_t value = war.marshal_max_attached;
+	if (cache.get_attached_generals_add() != nullptr) {
+		value += country.get_modifier_effect_value(*cache.get_attached_generals_add()).floor<std::int32_t>();
+	}
+	return static_cast<std::uint32_t>(std::clamp(value, 1, std::max(1, war.marshal_max_attached_limit)));
+}
+
+bool OpenVic::create_army_group(CountryInstance& country, const std::size_t palette_size) {
 	if (!country.has_army_organisation() || country.get_army_groups().size() >= MAX_ARMY_GROUPS) {
 		return false;
 	}
-	country.get_mutable_army_groups().push_back({ country.take_army_group_id(), 0 });
+	// The first colour of the palette that no other group of the country has (all taken: the one that is used the least, the first of them)
+	std::uint32_t colour_index = 0;
+	if (palette_size > 0) {
+		std::uint32_t best_uses = std::numeric_limits<std::uint32_t>::max();
+		for (std::uint32_t candidate = 0; candidate < palette_size; ++candidate) {
+			std::uint32_t uses = 0;
+			for (ArmyGroup const& group : country.get_army_groups()) {
+				uses += group.colour_index == candidate;
+			}
+			if (uses < best_uses) {
+				best_uses = uses;
+				colour_index = candidate;
+			}
+		}
+	}
+	country.get_mutable_army_groups().push_back({ country.take_army_group_id(), 0, true, colour_index });
 	return true;
+}
+
+bool OpenVic::set_army_group_colour(CountryInstance& country, const std::uint32_t group_id, const std::uint32_t colour_index, const std::size_t palette_size) {
+	if (!country.has_army_organisation() || colour_index >= palette_size) {
+		return false;
+	}
+	for (ArmyGroup& group : country.get_mutable_army_groups()) {
+		if (group.id == group_id) {
+			if (group.colour_index == colour_index) {
+				return false;
+			}
+			group.colour_index = colour_index;
+			return true;
+		}
+	}
+	return false;
 }
 
 namespace {
@@ -157,6 +234,21 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 	for (ArmyInstance& army : country.get_armies()) {
 		if (army.get_army_group_id() != 0 && country.find_army_group(army.get_army_group_id()) == nullptr) {
 			army.set_army_group_id(0);
+		}
+	}
+	// A colour out of the palette (an old save, another palette) is replaced by the first colour of the palette; the armies over the limit of
+	// the field marshal (the limit fell) leave the group, the last armies of the country first
+	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
+	const std::uint32_t max_attached = get_marshal_max_attached(instance_manager, country);
+	for (ArmyGroup& group : groups) {
+		if (palette_size > 0 && group.colour_index >= palette_size) {
+			group.colour_index = 0;
+		}
+		std::uint32_t attached = 0;
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.get_army_group_id() == group.id && ++attached > max_attached) {
+				army.set_army_group_id(0);
+			}
 		}
 	}
 }
