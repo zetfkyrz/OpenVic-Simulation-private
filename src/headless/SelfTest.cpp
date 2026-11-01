@@ -3811,6 +3811,29 @@ namespace {
 		fs::remove_all(temp, ec);
 	}
 
+	// The budget of the AI countries (CountryAI::balance_budget): after some months a country that spent more than it earned has raised its taxes, none goes over the top
+	void test_ai_budget(Results& r, InstanceManager& im) {
+		OpenVicAIDefines const& ai = im.definition_manager.get_define_manager().get_openvic_defines().ai;
+		PopManager const& pop_manager = im.definition_manager.get_pop_manager();
+		std::size_t raised = 0, over_the_top = 0, player_changed = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || country.get_owned_provinces().empty()) {
+				continue;
+			}
+			for (Strata const& strata : pop_manager.get_stratas()) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
+				if (country.is_ai()) {
+					raised += rate > fixed_point_t::_0_50;
+					over_the_top += rate > ai.budget_max_tax.fixed();
+				} else {
+					player_changed += rate != fixed_point_t::_0_50;
+				}
+			}
+		}
+		r.check(ai.budget_enabled == 0 || raised > 0, "AI budget: a country that spends more than it earns raises its taxes", fmt::format("{} strata raised", raised));
+		r.check(over_the_top == 0 && player_changed == 0, "AI budget: the taxes stay under BUDGET_MAX_TAX and the sliders of a player are not touched");
+	}
+
 	// The fish of the whole world: the output of the fishing grounds is multiplied by FISH_OUTPUT_MULTIPLIER once after the loading (the files give 2.2)
 	void test_fish_output(Results& r, InstanceManager& im) {
 		DefinitionManager const& definitions = im.definition_manager;
@@ -4460,6 +4483,7 @@ namespace {
 		test_scoped_modifiers(r, *im);
 		test_trade_and_hunger(r, *im);
 		test_population_monthly(r, *im); // ticks days too
+		test_ai_budget(r, *im);
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();
 

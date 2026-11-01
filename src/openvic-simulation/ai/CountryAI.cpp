@@ -14,6 +14,7 @@
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
 #include "openvic-simulation/economy/production/ProductionType.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
+#include "openvic-simulation/population/PopManager.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
@@ -96,6 +97,54 @@ namespace {
 			SPDLOG_INFO("AI: {} builds {} (return {:.2f} a year)", country.get_identifier(), best.building_type->get_identifier(),
 				static_cast<double>(best.return_per_year));
 			instance_manager.run_game_action_now<build_factory_argument_t>(country.index, key->index, best.building_type->index);
+		}
+	}
+
+	// The budget of the AI country (OV_AI_DEFINES BUDGET_*): the sliders of the AI used to stay at 0.5 for ever, so a poor country spent twice its income,
+	// the treasury was empty and the budgets (the army pay too) were cut every day. Deterministic: only the state of the country is read.
+	void balance_budget(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+		if (ai.budget_enabled == 0) {
+			return;
+		}
+		const fixed_point_t spending = country.projected_spending.get_untracked();
+		const fixed_point_t income = country.get_income_yesterday();
+		if (spending <= fixed_point_t::_0 || income <= fixed_point_t::_0) {
+			return; // the first days: nothing was collected yet
+		}
+		const fixed_point_t cash = country.get_cash_stockpile().load();
+		const fixed_point_t reserve = spending * ai.budget_reserve_days;
+		const fixed_point_t step = ai.budget_step.fixed();
+		PopManager const& pop_manager = instance_manager.definition_manager.get_pop_manager();
+
+		if (cash < reserve && income < spending) {
+			bool taxes_at_top = true;
+			for (Strata const& strata : pop_manager.get_stratas()) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
+				const fixed_point_t top = std::min(ai.budget_max_tax.fixed(), country.get_tax_rate_slider_value_by_strata(strata).get_max());
+				if (rate < top) {
+					country.set_strata_tax_rate_slider_value(strata, std::min(top, rate + step));
+					taxes_at_top = false;
+				}
+			}
+			if (taxes_at_top) {
+				const fixed_point_t floor = ai.budget_min_spending.fixed();
+				country.set_military_spending_slider_value(std::max(floor, country.get_military_spending_slider_value().get_value_untracked() - step));
+				country.set_administration_spending_slider_value(std::max(floor, country.get_administration_spending_slider_value().get_value_untracked() - step));
+				country.set_education_spending_slider_value(std::max(floor, country.get_education_spending_slider_value().get_value_untracked() - step));
+			}
+		} else if (cash > reserve * 2 && income * Rate::DENOMINATOR > spending * ai.budget_surplus_ratio.numerator) {
+			const fixed_point_t middle = fixed_point_t::_0_50;
+			for (Strata const& strata : pop_manager.get_stratas()) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
+				if (rate > middle) {
+					country.set_strata_tax_rate_slider_value(strata, std::max(middle, rate - step));
+				}
+			}
+			const auto restore = [&](fixed_point_t value) { return value < middle ? std::min(middle, value + step) : value; };
+			country.set_military_spending_slider_value(restore(country.get_military_spending_slider_value().get_value_untracked()));
+			country.set_administration_spending_slider_value(restore(country.get_administration_spending_slider_value().get_value_untracked()));
+			country.set_education_spending_slider_value(restore(country.get_education_spending_slider_value().get_value_untracked()));
 		}
 	}
 
@@ -241,6 +290,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			continue;
 		}
 
+		balance_budget(instance_manager, country);
 		build_factory(instance_manager, country);
 		choose_ai_production_types(instance_manager, country);
 		colonise(instance_manager, country);

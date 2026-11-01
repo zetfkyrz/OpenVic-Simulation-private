@@ -122,7 +122,17 @@ namespace OpenVic {
 	RATE(WAR_REGIMENTS_PER_PROVINCE, war_regiments_per_province, Rate(300, 1000), 0, 100) \
 	INT(MIN_WAR_REGIMENTS, min_war_regiments, 3, 0, 1000) \
 	INT(MAX_RECRUITS_PER_MONTH, max_recruits_per_month, 3, 0, 1000) \
-	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100)
+	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100) \
+	/* The budget of an AI country, once a month (docs/POPULATION.md A2-b): when the treasury holds less than BUDGET_RESERVE_DAYS days of the spending */ \
+	/* and the income of yesterday is under the spending, the taxes of all strata go up by BUDGET_STEP (to BUDGET_MAX_TAX), and when they are at the top the */ \
+	/* military, administration and education spending go down by BUDGET_STEP (to BUDGET_MIN_SPENDING). With a surplus (income over BUDGET_SURPLUS_RATIO x */ \
+	/* the spending and twice the reserve in the treasury) the sliders go back toward 0.5 by the step. 0 = the sliders of the AI stay where they are */ \
+	INT(BUDGET_ENABLED, budget_enabled, 1, 0, 1) \
+	RATE(BUDGET_STEP, budget_step, Rate(5, 100), 0, 1) \
+	INT(BUDGET_RESERVE_DAYS, budget_reserve_days, 30, 0, 3650) \
+	RATE(BUDGET_MAX_TAX, budget_max_tax, Rate(80, 100), 0, 1) \
+	RATE(BUDGET_MIN_SPENDING, budget_min_spending, Rate(20, 100), 0, 1) \
+	RATE(BUDGET_SURPLUS_RATIO, budget_surplus_ratio, Rate(130, 100), 1, 100)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(20, 100), 0, 1) \
 	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \
