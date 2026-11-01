@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -29,6 +30,19 @@ namespace OpenVic {
 	// get_marshal_max_attached (ov_war.MARSHAL_MAX_ATTACHED plus the modifier attached_generals_add of the country, never more than
 	// ov_war.MARSHAL_MAX_ATTACHED_LIMIT). Every group has a colour of the palette (common/ov_command/palette.txt): the marshal, his generals
 	// (the armies of the group) and, on the map, their marks have it; the armies without a group are grey.
+	// A theatre (B4): a named group of field marshals (groups of armies) and of their fronts. A group belongs to exactly one theatre; the first theatre of the
+	// country is the main one ("Основной", the name is empty and the interface shows the localised one): it is made by itself, cannot be deleted and takes every
+	// group that has no theatre. The theatre that the panel of the commanders shows is a matter of the interface, not of the state.
+	inline constexpr std::size_t THEATRE_NAME_BYTES = 48;
+	using theatre_name_t = std::array<std::uint8_t, THEATRE_NAME_BYTES>; // UTF-8, the rest is zeros; empty: the default name of the interface
+
+	struct Theatre {
+		std::uint32_t id = 0;
+		theatre_name_t name {};
+		std::uint32_t colour_index = 0; // the colour of the frame, an index of the palette of the command
+		std::uint32_t focus_province = 0; // the number of the province the camera turns to, 0: none
+	};
+
 	struct ArmyGroup {
 		std::uint32_t id = 0;
 		unique_id_t marshal_id = 0; // the unique id of the general, 0 if there is none
@@ -39,6 +53,7 @@ namespace OpenVic {
 		std::uint32_t plan_front_id = 0; // 0: no plan
 		std::uint32_t plan_mode = 0; // 0: attack the enemy land next to the line, 1: hold the line
 		bool plan_active = false;
+		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 	};
 
 	// The palette of the colours of the field marshals (ov_data/common/ov_command/palette.txt: colour = { r g b } lines). A new group takes the first
@@ -75,6 +90,17 @@ namespace OpenVic {
 
 	// The commands (false if nothing changed or the command is not allowed)
 	bool create_army_group(CountryInstance& country, std::size_t palette_size);
+	// The theatres (B4). Only the countries with the organisation of the army have them
+	bool create_theatre(CountryInstance& country, std::size_t palette_size, std::size_t max_theatres);
+	// The main theatre cannot be deleted; its groups go to the main one
+	bool delete_theatre(CountryInstance& country, std::uint32_t theatre_id);
+	bool rename_theatre(CountryInstance& country, std::uint32_t theatre_id, theatre_name_t const& name);
+	bool set_theatre_colour(CountryInstance& country, std::uint32_t theatre_id, std::uint32_t colour_index, std::size_t palette_size);
+	// province_number 0 takes the focus away; the province has to exist and to be land
+	bool set_theatre_focus(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t theatre_id, std::uint32_t province_number);
+	bool set_army_group_theatre(CountryInstance& country, std::uint32_t group_id, std::uint32_t theatre_id);
+	// The id of the main theatre of the country (0 if it has none)
+	[[nodiscard]] std::uint32_t get_main_theatre_id(CountryInstance const& country);
 	// The colour of the group (an index of the palette): the player recolours his field marshal
 	bool set_army_group_colour(CountryInstance& country, std::uint32_t group_id, std::uint32_t colour_index, std::size_t palette_size);
 	// The front is held by the group (held) or let go; the front is the country's and is not held by another group

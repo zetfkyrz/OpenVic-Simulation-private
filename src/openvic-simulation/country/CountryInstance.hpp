@@ -530,6 +530,9 @@ namespace OpenVic {
 		// The groups of armies (military/ArmyGroup.hpp)
 		memory::vector<ArmyGroup> army_groups;
 		std::uint32_t next_army_group_id = 1;
+		// The theatres of the groups (military/ArmyGroup.hpp): the first is the main one
+		memory::vector<Theatre> theatres;
+		std::uint32_t next_theatre_id = 1;
 		fixed_point_t PROPERTY(supply_limit_global_base);
 		fixed_point_t PROPERTY(supply_limit_multiplier, fixed_point_t::_1);
 		fixed_point_t PROPERTY(supply_home_bonus);
@@ -856,6 +859,23 @@ namespace OpenVic {
 		}
 		std::uint32_t take_army_group_id() {
 			return next_army_group_id++;
+		}
+		[[nodiscard]] std::span<const Theatre> get_theatres() const {
+			return theatres;
+		}
+		[[nodiscard]] Theatre const* find_theatre(const std::uint32_t id) const {
+			for (Theatre const& theatre : theatres) {
+				if (theatre.id == id) {
+					return &theatre;
+				}
+			}
+			return nullptr;
+		}
+		memory::vector<Theatre>& get_mutable_theatres() {
+			return theatres;
+		}
+		std::uint32_t take_theatre_id() {
+			return next_theatre_id++;
 		}
 		[[nodiscard]] std::span<const DivisionTemplate> get_division_templates() const {
 			return division_templates;

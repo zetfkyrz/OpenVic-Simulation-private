@@ -114,6 +114,15 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army_group.plan_front_id));
 			hasher.add(static_cast<std::uint64_t>(army_group.plan_mode));
 			hasher.add(army_group.plan_active ? 1 : 0);
+			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
+		}
+		for (Theatre const& theatre : country.get_theatres()) {
+			hasher.add(static_cast<std::uint64_t>(theatre.id));
+			hasher.add(static_cast<std::uint64_t>(theatre.colour_index));
+			hasher.add(static_cast<std::uint64_t>(theatre.focus_province));
+			for (const std::uint8_t byte : theatre.name) {
+				hasher.add(static_cast<std::uint64_t>(byte));
+			}
 		}
 		for (DivisionTemplate const& division_template : country.get_division_templates()) {
 			hasher.add(static_cast<std::uint64_t>(division_template.id));

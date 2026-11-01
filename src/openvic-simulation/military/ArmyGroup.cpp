@@ -8,6 +8,8 @@
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/military/Leader.hpp"
+#include "openvic-simulation/map/MapInstance.hpp"
+#include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
 #include "openvic-simulation/military/MilitaryManager.hpp"
 #include "openvic-simulation/military/War.hpp"
@@ -75,6 +77,147 @@ std::uint32_t OpenVic::get_marshal_max_attached(InstanceManager const& instance_
 	return static_cast<std::uint32_t>(std::clamp(value, 1, std::max(1, war.marshal_max_attached_limit)));
 }
 
+namespace {
+	// The first colour of the palette that is used the least by the given colours (the first of them): the same in every run
+	std::uint32_t pick_free_colour(std::span<const std::uint32_t> used, const std::size_t palette_size) {
+		std::uint32_t colour_index = 0;
+		std::uint32_t best_uses = std::numeric_limits<std::uint32_t>::max();
+		for (std::uint32_t candidate = 0; candidate < palette_size; ++candidate) {
+			std::uint32_t uses = 0;
+			for (const std::uint32_t value : used) {
+				uses += value == candidate;
+			}
+			if (uses < best_uses) {
+				best_uses = uses;
+				colour_index = candidate;
+			}
+		}
+		return colour_index;
+	}
+
+	// The main theatre is made when a country with the organisation of the army needs one
+	void ensure_main_theatre(CountryInstance& country, const std::size_t palette_size) {
+		if (country.get_theatres().empty()) {
+			Theatre theatre;
+			theatre.id = country.take_theatre_id();
+			theatre.colour_index = pick_free_colour({}, palette_size);
+			country.get_mutable_theatres().push_back(theatre);
+		}
+	}
+}
+
+std::uint32_t OpenVic::get_main_theatre_id(CountryInstance const& country) {
+	return country.get_theatres().empty() ? 0 : country.get_theatres().front().id;
+}
+
+bool OpenVic::create_theatre(CountryInstance& country, const std::size_t palette_size, const std::size_t max_theatres) {
+	if (!country.has_army_organisation()) {
+		return false;
+	}
+	ensure_main_theatre(country, palette_size);
+	if (country.get_theatres().size() >= max_theatres) {
+		return false;
+	}
+	std::vector<std::uint32_t> used;
+	for (Theatre const& theatre : country.get_theatres()) {
+		used.push_back(theatre.colour_index);
+	}
+	Theatre theatre;
+	theatre.id = country.take_theatre_id();
+	theatre.colour_index = pick_free_colour(used, palette_size);
+	country.get_mutable_theatres().push_back(theatre);
+	return true;
+}
+
+bool OpenVic::delete_theatre(CountryInstance& country, const std::uint32_t theatre_id) {
+	memory::vector<Theatre>& theatres = country.get_mutable_theatres();
+	if (theatres.empty() || theatres.front().id == theatre_id) {
+		return false;
+	}
+	const auto it = std::find_if(theatres.begin(), theatres.end(), [theatre_id](Theatre const& theatre) -> bool {
+		return theatre.id == theatre_id;
+	});
+	if (it == theatres.end()) {
+		return false;
+	}
+	const std::uint32_t main_id = theatres.front().id;
+	theatres.erase(it);
+	for (ArmyGroup& group : country.get_mutable_army_groups()) {
+		if (group.theatre_id == theatre_id) {
+			group.theatre_id = main_id;
+		}
+	}
+	return true;
+}
+
+bool OpenVic::rename_theatre(CountryInstance& country, const std::uint32_t theatre_id, theatre_name_t const& name) {
+	for (Theatre& theatre : country.get_mutable_theatres()) {
+		if (theatre.id == theatre_id) {
+			if (theatre.name == name) {
+				return false;
+			}
+			theatre.name = name;
+			theatre.name.back() = 0; // always ends
+			return true;
+		}
+	}
+	return false;
+}
+
+bool OpenVic::set_theatre_colour(CountryInstance& country, const std::uint32_t theatre_id, const std::uint32_t colour_index, const std::size_t palette_size) {
+	if (colour_index >= palette_size) {
+		return false;
+	}
+	for (Theatre& theatre : country.get_mutable_theatres()) {
+		if (theatre.id == theatre_id) {
+			if (theatre.colour_index == colour_index) {
+				return false;
+			}
+			theatre.colour_index = colour_index;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool OpenVic::set_theatre_focus(InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t theatre_id, const std::uint32_t province_number) {
+	if (province_number != 0) {
+		if (province_number > std::numeric_limits<std::uint16_t>::max()) {
+			return false;
+		}
+		ProvinceInstance const* const province = instance_manager.get_map_instance().get_province_instance_from_number(static_cast<std::uint16_t>(province_number));
+		if (province == nullptr || province->province_definition.is_water()) {
+			return false;
+		}
+	}
+	for (Theatre& theatre : country.get_mutable_theatres()) {
+		if (theatre.id == theatre_id) {
+			if (theatre.focus_province == province_number) {
+				return false;
+			}
+			theatre.focus_province = province_number;
+			return true;
+		}
+	}
+	return false;
+}
+
+bool OpenVic::set_army_group_theatre(CountryInstance& country, const std::uint32_t group_id, const std::uint32_t theatre_id) {
+	if (country.find_theatre(theatre_id) == nullptr) {
+		return false;
+	}
+	for (ArmyGroup& group : country.get_mutable_army_groups()) {
+		if (group.id == group_id) {
+			if (group.theatre_id == theatre_id) {
+				return false;
+			}
+			group.theatre_id = theatre_id;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool OpenVic::create_army_group(CountryInstance& country, const std::size_t palette_size) {
 	if (!country.has_army_organisation() || country.get_army_groups().size() >= MAX_ARMY_GROUPS) {
 		return false;
@@ -94,7 +237,10 @@ bool OpenVic::create_army_group(CountryInstance& country, const std::size_t pale
 			}
 		}
 	}
-	country.get_mutable_army_groups().push_back({ country.take_army_group_id(), 0, true, colour_index });
+	ensure_main_theatre(country, palette_size);
+	ArmyGroup group { country.take_army_group_id(), 0, true, colour_index };
+	group.theatre_id = get_main_theatre_id(country);
+	country.get_mutable_army_groups().push_back(group);
 	return true;
 }
 
@@ -330,6 +476,7 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 			stop_plan(instance_manager, group);
 		}
 		groups.clear();
+		country.get_mutable_theatres().clear();
 		for (ArmyInstance& army : country.get_armies()) {
 			army.set_army_group_id(0);
 		}
@@ -364,7 +511,17 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 	release_orphan_fronts(instance_manager, country);
 	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
 	const std::uint32_t max_attached = get_marshal_max_attached(instance_manager, country);
+	ensure_main_theatre(country, palette_size);
+	for (Theatre& theatre : country.get_mutable_theatres()) {
+		if (palette_size > 0 && theatre.colour_index >= palette_size) {
+			theatre.colour_index = 0;
+		}
+	}
+	const std::uint32_t main_theatre_id = get_main_theatre_id(country);
 	for (ArmyGroup& group : groups) {
+		if (country.find_theatre(group.theatre_id) == nullptr) {
+			group.theatre_id = main_theatre_id; // a group always belongs to one theatre
+		}
 		if (palette_size > 0 && group.colour_index >= palette_size) {
 			group.colour_index = 0;
 		}

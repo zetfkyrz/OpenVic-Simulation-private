@@ -1302,6 +1302,42 @@ bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_active_a
 	return set_army_group_plan_active(instance_manager, country, group_id, active);
 }
 
+bool GameActionManager::VariantVisitor::operator() (create_theatre_argument_t const& argument) const {
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument));
+	return create_theatre(
+		country, instance_manager.definition_manager.get_military_manager().get_command_palette().size(),
+		static_cast<std::size_t>(instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.theatres_max)
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_theatre_argument_t const& argument) const {
+	const auto [country_index, theatre_id] = argument;
+	return delete_theatre(instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), theatre_id);
+}
+
+bool GameActionManager::VariantVisitor::operator() (rename_theatre_argument_t const& argument) const {
+	const auto [country_index, theatre_id, name] = argument;
+	return rename_theatre(instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), theatre_id, name);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_theatre_colour_argument_t const& argument) const {
+	const auto [country_index, theatre_id, colour_index] = argument;
+	return set_theatre_colour(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), theatre_id, colour_index,
+		instance_manager.definition_manager.get_military_manager().get_command_palette().size()
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_theatre_focus_argument_t const& argument) const {
+	const auto [country_index, theatre_id, province_number] = argument;
+	return set_theatre_focus(instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), theatre_id, province_number);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_army_group_theatre_argument_t const& argument) const {
+	const auto [country_index, group_id, theatre_id] = argument;
+	return set_army_group_theatre(instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), group_id, theatre_id);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_army_group_orders_argument_t const& argument) const {
 	const auto [country_index, group_id, execute] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

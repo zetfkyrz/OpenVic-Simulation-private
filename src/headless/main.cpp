@@ -1007,6 +1007,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-template : Print the TEMPLATE lines: what the division templates of the first countries are worth (attack, defence, durability, cost, supplies...).");
 	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
 	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
+	fmt::println(file, "    --dump-theatre : Stage the commands of a country (theatres, field marshals, names, focus) and print the THEATRE lines.");
 	fmt::println(file, "    --dump-front : Stage a war of two neighbours (the AI plans for both), run 60 days and print the FRONT lines: the fronts, the armies on them, the provinces that changed hands.");
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
@@ -1221,7 +1222,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false, dump_front = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false, dump_front = false, dump_theatre = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1543,6 +1544,84 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 		}
 	}
 	fmt::println("POP_HISTORY date={} instance_total={} history_total={} equal={}", instance_manager.get_today(), instance_total, history_total, instance_total == history_total);
+}
+
+// --dump-theatre: the theatres (B4). The first country with the organisation of the army and armies gets three groups of armies (field marshals) and
+// three theatres (the main one and two made here, one with a name and a camera focus); THEATRE lines show every theatre with its marshals and divisions
+// and THEATRE_GROUP lines the group of every marshal (docs/COMMAND.md)
+static void run_theatre_dump(InstanceManager& instance_manager) {
+	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
+	const std::size_t max_theatres = static_cast<std::size_t>(instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.theatres_max);
+	CountryInstance* country = nullptr;
+	for (CountryInstance& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 6) {
+			country = &candidate;
+			break;
+		}
+	}
+	if (country == nullptr) {
+		fmt::println("THEATRE FAIL no country with the organisation of the army and six armies");
+		return;
+	}
+	for (int index = 0; index < 3; ++index) {
+		create_army_group(*country, palette_size);
+	}
+	create_theatre(*country, palette_size, max_theatres);
+	create_theatre(*country, palette_size, max_theatres);
+	theatre_name_t name {};
+	const std::string_view text = "Северный театр";
+	std::copy(text.begin(), text.end(), name.begin());
+	const std::uint32_t second_id = country->get_theatres()[1].id;
+	const std::uint32_t third_id = country->get_theatres()[2].id;
+	rename_theatre(*country, second_id, name);
+	for (ProvinceInstance const* province : country->get_owned_provinces()) {
+		if (!province->province_definition.is_water()) {
+			set_theatre_focus(instance_manager, *country, second_id, static_cast<std::uint32_t>(province->province_definition.get_province_number()));
+			break;
+		}
+	}
+	// three armies in each group, the second group to the second theatre, the third to the third
+	std::size_t army_index = 0;
+	for (ArmyGroup const& group : country->get_army_groups()) {
+		for (std::size_t count = 0; count < 2 && army_index < country->get_armies().size(); ++count, ++army_index) {
+			set_army_group(*country, country->get_armies()[army_index].get(), group.id, get_marshal_max_attached(instance_manager, *country));
+		}
+	}
+	set_army_group_theatre(*country, country->get_army_groups()[1].id, second_id);
+	set_army_group_theatre(*country, country->get_army_groups()[2].id, third_id);
+	std::vector<unique_id_t> marshals;
+	for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+		if (!leader.is_marshal() && leader.get_can_be_used() && marshals.size() < 2) {
+			marshals.push_back(leader.unique_id);
+		}
+	}
+	for (std::size_t index = 0; index < marshals.size(); ++index) {
+		set_army_group_marshal(instance_manager, *country, country->get_army_groups()[index].id, marshals[index]);
+	}
+	fmt::println("THEATRE_COUNTRY country={} theatres={} max={} groups={}", country->get_identifier(), country->get_theatres().size(), max_theatres, country->get_army_groups().size());
+	for (Theatre const& theatre : country->get_theatres()) {
+		std::size_t groups = 0, marshal_count = 0, armies = 0, divisions = 0;
+		for (ArmyGroup const& group : country->get_army_groups()) {
+			if (group.theatre_id != theatre.id) {
+				continue;
+			}
+			groups++;
+			marshal_count += group.marshal_id != 0;
+			for (ArmyInstance const& army : country->get_armies()) {
+				if (army.get_army_group_id() == group.id) {
+					armies++;
+					divisions += army.get_divisions().size();
+				}
+			}
+		}
+		fmt::println(
+			"THEATRE id={} main={} name=\"{}\" colour_index={} focus_province={} groups={} marshals={} armies={} divisions={}", theatre.id, theatre.id == get_main_theatre_id(*country) ? 1 : 0,
+			std::string_view { reinterpret_cast<const char*>(theatre.name.data()) }, theatre.colour_index, theatre.focus_province, groups, marshal_count, armies, divisions
+		);
+	}
+	for (ArmyGroup const& group : country->get_army_groups()) {
+		fmt::println("THEATRE_GROUP id={} theatre={} colour_index={} marshal={}", group.id, group.theatre_id, group.colour_index, group.marshal_id != 0 ? 1 : 0);
+	}
 }
 
 // --dump-front: a war of two neighbouring countries with armies, run for -e days (60 by default); every 10 days the FRONT lines show the fronts of both,
@@ -2117,6 +2196,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_front) {
 		run_front_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_theatre) {
+		run_theatre_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -2358,6 +2440,8 @@ int main(int argc, char const* argv[]) {
 			dump_techtree = true;
 		} else if (strcmp(arg, "--dump-company") == 0) {
 			dump_companies = true;
+		} else if (strcmp(arg, "--dump-theatre") == 0) {
+			dump_theatre = true;
 		} else if (strcmp(arg, "--dump-front") == 0) {
 			dump_front = true;
 		} else if (strcmp(arg, "--dump-command") == 0) {

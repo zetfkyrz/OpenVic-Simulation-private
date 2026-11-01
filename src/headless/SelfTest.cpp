@@ -3864,6 +3864,109 @@ namespace {
 		war_manager.delete_front(*country, front_id);
 	}
 
+	// ---- the theatres of the field marshals (B4)
+
+	void test_theatres(Results& r, InstanceManager& im) {
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_army_groups().empty() && candidate.get_theatres().size() <= 1
+				&& !candidate.get_owned_provinces().empty()) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO theatres: no country without groups, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		const std::size_t max_theatres = static_cast<std::size_t>(im.definition_manager.get_define_manager().get_openvic_defines().war.theatres_max);
+		r.check(max_theatres == 8, "theatres: a country has 8 theatres at most by default");
+
+		// The main theatre is made by itself with the first group, and takes it
+		r.check(create_army_group(*country, palette_size), "theatres: a group is created");
+		const std::uint32_t main_id = get_main_theatre_id(*country);
+		r.check(country->get_theatres().size() == 1 && main_id != 0 && country->get_army_groups().back().theatre_id == main_id,
+			"theatres: a country with the organisation has the main theatre (made by the daily update or by the first group) and its first group belongs to it");
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+
+		// A second theatre, its colour, its name, its focus
+		r.check(create_theatre(*country, palette_size, max_theatres) && country->get_theatres().size() == 2, "theatres: a second theatre is created");
+		const std::uint32_t second_id = country->get_theatres().back().id;
+		r.check(country->get_theatres()[0].colour_index != country->get_theatres()[1].colour_index, "theatres: the theatres take different colours of the palette");
+		r.check(set_theatre_colour(*country, second_id, 9, palette_size) && country->find_theatre(second_id)->colour_index == 9 && !set_theatre_colour(*country, second_id, 9, palette_size)
+				&& !set_theatre_colour(*country, second_id, static_cast<std::uint32_t>(palette_size), palette_size) && !set_theatre_colour(*country, 9999, 1, palette_size),
+			"theatres: the colour of the frame is changed (a colour of the palette, a known theatre, a change)");
+		theatre_name_t name {};
+		const std::string_view text = "Северный театр"; // UTF-8
+		std::copy(text.begin(), text.end(), name.begin());
+		r.check(rename_theatre(*country, second_id, name) && country->find_theatre(second_id)->name == name && !rename_theatre(*country, second_id, name) && !rename_theatre(*country, 9999, name),
+			"theatres: a theatre is renamed (UTF-8 in 48 bytes)");
+		theatre_name_t full_name;
+		full_name.fill(0x41);
+		rename_theatre(*country, second_id, full_name);
+		r.check(country->find_theatre(second_id)->name.back() == 0, "theatres: a name always ends with a zero");
+		rename_theatre(*country, second_id, name);
+		ProvinceInstance const* land = nullptr;
+		for (ProvinceInstance const* province : country->get_owned_provinces()) {
+			if (!province->province_definition.is_water()) {
+				land = province;
+				break;
+			}
+		}
+		const std::uint32_t number = land != nullptr ? static_cast<std::uint32_t>(land->province_definition.get_province_number()) : 0;
+		r.check(number != 0 && set_theatre_focus(im, *country, second_id, number) && country->find_theatre(second_id)->focus_province == number && !set_theatre_focus(im, *country, second_id, number),
+			"theatres: the camera focus is a land province of the map");
+		r.check(!set_theatre_focus(im, *country, second_id, 99999) && !set_theatre_focus(im, *country, second_id, 70000) && set_theatre_focus(im, *country, second_id, 0) && country->find_theatre(second_id)->focus_province == 0,
+			"theatres: a province that does not exist is refused, 0 takes the focus away");
+
+		// A marshal moves to another theatre
+		r.check(set_army_group_theatre(*country, group_id, second_id) && country->find_army_group(group_id)->theatre_id == second_id && !set_army_group_theatre(*country, group_id, second_id)
+				&& !set_army_group_theatre(*country, group_id, 9999) && !set_army_group_theatre(*country, 9999, second_id),
+			"theatres: a marshal goes to another theatre (once, a known theatre and group)");
+		// The theatre is deleted: the main one takes its marshals; the main one stays
+		r.check(!delete_theatre(*country, main_id) && !delete_theatre(*country, 9999), "theatres: the main theatre and an unknown one are not deleted");
+		r.check(delete_theatre(*country, second_id) && country->find_army_group(group_id)->theatre_id == main_id && country->get_theatres().size() == 1,
+			"theatres: a deleted theatre gives its marshals to the main one");
+		// A group of a theatre that is gone belongs to the main one after the daily update
+		country->get_mutable_army_groups().back().theatre_id = 9999;
+		update_army_groups(im, *country);
+		r.check(country->find_army_group(group_id)->theatre_id == main_id, "theatres: a group of a theatre that does not exist goes to the main theatre by the daily update");
+		// The limit
+		std::size_t made = 0;
+		while (create_theatre(*country, palette_size, max_theatres)) {
+			++made;
+		}
+		r.check(country->get_theatres().size() == max_theatres && made == max_theatres - 1, "theatres: no more than the limit");
+
+		// The name goes through the replay (the commands are saved as text)
+		{
+			rename_theatre_argument_t::underlying_type value {};
+			std::get<1>(value) = 1;
+			std::get<2>(value) = name;
+			std::vector<ReplayEntry> entries;
+			entries.push_back({ 1, game_action_t(std::in_place_type<rename_theatre_argument_t>, std::as_const(value)) });
+			std::vector<ReplayEntry> loaded;
+			const bool parsed = Replay::deserialise(Replay::serialise(entries), loaded);
+			r.check(parsed && loaded.size() == 1 && std::holds_alternative<rename_theatre_argument_t>(loaded[0].action)
+					&& std::get<2>(type_safe::get(std::get<rename_theatre_argument_t>(loaded[0].action))) == name,
+				"theatres: the name of a theatre goes through the text of the replay unchanged");
+		}
+
+		// clean up: the groups and the theatres of the test
+		const std::vector<std::uint32_t> theatre_ids = [&]() {
+			std::vector<std::uint32_t> ids;
+			for (Theatre const& theatre : country->get_theatres()) {
+				ids.push_back(theatre.id);
+			}
+			return ids;
+		}();
+		for (const std::uint32_t id : theatre_ids) {
+			delete_theatre(*country, id);
+		}
+		delete_army_group(im, *country, group_id);
+	}
+
 	// ---- a fleet goes into a port of its country
 
 	void test_fleet_to_port(Results& r, InstanceManager& im) {
@@ -4834,6 +4937,7 @@ namespace {
 		test_group_limit(r, *im);
 		test_command_colours(r, *im);
 		test_command_plan(r, *im);
+		test_theatres(r, *im);
 		test_fleet_to_port(r, *im);
 		test_supply_delivery(r, *im);
 		test_supply_through_enemy(r, *im);

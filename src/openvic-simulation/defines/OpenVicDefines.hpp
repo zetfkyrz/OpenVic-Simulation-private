@@ -324,6 +324,8 @@ namespace OpenVic {
 	/* technologies raises it, but never above the limit */ \
 	INT(MARSHAL_MAX_ATTACHED, marshal_max_attached, 12, 1, 64) \
 	INT(MARSHAL_MAX_ATTACHED_LIMIT, marshal_max_attached_limit, 48, 1, 64) \
+	/* How many theatres of the field marshals a country can have (the main one included) */ \
+	INT(THEATRES_MAX, theatres_max, 8, 1, 32) \
 	/* 1: the transports carry any number of regiments (for now); 0: REGIMENTS_PER_TRANSPORT of every transport ship */ \
 	INT(TRANSPORT_UNLIMITED, transport_unlimited, 1, 0, 1) \
 	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \

@@ -10,6 +10,7 @@
 #include <type_safe/strong_typedef.hpp>
 
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/population/PopIdInProvince.hpp"
 #include "openvic-simulation/types/TypedIndices.hpp"
@@ -158,7 +159,13 @@ X(set_army_group_orders, country_index_t, std::uint32_t, bool) \
 X(set_army_group_colour, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_army_group_front, country_index_t, std::uint32_t, std::uint32_t, bool) \
 X(set_army_group_plan, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t) \
-X(set_army_group_plan_active, country_index_t, std::uint32_t, bool)
+X(set_army_group_plan_active, country_index_t, std::uint32_t, bool) \
+X(create_theatre, country_index_t) \
+X(delete_theatre, country_index_t, std::uint32_t) \
+X(rename_theatre, country_index_t, std::uint32_t, theatre_name_t) \
+X(set_theatre_colour, country_index_t, std::uint32_t, std::uint32_t) \
+X(set_theatre_focus, country_index_t, std::uint32_t, std::uint32_t) \
+X(set_army_group_theatre, country_index_t, std::uint32_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action
