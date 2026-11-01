@@ -1400,6 +1400,8 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 	GoodInstanceManager const& good_instances = instance_manager.get_good_instance_manager();
 	for (std::size_t index = 0; index < countries.size() && index < 3; ++index) {
 		CountryInstance const& country = *countries[index];
+		fmt::println("POP_BUDGET country={} cash={:.0f} military_cut={} administration_cut={} education_cut={} social_cut={}", country.get_identifier(), static_cast<double>(country.get_cash_stockpile().load()),
+			country.get_was_military_budget_cut_yesterday(), country.get_was_administration_budget_cut_yesterday(), country.get_was_education_budget_cut_yesterday(), country.get_was_social_budget_cut_yesterday());
 		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
 			double life_sum = 0.0, size_sum = 0.0;
 			Pop const* sample = nullptr;
