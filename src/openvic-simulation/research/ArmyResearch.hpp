@@ -45,5 +45,6 @@ namespace OpenVic {
 
 	// Every day (before the modifier sums): the start technologies of the countries that became civilised, the progress of the research,
 	// the AI choosing a technology for a free slot
-	void update_army_research(InstanceManager& instance_manager);
+	// allow_ai_choice is false when the game is set up: the player is not known yet (every country is an AI one until a command says otherwise)
+	void update_army_research(InstanceManager& instance_manager, bool allow_ai_choice = true);
 }

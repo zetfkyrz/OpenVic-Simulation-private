@@ -308,8 +308,9 @@ namespace OpenVic {
 	INT(TEMPLATE_COMPANY_SLOTS_DEFAULT, template_company_slots_default, 1, 0, 8) \
 	INT(TEMPLATE_COMPANY_SLOTS_MAX, template_company_slots_max, 4, 0, 8) \
 	/* 1: the provisional unlocks of the year (ov_data/common/ov_equipment/provisional_unlocks.txt) give the weapons and the limits of the */ \
-	/* templates by the year of the game; 0 (the default) when the technologies of the army give them (TEMPORARY, docs/PENDING_PLANS.md) */ \
-	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 0, 0, 1) \
+	/* templates by the year of the game to the AI countries (the player researches himself; not on the first day, the player is not known yet); */ \
+	/* 0 when the technologies of the army give them to everyone (TEMPORARY, docs/PENDING_PLANS.md) */ \
+	INT(PROVISIONAL_UNLOCKS_ENABLED, provisional_unlocks_enabled, 1, 0, 1) \
 	/* What a template is worth (military/DivisionStats.cpp): the men of a strength point of a regiment, the kit and the men weigh this many */ \
 	/* kilograms per strength point, the occupation speed 1 is the base (technologies add to it, from this percent it is instant) */ \
 	INT(TEMPLATE_MEN_PER_STRENGTH, template_men_per_strength, 1000, 1, 100000) \
@@ -394,9 +395,15 @@ namespace OpenVic {
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1) \
 	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them (the uncivilised have none) */ \
 	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 1, 0, 1) \
-	/* 1: the AI countries start the available technology with the lowest year_hint when their slot of a branch is free */ \
-	INT(ARMY_RESEARCH_AI_ENABLED, army_research_ai_enabled, 1, 0, 1) \
-	/* 1 (for now): the technologies and the inventions of Victoria 2 work as in the base game. 0: the countries have none of them from the start, do not research */ 	/* and do not invent (the definitions stay loaded, the history of the countries names them), the research of OpenVic (ov_data/common/ov_technology) takes their */ 	/* place. With 0 the economy loses their effects (the farms and mines +50 % and +30 %, tax efficiency, factories, the supply...), see docs/PENDING_PLANS.md */ 	INT(VIC2_TECHNOLOGIES_ENABLED, vic2_technologies_enabled, 1, 0, 1)
+	/* 1: the AI countries start the available technology with the lowest year_hint when their slot of a branch is free. 0 (the default): the AI does not */ \
+	/* research by these rules; the weapons and the limits of the templates come to the AI countries by the year (ov_war PROVISIONAL_UNLOCKS_ENABLED, */ \
+	/* TEMPORARY until the AI researches by new rules, docs/PENDING_PLANS.md). The player researches himself */ \
+	INT(ARMY_RESEARCH_AI_ENABLED, army_research_ai_enabled, 0, 0, 1) \
+	/* 1 (for now): the technologies and the inventions of Victoria 2 work as in the base game. 0: the countries have none of them from the start, do not */ \
+	/* research and do not invent (the definitions stay loaded, the history of the countries names them), the research of OpenVic (the technologies of */ \
+	/* ov_data/common/ov_technology) takes their place. With 0 the economy loses their effects (the farms and mines +50 % and +30 %, tax efficiency, */ \
+	/* factories, the supply...), see docs/PENDING_PLANS.md */ \
+	INT(VIC2_TECHNOLOGIES_ENABLED, vic2_technologies_enabled, 1, 0, 1)
 #define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 12, 1, 64) \
 	INT(FACTORY_VALUE_PAYBACK_YEARS, factory_value_payback_years, 6, 1, 1000) \

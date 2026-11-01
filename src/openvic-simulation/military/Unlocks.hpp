@@ -83,8 +83,9 @@ namespace OpenVic {
 	};
 	void apply_default_unlocks(InstanceManager& instance_manager);
 
-	// Every day (one thread, before the modifier sums): the steps whose year has come give their keys and modifiers to every country
-	void update_provisional_unlocks(InstanceManager& instance_manager);
+	// Every day (one thread, before the modifier sums): the steps whose year has come give their keys and modifiers to every AI country (the player
+	// researches himself). with_provisional is false when the game is set up: the player is not known yet and would get the first step
+	void update_provisional_unlocks(InstanceManager& instance_manager, bool with_provisional = true);
 	// The same for a given year (the tests)
 	void apply_provisional_unlocks(InstanceManager& instance_manager, int year);
 

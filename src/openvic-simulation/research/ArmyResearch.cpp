@@ -147,7 +147,7 @@ std::size_t OpenVic::choose_ai_army_technology(InstanceManager const& instance_m
 	return best;
 }
 
-void OpenVic::update_army_research(InstanceManager& instance_manager) {
+void OpenVic::update_army_research(InstanceManager& instance_manager, const bool allow_ai_choice) {
 	ArmyTechnologyManager const& manager = technologies_of(instance_manager);
 	if (manager.size() == 0) {
 		return;
@@ -182,7 +182,7 @@ void OpenVic::update_army_research(InstanceManager& instance_manager) {
 		}
 
 		// The AI starts a technology in every free slot
-		if (country.is_ai() && research_defines.army_research_ai_enabled != 0) {
+		if (allow_ai_choice && country.is_ai() && research_defines.army_research_ai_enabled != 0) {
 			for (std::size_t branch_index = 0; branch_index < manager.get_branches().size(); ++branch_index) {
 				if (find_army_research(manager, country, branch_index) != nullptr) {
 					continue;

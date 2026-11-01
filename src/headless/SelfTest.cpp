@@ -608,6 +608,19 @@ namespace {
 			}
 		}
 
+		// ---- the player researches himself: a country that is not an AI one gets nothing from the layer (and catches up when the AI is switched on)
+		{
+			const std::uint32_t steps_before = other->get_provisional_unlock_steps_applied();
+			other->set_provisional_unlock_steps_applied(0);
+			other->set_ai(false);
+			apply_provisional_unlocks(im, 1900);
+			r.check(other->get_provisional_unlock_steps_applied() == 0, "unlocks: the provisional layer gives nothing to a country of the player");
+			other->set_ai(true);
+			apply_provisional_unlocks(im, 1900);
+			r.check(other->get_provisional_unlock_steps_applied() > 0, "unlocks: the AI that plays for the player catches up with the steps of the layer");
+			other->set_provisional_unlock_steps_applied(steps_before);
+		}
+
 		// ---- the switch: without the layer nothing is given
 		{
 			OpenVicWarDefines& mutable_war = const_cast<OpenVicWarDefines&>(war);
@@ -1486,10 +1499,11 @@ namespace {
 			country.update_modifier_sum(im.get_today(), modifier_manager.get_static_modifier_cache());
 		};
 
-		// The AI countries have been researching since the first day: both countries are put back to the start (only the start technologies)
+		// The provisional layer of the year (the AI countries) gave the keys of the weapons: the three countries are put back to the start (only the start
+		// technologies); the AI does not research by default, the test of the AI switches it on
 		const std::int32_t ai_before = research_defines.army_research_ai_enabled;
 		research_defines.army_research_ai_enabled = 0;
-		for (CountryInstance* const country : { civilised, other }) {
+		for (CountryInstance* const country : { civilised, other, uncivilised }) {
 			for (ArmyTechnology const& technology : manager.get_technologies()) {
 				country->unmark_army_technology_researched(static_cast<std::uint32_t>(technology.index));
 				for (memory::string const& key : technology.unlocks) {
@@ -1597,8 +1611,17 @@ namespace {
 			}
 			r.check(first, "army research: the AI takes the first available technology in the order of the files");
 			other->get_army_research_mutable().clear();
+			research_defines.army_research_ai_enabled = 1;
 			update_army_research(im);
-			r.check(!other->get_army_research().empty(), "army research: a free slot of an AI country is filled by the daily update");
+			r.check(!other->get_army_research().empty(), "army research: a free slot of an AI country is filled by the daily update when ARMY_RESEARCH_AI_ENABLED = 1");
+			// the player (not an AI country) is never given a research by the AI, and neither is the first call of the setup of the game
+			other->get_army_research_mutable().clear();
+			update_army_research(im, false);
+			r.check(other->get_army_research().empty(), "army research: the setup of the game (the player is not known yet) does not start a research of the AI");
+			other->set_ai(false);
+			update_army_research(im);
+			r.check(other->get_army_research().empty(), "army research: a country of the player does not get a research from the AI");
+			other->set_ai(true);
 			research_defines.army_research_ai_enabled = 0;
 			other->get_army_research_mutable().clear();
 			update_army_research(im);

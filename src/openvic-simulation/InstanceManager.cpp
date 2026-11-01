@@ -501,8 +501,9 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 	}
 	OV_ERR_FAIL_COND_V_MSG(!all_has_state, false, "At least one land province has no state");
 
-	update_provisional_unlocks(*this);
-	update_army_research(*this);
+	// The player is not known yet (he is made a non-AI country by a command): no provisional unlocks and no choice of the AI in the first call
+	update_provisional_unlocks(*this, false);
+	update_army_research(*this, false);
 	update_modifier_sums();
 	map_instance.initialise_for_new_game(*this);
 	// The regiments of the start of the game are put into divisions (out of the template) and the armies of the countries without the

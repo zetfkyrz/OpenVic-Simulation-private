@@ -51,7 +51,7 @@ namespace OpenVic {
 		// 31: the commanders: a group holds at most ov_war.MARSHAL_MAX_ATTACHED (8) armies, the switch of the orders of a group (set_army_group_orders)
 		// 32: the natural growth of the population from ov_data/common/ov_population/growth.txt (by country, culture group, culture, year), the medicine and the
 		//     sanitation multiply it; the population change of the month in the top bar
-		inline constexpr int SIMULATION_VERSION = 33;
+		inline constexpr int SIMULATION_VERSION = 34;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

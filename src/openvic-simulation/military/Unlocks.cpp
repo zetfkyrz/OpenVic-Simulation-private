@@ -134,9 +134,11 @@ void OpenVic::apply_default_unlocks(InstanceManager& instance_manager) {
 	}
 }
 
-void OpenVic::update_provisional_unlocks(InstanceManager& instance_manager) {
+void OpenVic::update_provisional_unlocks(InstanceManager& instance_manager, const bool with_provisional) {
 	apply_default_unlocks(instance_manager);
-	apply_provisional_unlocks(instance_manager, static_cast<int>(instance_manager.get_today().get_year()));
+	if (with_provisional) {
+		apply_provisional_unlocks(instance_manager, static_cast<int>(instance_manager.get_today().get_year()));
+	}
 }
 
 void OpenVic::apply_provisional_unlocks(InstanceManager& instance_manager, const int year) {
@@ -148,6 +150,9 @@ void OpenVic::apply_provisional_unlocks(InstanceManager& instance_manager, const
 	const std::span<const ProvisionalUnlockStep> steps = provisional.get_steps();
 
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.is_ai()) {
+			continue; // the player researches himself; an AI that plays for him catches up with the steps when it is switched on
+		}
 		std::uint32_t applied = country.get_provisional_unlock_steps_applied();
 		while (applied < steps.size() && steps[applied].year <= year) {
 			ProvisionalUnlockStep const& step = steps[applied];
