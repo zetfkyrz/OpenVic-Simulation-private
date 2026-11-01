@@ -34,6 +34,7 @@
 #include <openvic-simulation/military/Equipment.hpp>
 #include <openvic-simulation/military/Companies.hpp>
 #include <openvic-simulation/economy/production/RgoBuilding.hpp>
+#include <openvic-simulation/population/PopDynamics.hpp>
 #include <openvic-simulation/population/PopulationGrowth.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
 #include <openvic-simulation/research/ArmyResearch.hpp>
@@ -3988,6 +3989,21 @@ namespace {
 		r.check(in_supply == ships, "ship lumber: the lumber is a durable supply item of the ship (its monthly share is NAVY_SUPPLY_DURABLE_SHARE of the build amount)");
 	}
 
+	// The migration to free jobs (PopDynamics::job_migration_take, JOB_MIGRATION_*): 5 % of the unemployed, a few of the employed when the place pays more
+	void test_job_migration(Results& r, InstanceManager& im) {
+		OpenVicPopulationDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().population;
+		using PopDynamics::job_migration_take;
+		r.check(job_migration_take(defines, 1000, 9000, false, 10000, 1000000) == 50, "job migration: 5 % of 1000 unemployed go, the employed stay when the place does not pay more");
+		r.check(job_migration_take(defines, 1000, 9000, true, 10000, 1000000) == 50 + 18, "job migration: 0.2 % of the 9000 employed go as well when the place pays much more");
+		r.check(job_migration_take(defines, 3, 0, false, 10, 1000000) == 1 && job_migration_take(defines, 0, 1000, false, 1000, 1000) == 0,
+			"job migration: at least one of a few unemployed goes, nobody goes when none is unemployed and the place does not pay more");
+		r.check(job_migration_take(defines, 1000, 0, false, 10000, 20) == 20 && job_migration_take(defines, 500, 0, false, 30, 1000) == 25 && job_migration_take(defines, 5, 0, false, 1, 1000) == 0,
+			"job migration: not more than the room of the place and never the last person of the pop");
+		PopManager const& pop_manager = im.definition_manager.get_pop_manager();
+		r.check(pop_manager.job_migrated_total >= pop_manager.job_retrained_total && pop_manager.job_retrained_total >= 0,
+			"job migration: the people who changed the type are some of those who moved", fmt::format("{} moved, {} changed the type", pop_manager.job_migrated_total, pop_manager.job_retrained_total));
+	}
+
 	// The fish of the whole world: the output of the fishing grounds is multiplied by FISH_OUTPUT_MULTIPLIER once after the loading (the files give 2.2)
 	void test_fish_output(Results& r, InstanceManager& im) {
 		DefinitionManager const& definitions = im.definition_manager;
@@ -4640,6 +4656,7 @@ namespace {
 		test_trade_and_hunger(r, *im);
 		test_population_monthly(r, *im); // ticks days too
 		test_ai_budget(r, *im);
+		test_job_migration(r, *im);
 		test_rgo_buildings(r, *im); // ticks days too
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();

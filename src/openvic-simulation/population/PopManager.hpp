@@ -106,6 +106,15 @@ namespace OpenVic {
 		// An addition of the OpenVic rules: all the pops (but the slaves) need a little timber and lumber every day
 		void add_wood_needs(GoodDefinition const* timber, GoodDefinition const* lumber, fixed_point_t timber_need, fixed_point_t lumber_need);
 
+		// The people that moved to free jobs of the RGOs (job migration, PopDynamics) since the start, and how many of them changed the type: for the dumps and the tests,
+		// not a state of the game (the numbers are worked out by the simulation again in a replay)
+		mutable std::int64_t job_migrated_total = 0;
+		mutable std::int64_t job_retrained_total = 0;
+		void record_job_migration(const std::int64_t moved, const std::int64_t retrained) const {
+			job_migrated_total += moved;
+			job_retrained_total += retrained;
+		}
+
 		bool load_pop_bases_into_vector(
 			RebelManager const& rebel_manager, memory::vector<PopBase>& vec, PopType const& type, ast::NodeCPtr pop_node,
 			bool *non_integer_size

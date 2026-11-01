@@ -163,7 +163,15 @@ namespace OpenVic {
 	/* The surplus moves inside the country to provinces with free jobs of the same pop type, and abroad only when the whole country */ \
 	/* has no free jobs; at most this share of the free jobs of a destination is filled per month */ \
 	RATE(IMMIGRATION_FILL_SHARE, immigration_fill_share, Rate(50, 100), 0, 1) \
-	INT(STARVATION_MIN_SURPLUS, starvation_min_surplus, 1, 0, 1000000)
+	INT(STARVATION_MIN_SURPLUS, starvation_min_surplus, 1, 0, 1000000) \
+	/* The migration to free jobs of the resource gathering operations (docs/POPULATION.md A3): every month JOB_MIGRATION_UNEMPLOYED_SHARE of the unemployed */ \
+	/* of a pop go to a free job in the region or the next region of the country (the type of the pop changes when the job is of another type, farmer -> labourer); */ \
+	/* the best place is the one where the RGO pays most for a worker. JOB_MIGRATION_PROFIT_SHARE of the employed move too when the place pays at least */ \
+	/* JOB_MIGRATION_PROFIT_RATIO times more (fruit -> metal). 0 = off */ \
+	INT(JOB_MIGRATION_ENABLED, job_migration_enabled, 1, 0, 1) \
+	RATE(JOB_MIGRATION_UNEMPLOYED_SHARE, job_migration_unemployed_share, Rate(5, 100), 0, 1) \
+	RATE(JOB_MIGRATION_PROFIT_SHARE, job_migration_profit_share, Rate(2, 1000), 0, 1) \
+	FIXED(JOB_MIGRATION_PROFIT_RATIO, job_migration_profit_ratio, fixed_point_t::_1 + fixed_point_t::_0_50, 1, 100)
 #define OV_POLITICS_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	DOUBLE(LEANING_ARISTOCRATS_REACTIONARY, leaning_aristocrats_reactionary, 0.45, 0, 1) \
 	DOUBLE(LEANING_ARISTOCRATS_CONSERVATIVE, leaning_aristocrats_conservative, 0.45, 0, 1) \

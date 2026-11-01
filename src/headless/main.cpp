@@ -1414,13 +1414,14 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 				static_cast<double>(country.get_projected_administration_spending_unscaled_by_slider_untracked()), static_cast<double>(country.get_projected_education_spending_unscaled_by_slider_untracked()), tax);
 		}
 		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
-			double life_sum = 0.0, size_sum = 0.0;
+			double life_sum = 0.0, size_sum = 0.0, unemployed_sum = 0.0;
 			Pop const* sample = nullptr;
 			for (ProvinceInstance const* province : country.get_owned_provinces()) {
 				for (Pop const& pop : province->get_pops()) {
 					if (&pop.get_type() == &pop_type && type_safe::get(pop.get_size()) > 0) {
 						life_sum += static_cast<double>(pop.get_life_needs_fulfilled()) * type_safe::get(pop.get_size());
 						size_sum += type_safe::get(pop.get_size());
+						unemployed_sum += type_safe::get(pop.get_unemployed());
 						sample = sample == nullptr ? &pop : sample;
 					}
 				}
@@ -1437,7 +1438,7 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 					static_cast<double>(good->get_total_demand_yesterday())
 				);
 			}
-			fmt::println("POP_NEEDS country={} type={} people={:.0f} life_needs_avg={:.3f} life_needs_goods={}", country.get_identifier(), pop_type.get_identifier(), size_sum, life_sum / size_sum, goods);
+			fmt::println("POP_NEEDS country={} type={} people={:.0f} unemployed={:.0f} life_needs_avg={:.3f} life_needs_goods={}", country.get_identifier(), pop_type.get_identifier(), size_sum, unemployed_sum, life_sum / size_sum, goods);
 		}
 	}
 	{
@@ -1470,6 +1471,7 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 			fmt::println("RGO_BUILDINGS type={} provinces={} building_now={}{}", name, counts.provinces, counts.building, levels);
 		}
 	}
+	fmt::println("POP_JOB_MIGRATION moved={} changed_the_type={}", definitions.get_pop_manager().job_migrated_total, definitions.get_pop_manager().job_retrained_total);
 	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
 
 	std::int64_t history_total = 0, instance_total = 0;

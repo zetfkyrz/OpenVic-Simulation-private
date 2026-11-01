@@ -90,6 +90,20 @@ namespace {
 	}
 }
 
+std::int32_t PopDynamics::job_migration_take(
+	OpenVicPopulationDefines const& defines, const std::int32_t unemployed, const std::int32_t employed, const bool pays_more, const std::int32_t pop_size,
+	const std::int32_t room
+) {
+	std::int32_t take = 0;
+	if (unemployed > 0) {
+		take += std::max<std::int32_t>(1, static_cast<std::int32_t>(defines.job_migration_unemployed_share.of_int(unemployed)));
+	}
+	if (pays_more && employed > 0) {
+		take += static_cast<std::int32_t>(defines.job_migration_profit_share.of_int(employed));
+	}
+	return std::max(0, std::min({ take, pop_size - 1, room }));
+}
+
 void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps const& pop_deps) {
 	OpenVicPopulationDefines const& defines =
 		instance_manager.definition_manager.get_define_manager().get_openvic_defines().population;
@@ -195,6 +209,55 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		});
 	}
 
+	// The free jobs of the RGOs by province, with the type of the people the job is for and what the RGO paid a worker yesterday (the places of the job migration)
+	struct RgoPlace {
+		std::int32_t free_jobs = 0;
+		PopType const* job_type = nullptr;
+		fixed_point_t income_per_worker;
+	};
+	const auto rgo_income_per_worker = [](ResourceGatheringOperation const& rgo) -> fixed_point_t {
+		const std::int32_t employees = type_safe::get(rgo.get_total_employees_count_cache());
+		return employees > 0 ? rgo.get_revenue_yesterday() / employees : fixed_point_t::_0;
+	};
+	std::unordered_map<ProvinceInstance const*, RgoPlace> rgo_places;
+	// Only the people of the types that work in RGOs (farmers, labourers) take part: an unemployed clerk does not become a farmer
+	std::unordered_map<PopType const*, bool> rgo_worker_types;
+	if (defines.job_migration_enabled != 0) {
+		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+			if (province.get_owner() == nullptr || province.province_definition.is_water()) {
+				continue;
+			}
+			ResourceGatheringOperation const& rgo = province.get_rgo();
+			ProductionType const* const production_type = rgo.get_production_type_nullable();
+			if (production_type == nullptr) {
+				continue;
+			}
+			const std::int32_t free_jobs = type_safe::get(rgo.get_max_employee_count_cache()) - type_safe::get(rgo.get_total_employees_count_cache());
+			if (free_jobs <= 0) {
+				continue;
+			}
+			// The workers of the RGO: the job with most people (the owner is not a job)
+			PopType const* job_type = nullptr;
+			fixed_point_t most = fixed_point_t::_0;
+			for (Job const& job : production_type->get_jobs()) {
+				PopType const* const candidate = pop_manager.get_pop_type_by_index(job.pop_type_index);
+				if (candidate != nullptr && candidate->can_be_unemployed && !candidate->is_slave && job.amount > most) {
+					job_type = candidate;
+					most = job.amount;
+				}
+			}
+			if (job_type != nullptr) {
+				rgo_places[&province] = { free_jobs, job_type, rgo_income_per_worker(rgo) };
+			}
+			for (Job const& job : production_type->get_jobs()) {
+				if (PopType const* const worker_type = pop_manager.get_pop_type_by_index(job.pop_type_index); worker_type != nullptr && !worker_type->is_slave) {
+					rgo_worker_types[worker_type] = true;
+				}
+			}
+		}
+	}
+	std::int32_t job_migrated_total = 0, job_retrained_total = 0;
+
 	// Moves people of a pop to the free jobs of a country (best places first), returns how many moved
 	const auto move_to_vacancies = [&](
 		Pop& source, ProvinceInstance& source_province, const std::size_t slot, std::int32_t count, const std::int32_t kind
@@ -282,6 +345,36 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				best_destination = destination;
 			}
 		}
+
+		// The best free job in the region or the next region of the country: where the RGO paid a worker most yesterday
+		ProvinceInstance* job_place_province = nullptr;
+		if (defines.job_migration_enabled != 0 && owner != nullptr && !rgo_places.empty()) {
+			fixed_point_t best_income = fixed_point_t(-1);
+			const auto consider = [&](ProvinceInstance* candidate) -> void {
+				if (candidate == &province || candidate->get_owner() != owner) {
+					return;
+				}
+				const auto place = rgo_places.find(candidate);
+				if (place == rgo_places.end() || place->second.free_jobs <= 0) {
+					return;
+				}
+				if (place->second.income_per_worker > best_income) {
+					best_income = place->second.income_per_worker;
+					job_place_province = candidate;
+				}
+			};
+			if (state != nullptr) {
+				for (ProvinceInstance& in_region : state->get_provinces()) {
+					consider(&in_region);
+				}
+			}
+			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !adjacency.get_to().is_water()) {
+					consider(&map_instance.get_province_instance_by_definition(adjacency.get_to()));
+				}
+			}
+		}
+		const fixed_point_t own_income = rgo_income_per_worker(province.get_rgo());
 
 		for (Pop* pop : pops) {
 			const std::int32_t size = type_safe::get(pop->get_size());
@@ -437,6 +530,29 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				}
 			}
 
+			// ---- Job migration: the unemployed (and a few of the employed when the place pays much more) go to a free job of the region or the next region
+			if (job_place_province != nullptr && rgo_worker_types.contains(&type) && pop->get_rebel_type() == nullptr) {
+				RgoPlace& place = rgo_places[job_place_province];
+				const std::int32_t unemployed_now = type_safe::get(pop->get_unemployed());
+				const bool pays_more = place.income_per_worker > fixed_point_t::_0
+					&& place.income_per_worker >= own_income * defines.job_migration_profit_ratio;
+				const std::int32_t room = std::min(
+					place.free_jobs, std::max<std::int32_t>(1, static_cast<std::int32_t>(defines.immigration_fill_share.of_int(place.free_jobs)))
+				);
+				const std::int32_t take = PopDynamics::job_migration_take(
+					defines, unemployed_now, type_safe::get(pop->get_size()) - unemployed_now, pays_more, type_safe::get(pop->get_size()), room
+				);
+				if (take > 0 && place.job_type != nullptr) {
+					if (Pop* target = find_or_create_pop(*job_place_province, *place.job_type, pop->culture, *pop, pop_deps)) {
+						pop->change_size(-take, 3);
+						target->change_size(take, 3);
+						place.free_jobs -= take;
+						job_migrated_total += take;
+						job_retrained_total += place.job_type != &type ? take : 0;
+					}
+				}
+			}
+
 			// ---- Internal migration to a better province: the unemployed and the hungry leave
 			if (best_destination != nullptr && !type.is_slave && type_safe::get(pop->get_size()) > 0
 				&& (unemployment > defines.migration_unemployment_threshold.fixed()
@@ -455,7 +571,8 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	}
 
 	SPDLOG_INFO(
-		"Population changes: grown {}, migrated {}, assimilated {}, promoted to craftsmen {}, died of hunger {}, emigrated inside the country {} and abroad {}",
-		grown_total, migrated_total, assimilated_total, promoted_total, starved_total, emigrated_internal_total, emigrated_external_total
+		"Population changes: grown {}, migrated {}, assimilated {}, promoted to craftsmen {}, died of hunger {}, emigrated inside the country {} and abroad {}, to free jobs {} (changed the type {})",
+		grown_total, migrated_total, assimilated_total, promoted_total, starved_total, emigrated_internal_total, emigrated_external_total, job_migrated_total, job_retrained_total
 	);
+	pop_manager.record_job_migration(job_migrated_total, job_retrained_total);
 }
