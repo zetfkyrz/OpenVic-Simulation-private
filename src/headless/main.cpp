@@ -1377,11 +1377,22 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 				types += fmt::format("{}{}={}", types.empty() ? "" : ",", pop_type.get_identifier(), size);
 			}
 		}
+		// The hunger: the unemployed (the surplus of the jobs of the RGOs), and what the hunger took in the last month (Pop::num_starved)
+		std::int64_t unemployed = 0, starved = 0, hungry_pop_size = 0;
+		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
+			unemployed += type_safe::get(country.get_unemployed_pops_by_type()[pop_type.index]);
+		}
+		for (ProvinceInstance const* province : country.get_owned_provinces()) {
+			for (Pop const& pop : province->get_pops()) {
+				starved += type_safe::get(pop.get_num_starved());
+				hungry_pop_size += pop.get_life_needs_fulfilled() < fixed_point_t(1) / 2 ? type_safe::get(pop.get_size()) : 0;
+			}
+		}
 		fmt::println(
-			"POP country={} total={} change_last_month={} militancy={:.3f} consciousness={:.3f} literacy={:.3f} types={}", country.get_identifier(),
-			type_safe::get(country.get_total_population()), type_safe::get(country.get_population_last_monthly_change()),
+			"POP country={} total={} change_last_month={} militancy={:.3f} consciousness={:.3f} literacy={:.3f} unemployed={} hungry_people={} starved_last_month={} types={}",
+			country.get_identifier(), type_safe::get(country.get_total_population()), type_safe::get(country.get_population_last_monthly_change()),
 			static_cast<double>(country.get_average_militancy()), static_cast<double>(country.get_average_consciousness()),
-			static_cast<double>(country.get_average_literacy()), types
+			static_cast<double>(country.get_average_literacy()), unemployed, hungry_pop_size, starved, types
 		);
 	}
 	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
