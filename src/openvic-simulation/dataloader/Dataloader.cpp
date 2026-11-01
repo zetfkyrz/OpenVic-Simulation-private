@@ -568,6 +568,15 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 	if (GoodDefinition const* const lumber = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("lumber")) {
 		unit_type_manager.add_ship_construction_good(*lumber, definition_manager.get_define_manager().get_openvic_defines().economy.ship_lumber_per_piece);
 	}
+	{
+		// The troops used too much wool, clothes and cattle
+		const fixed_point_t share = definition_manager.get_define_manager().get_openvic_defines().economy.army_cloth_cattle_share.fixed();
+		for (std::string_view identifier : { "wool", "clothes", "luxury_clothes", "cattle" }) {
+			if (GoodDefinition const* const good = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier(identifier)) {
+				unit_type_manager.scale_regiment_good(*good, share);
+			}
+		}
+	}
 
 	if (!unit_type_manager.generate_modifiers(definition_manager.get_modifier_manager())) {
 		spdlog::critical_s("Failed to generate unit-based modifiers!");

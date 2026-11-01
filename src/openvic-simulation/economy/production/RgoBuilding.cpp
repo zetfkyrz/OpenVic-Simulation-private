@@ -198,8 +198,21 @@ void RgoBuildingData::monthly_update(InstanceManager& instance_manager) {
 			if (!rgo.is_valid() || rgo.get_building_days_left() > 0) {
 				continue;
 			}
-			// An RGO that sells its output is worth a level (+staff, +output for ~10 lumber); the unemployed take the new places
-			if (rgo.get_revenue_yesterday() <= fixed_point_t::_0) {
+			// The unemployed of the job pop types of the RGO (at least RGO_BUILDING_MIN_UNEMPLOYMENT of its workers) take the places of a new level
+			pop_sum_t workers = 0, unemployed = 0;
+			std::span<const Job> jobs = rgo.get_production_type_nullable()->get_jobs();
+			for (Job const& job : jobs) {
+				workers += province->get_population_by_type()[job.pop_type_index];
+			}
+			for (Pop const& pop : province->get_pops()) {
+				for (Job const& job : jobs) {
+					if (pop.get_type().index == job.pop_type_index) {
+						unemployed += type_safe::get(pop.get_unemployed());
+						break;
+					}
+				}
+			}
+			if (workers <= 0 || unemployed <= 0 || unemployed * Rate::DENOMINATOR < workers * defines.rgo_building_min_unemployment.numerator) {
 				continue;
 			}
 			rgo_build_result_t result = start_building(instance_manager, *province, rgo_builder_t::POPS);

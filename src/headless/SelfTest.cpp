@@ -3945,6 +3945,23 @@ namespace {
 			"RGO buildings: after the days the level is built and the RGO has 5 % more workplaces", fmt::format("level {} cap {} -> {} (expected {})", rgo.get_building_level(), type_safe::get(cap_before), type_safe::get(cap_after), expected_cap));
 	}
 
+	// The troops use less wool, clothes and cattle (ARMY_CLOTH_CATTLE_SHARE): the cavalry of ov_data has 20 wool in its cost and 0.2 in its supply
+	void test_army_cloth_share(Results& r, InstanceManager& im) {
+		DefinitionManager const& definitions = im.definition_manager;
+		const fixed_point_t share = definitions.get_define_manager().get_openvic_defines().economy.army_cloth_cattle_share.fixed();
+		GoodDefinition const* const wool = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("wool");
+		RegimentType const* const cavalry = definitions.get_military_manager().get_unit_type_manager().get_regiment_type_by_identifier("cavalry");
+		if (wool == nullptr || cavalry == nullptr) {
+			fmt::println("TEST INFO army cloth share: no cavalry of ov_data, not checked");
+			return;
+		}
+		const auto cost = cavalry->get_build_cost().find(wool);
+		const auto supply = cavalry->get_supply_cost().find(wool);
+		r.check(cost != cavalry->get_build_cost().end() && supply != cavalry->get_supply_cost().end() && near(cost->second, fixed_point_t(20) * share, fixed_point_t(1) / 100)
+				&& near(supply->second, fixed_point_t(2) / 10 * share, fixed_point_t(1) / 100),
+			"army cloth share: the wool in the cost and the supply of the cavalry is ARMY_CLOTH_CATTLE_SHARE of the file (half by default)");
+	}
+
 	// The lumber of the ships (SHIP_LUMBER_PER_PIECE): in the build cost of every ship, and 1 % of it (the navy durable share) is the supply of a month
 	void test_ship_lumber(Results& r, InstanceManager& im) {
 		DefinitionManager const& definitions = im.definition_manager;
@@ -4433,6 +4450,7 @@ namespace {
 		test_population_growth(r, *im);
 		test_fish_output(r, *im);
 		test_ship_lumber(r, *im);
+		test_army_cloth_share(r, *im);
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);

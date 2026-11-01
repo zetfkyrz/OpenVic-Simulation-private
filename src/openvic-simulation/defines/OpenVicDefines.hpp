@@ -491,7 +491,11 @@ namespace OpenVic {
 	/* is the most a country starts in a month. RGO_BUILDING_ENABLED 0 turns the buildings off */ \
 	INT(RGO_BUILDING_ENABLED, rgo_building_enabled, 1, 0, 1) \
 	RATE(RGO_BUILDING_STAFF_PER_LEVEL, rgo_building_staff_per_level, Rate(5, 100), 0, 10) \
-	RATE(RGO_BUILDING_OUTPUT_PER_LEVEL, rgo_building_output_per_level, Rate(5, 100), 0, 10) \
+	RATE(RGO_BUILDING_OUTPUT_PER_LEVEL, rgo_building_output_per_level, Rate(10, 100), 0, 10) \
+	/* The pops build a level when the unemployed of the job pop types of the RGO are at least this share of its workers */ \
+	RATE(RGO_BUILDING_MIN_UNEMPLOYMENT, rgo_building_min_unemployment, Rate(1, 100), 0, 1) \
+	/* The land units use this share of the wool, clothes, luxury clothes and cattle of their cost and supply of the files (the troops took too much) */ \
+	RATE(ARMY_CLOTH_CATTLE_SHARE, army_cloth_cattle_share, Rate(50, 100), 0, 1) \
 	INT(RGO_BUILDING_MAX_LEVEL, rgo_building_max_level, 2, 0, 100) \
 	INT(RGO_BUILDING_BUILD_DAYS, rgo_building_build_days, 90, 1, 3650) \
 	FIXED(RGO_BUILDING_LUMBER, rgo_building_lumber, fixed_point_t(10), 0, 100000) \

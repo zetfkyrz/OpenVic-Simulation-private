@@ -131,6 +131,26 @@ void UnitType::add_construction_good(GoodDefinition const& good, const fixed_poi
 	supply_items.push_back({ &good, quantity, false, false });
 }
 
+void UnitType::scale_good(GoodDefinition const& good, const fixed_point_t share) {
+	if (auto it = build_cost.find(&good); it != build_cost.end()) {
+		it.value() = it.value() * share;
+	}
+	if (auto it = supply_cost.find(&good); it != supply_cost.end()) {
+		it.value() = it.value() * share;
+	}
+	for (supply_item_t& item : supply_items) {
+		if (item.good == &good) {
+			item.construction_amount = item.construction_amount * share;
+		}
+	}
+}
+
+void UnitTypeManager::scale_regiment_good(GoodDefinition const& good, const fixed_point_t share) {
+	for (RegimentType const& regiment_type : get_regiment_types()) {
+		const_cast<RegimentType&>(regiment_type).scale_good(good, share); // the registry owns the types non-const
+	}
+}
+
 void UnitTypeManager::add_ship_construction_good(GoodDefinition const& good, const fixed_point_t per_piece) {
 	if (per_piece <= fixed_point_t::_0) {
 		return;

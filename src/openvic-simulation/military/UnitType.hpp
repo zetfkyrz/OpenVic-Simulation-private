@@ -99,6 +99,8 @@ namespace OpenVic {
 		// Wood in the build of a ship (ov_economy SHIP_LUMBER_PER_PIECE): the lumber is in the construction cost and so in the monthly supply (NAVY_SUPPLY_DURABLE_SHARE
 		// of the construction cost, 1 % by default, a month)
 		void add_construction_good(GoodDefinition const& good, fixed_point_t quantity);
+		// Multiplies what the unit's cost, upkeep and supply have of the good (the share of the defines ARMY_CLOTH_CATTLE_SHARE)
+		void scale_good(GoodDefinition const& good, fixed_point_t share);
 
 		UnitType(UnitType&&) = default;
 	};
@@ -224,6 +226,8 @@ namespace OpenVic {
 		void lock_all_unit_types();
 		// Adds to the build cost of every ship `per_piece` of the good for each piece of the cost it has now (once, after the loading)
 		void add_ship_construction_good(GoodDefinition const& good, fixed_point_t per_piece);
+		// The same share of a good for the cost and the supply of every regiment type (once, after the loading)
+		void scale_regiment_good(GoodDefinition const& good, fixed_point_t share);
 
 		bool add_regiment_type(
 			std::string_view identifier, UnitType::unit_type_args_t& unit_args,
