@@ -2112,6 +2112,12 @@ void CountryInstance::update_gamestate(const Date today, MapInstance& map_instan
 	// Order of updates might need to be changed/functions split up to account for dependencies
 	// Updates population stats (including research and leadership points from pops)
 	_update_population();
+	// The month of the population (after the totals of the day): its change is shown in the top bar
+	if (today.get_day() == 1 && population_rolled_month != static_cast<std::uint8_t>(today.get_month())) {
+		const bool first_time = population_rolled_month == 0;
+		population_rolled_month = static_cast<std::uint8_t>(today.get_month());
+		roll_population_month(first_time);
+	}
 	// Calculates industrial power
 	_update_production();
 	// Calculates daily research points and predicts research completion date

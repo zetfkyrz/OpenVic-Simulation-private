@@ -3703,6 +3703,49 @@ namespace {
 		r.check(failed_without_path == 0, "fleet to port: an accepted order has a route");
 	}
 
+	// ---- the population of the start: the pops of the instance are the pops of the history of the start date; the numbers of the top bar come from the sum of them
+
+	void test_population_start(Results& r, InstanceManager& im) {
+		DefinitionManager const& definitions = im.definition_manager;
+		std::int64_t history_total = 0, instance_total = 0, countries_total = 0, unowned_total = 0;
+		for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
+			if (province.province_definition.is_water()) {
+				continue;
+			}
+			const std::int64_t size = type_safe::get(province.get_total_population());
+			instance_total += size;
+			unowned_total += province.get_owner() == nullptr ? size : 0;
+			ProvinceHistoryMap const* const history_map = definitions.get_history_manager().get_province_manager().get_province_history(&province.province_definition);
+			if (history_map == nullptr) {
+				continue;
+			}
+			ProvinceHistoryEntry const* pop_entry = nullptr;
+			for (auto const& [entry_date, entry] : history_map->get_entries()) {
+				if (entry_date > im.get_today() && pop_entry != nullptr) {
+					break;
+				}
+				if (!entry->get_pops().empty()) {
+					pop_entry = entry.get();
+				}
+			}
+			if (pop_entry != nullptr) {
+				for (PopBase const& pop : pop_entry->get_pops()) {
+					history_total += type_safe::get(pop.get_size());
+				}
+			}
+		}
+		bool changes_ok = true;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			countries_total += type_safe::get(country.get_total_population());
+			// at the start the month has been rolled: no change yet, the month started with the whole population
+			changes_ok &= type_safe::get(country.get_population_last_monthly_change()) == 0
+				&& country.get_population_month_start() == country.get_total_population();
+		}
+		r.check(instance_total > 0 && instance_total == history_total, "population: the pops of the start are the pops of the history of the start date (every province)", fmt::format("{} against {}", instance_total, history_total));
+		r.check(countries_total + unowned_total == instance_total, "population: the totals of the countries and of the provinces nobody owns make the world", fmt::format("{} + {} against {}", countries_total, unowned_total, instance_total));
+		r.check(changes_ok, "population: on the first day the change of the month is 0 and the month starts with the whole population");
+	}
+
 	void test_army_groups(Results& r, InstanceManager& im) {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
@@ -4124,6 +4167,7 @@ namespace {
 		if (im == nullptr) {
 			return;
 		}
+		test_population_start(r, *im);
 		const std::uint64_t defines_hash = im->definition_manager.get_define_manager().get_openvic_defines().get_hash();
 		const std::uint64_t start_hash = StateHash::compute(*im);
 		give_orders(*im);

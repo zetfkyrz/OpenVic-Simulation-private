@@ -31,6 +31,16 @@ namespace OpenVic {
 	struct PopsAggregate {
 	private:
 		pop_sum_t PROPERTY(total_population, 0);
+		// The total on the first day of the month and what it changed in the month before (the number in the brackets of the top bar)
+		pop_sum_t PROPERTY(population_month_start, 0);
+		pop_sum_t PROPERTY(population_last_monthly_change, 0);
+	public:
+		// Called on the first day of a month, after the totals of the day are worked out
+		void roll_population_month(const bool first_time) {
+			population_last_monthly_change = first_time ? pop_sum_t { 0 } : pop_sum_t { total_population - population_month_start };
+			population_month_start = total_population;
+		}
+	private:
 		size_t PROPERTY(max_supported_regiment_count, 0);
 		fixed_point_t _yesterdays_import_value_running_total;
 		OV_STATE_PROPERTY(fixed_point_t, yesterdays_import_value); //>= 0

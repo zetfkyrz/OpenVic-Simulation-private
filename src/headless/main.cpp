@@ -1007,6 +1007,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-tech : Print the TECH lines: the army technologies (cell, days, prerequisites, unlocks, modifiers).");
 	fmt::println(file, "    --dump-techtree : Print the TECHTREE lines: the grid of the army technology tree and the lines between the cells.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
+	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
@@ -1217,7 +1218,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1349,6 +1350,68 @@ static void run_tech_tree_dump(InstanceManager& instance_manager) {
 			}
 		}
 	}
+}
+
+// --dump-pop: the population (POP lines): the countries by size with their totals, the change of the last month, the averages and the pop types; POP_WORLD:
+// the world; POP_HISTORY: the total of the pops of the instance against the total of the history of the start date (equal on the first day)
+static void run_pop_dump(InstanceManager& instance_manager) {
+	DefinitionManager const& definitions = instance_manager.definition_manager;
+	std::vector<CountryInstance const*> countries;
+	std::int64_t world = 0, world_change = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (country.exists() && !country.is_rebel_country()) {
+			countries.push_back(&country);
+			world += type_safe::get(country.get_total_population());
+			world_change += type_safe::get(country.get_population_last_monthly_change());
+		}
+	}
+	std::sort(countries.begin(), countries.end(), [](CountryInstance const* a, CountryInstance const* b) {
+		return type_safe::get(a->get_total_population()) > type_safe::get(b->get_total_population());
+	});
+	for (std::size_t index = 0; index < countries.size() && index < 25; ++index) {
+		CountryInstance const& country = *countries[index];
+		std::string types;
+		for (PopType const& pop_type : definitions.get_pop_manager().get_pop_types()) {
+			const std::int64_t size = type_safe::get(country.get_population_by_type()[pop_type.index]);
+			if (size > 0) {
+				types += fmt::format("{}{}={}", types.empty() ? "" : ",", pop_type.get_identifier(), size);
+			}
+		}
+		fmt::println(
+			"POP country={} total={} change_last_month={} militancy={:.3f} consciousness={:.3f} literacy={:.3f} types={}", country.get_identifier(),
+			type_safe::get(country.get_total_population()), type_safe::get(country.get_population_last_monthly_change()),
+			static_cast<double>(country.get_average_militancy()), static_cast<double>(country.get_average_consciousness()),
+			static_cast<double>(country.get_average_literacy()), types
+		);
+	}
+	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
+
+	std::int64_t history_total = 0, instance_total = 0;
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (province.province_definition.is_water()) {
+			continue;
+		}
+		instance_total += type_safe::get(province.get_total_population());
+		ProvinceHistoryMap const* const history_map = definitions.get_history_manager().get_province_manager().get_province_history(&province.province_definition);
+		if (history_map == nullptr) {
+			continue;
+		}
+		ProvinceHistoryEntry const* pop_entry = nullptr;
+		for (auto const& [entry_date, entry] : history_map->get_entries()) {
+			if (entry_date > instance_manager.get_today() && pop_entry != nullptr) {
+				break;
+			}
+			if (!entry->get_pops().empty()) {
+				pop_entry = entry.get();
+			}
+		}
+		if (pop_entry != nullptr) {
+			for (PopBase const& pop : pop_entry->get_pops()) {
+				history_total += type_safe::get(pop.get_size());
+			}
+		}
+	}
+	fmt::println("POP_HISTORY date={} instance_total={} history_total={} equal={}", instance_manager.get_today(), instance_total, history_total, instance_total == history_total);
 }
 
 // --dump-company: the support companies (COMPANY lines) and what they add to the templates of the first countries (COMPANY_TEMPLATE lines)
@@ -1706,6 +1769,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	if (ret && dump_companies) {
 		run_company_dump(*game_manager.get_instance_manager());
 	}
+	if (ret && dump_pop) {
+		run_pop_dump(*game_manager.get_instance_manager());
+	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
 	}
@@ -1943,6 +2009,8 @@ int main(int argc, char const* argv[]) {
 			dump_techtree = true;
 		} else if (strcmp(arg, "--dump-company") == 0) {
 			dump_companies = true;
+		} else if (strcmp(arg, "--dump-pop") == 0) {
+			dump_pop = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");

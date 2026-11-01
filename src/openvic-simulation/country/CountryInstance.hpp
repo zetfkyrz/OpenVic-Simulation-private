@@ -517,6 +517,7 @@ namespace OpenVic {
 		memory::vector<std::uint32_t> army_technologies_researched;
 		memory::vector<ArmyResearchProgress> army_research;
 		bool army_start_technologies_given = false;
+		std::uint8_t population_rolled_month = 0; // the month the population change was last rolled in (once a month)
 		// What the support companies work as today and how much of their goods the stockpile gave (CompanyState), one per company type; empty until the first day
 		memory::vector<CompanyState> company_states;
 		// The groups of armies (military/ArmyGroup.hpp)
