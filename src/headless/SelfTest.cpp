@@ -1536,6 +1536,15 @@ namespace {
 				&& state_of(*civilised, "breech_loading") == tech_state_t::NOT_AVAILABLE,
 			"army research: the states are researched, available (the prerequisites are done) and not available"
 		);
+		const std::int32_t civilised_only_before = research_defines.army_research_civilised_only;
+		r.check(
+			can_start_army_research(im, *uncivilised, index_of("arms_making")) == army_research_check_t::OK
+				&& can_start_army_research(im, *uncivilised, index_of("percussion_cap")) == army_research_check_t::PREREQUISITES,
+			"army research: by default the uncivilised research themselves, from the roots of the tree",
+			fmt::format("arms_making {}, percussion_cap {}, civilised_only {}", static_cast<int>(can_start_army_research(im, *uncivilised, index_of("arms_making"))),
+				static_cast<int>(can_start_army_research(im, *uncivilised, index_of("percussion_cap"))), research_defines.army_research_civilised_only)
+		);
+		research_defines.army_research_civilised_only = 1;
 		r.check(
 			can_start_army_research(im, *uncivilised, index_of("arms_making")) == army_research_check_t::NOT_ALLOWED
 				&& can_start_army_research(im, *civilised, index_of("breech_loading")) == army_research_check_t::PREREQUISITES
@@ -1544,6 +1553,7 @@ namespace {
 				&& can_start_army_research(im, *civilised, index_of("rifling")) == army_research_check_t::OK,
 			"army research: the uncivilised cannot research, nor can one start a technology with open prerequisites, a researched one or one that does not exist"
 		);
+		research_defines.army_research_civilised_only = civilised_only_before;
 
 		// One slot per branch, the days, the unlocks and the modifier
 		r.check(start_army_research(im, *civilised, index_of("rifling")), "army research: a research is started");
@@ -1633,6 +1643,7 @@ namespace {
 		{
 			const std::int32_t only_before = research_defines.army_research_civilised_only;
 			research_defines.army_research_civilised_only = 0;
+			uncivilised->get_army_research_mutable().clear(); // the AI test above may have started one for it
 			r.check(can_start_army_research(im, *uncivilised, index_of("arms_making")) == army_research_check_t::OK, "army research: with ARMY_RESEARCH_CIVILISED_ONLY = 0 the uncivilised may research too");
 			research_defines.army_research_civilised_only = only_before;
 		}

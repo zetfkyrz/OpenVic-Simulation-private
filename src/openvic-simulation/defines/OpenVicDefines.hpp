@@ -393,8 +393,9 @@ namespace OpenVic {
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1) \
-	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them (the uncivilised have none) */ \
-	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 1, 0, 1) \
+	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them. 0 (the default): every country researches */ \
+	/* them itself, the civilised start with the technologies marked start = civilised, the uncivilised with none (they begin from the roots of the tree) */ \
+	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 0, 0, 1) \
 	/* 1: the AI countries start the available technology with the lowest year_hint when their slot of a branch is free. 0 (the default): the AI does not */ \
 	/* research by these rules; the weapons and the limits of the templates come to the AI countries by the year (ov_war PROVISIONAL_UNLOCKS_ENABLED, */ \
 	/* TEMPORARY until the AI researches by new rules, docs/PENDING_PLANS.md). The player researches himself */ \
