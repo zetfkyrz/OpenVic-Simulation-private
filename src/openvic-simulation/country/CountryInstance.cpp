@@ -1236,7 +1236,14 @@ bool CountryInstance::can_research_tech(Technology const& technology, const Date
 	return index_in_area == 0 || is_technology_unlocked(technology.area.get_technologies()[index_in_area - 1]);
 }
 
+bool CountryInstance::are_vic2_technologies_enabled() {
+	return openvic_research_defines == nullptr || openvic_research_defines->vic2_technologies_enabled != 0;
+}
+
 void CountryInstance::start_research(Technology const& technology, const Date today) {
+	if (!are_vic2_technologies_enabled()) {
+		return;
+	}
 	if (OV_unlikely(!can_research_tech(technology, today))) {
 		spdlog::warn_s(
 			"Attempting to start research for country \"{}\" on technology \"{}\" - cannot research this tech!",
@@ -1307,11 +1314,13 @@ bool CountryInstance::apply_history_to_country(
 	}
 	set_optional_state(tech_school, entry.get_tech_school());
 
-	for (auto const& [technology, level] : entry.get_technologies()) {
-		ret &= set_technology_unlock_level(*technology, level);
-	}
-	for (auto const& [invention, activated] : entry.get_inventions()) {
-		ret &= set_invention_unlock_level(*invention, technology_unlock_level_t { static_cast<int8_t>(activated ? 1 : 0) });
+	if (are_vic2_technologies_enabled()) {
+		for (auto const& [technology, level] : entry.get_technologies()) {
+			ret &= set_technology_unlock_level(*technology, level);
+		}
+		for (auto const& [invention, activated] : entry.get_inventions()) {
+			ret &= set_invention_unlock_level(*invention, technology_unlock_level_t { static_cast<int8_t>(activated ? 1 : 0) });
+		}
 	}
 
 	apply_foreign_investments(entry.get_foreign_investment(), country_instance_manager);

@@ -13,6 +13,9 @@
 using namespace OpenVic;
 
 void ResearchDynamics::monthly_update(InstanceManager& instance_manager) {
+	if (!CountryInstance::are_vic2_technologies_enabled()) {
+		return; // no inventions without the technologies of Victoria 2
+	}
 	OpenVicResearchDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().research;
 	TechnologyManager const& technologies = instance_manager.definition_manager.get_research_manager().get_technology_manager();
 	const Date today = instance_manager.get_today();

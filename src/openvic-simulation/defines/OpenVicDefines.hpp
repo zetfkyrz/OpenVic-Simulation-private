@@ -395,7 +395,8 @@ namespace OpenVic {
 	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them (the uncivilised have none) */ \
 	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 1, 0, 1) \
 	/* 1: the AI countries start the available technology with the lowest year_hint when their slot of a branch is free */ \
-	INT(ARMY_RESEARCH_AI_ENABLED, army_research_ai_enabled, 1, 0, 1)
+	INT(ARMY_RESEARCH_AI_ENABLED, army_research_ai_enabled, 1, 0, 1) \
+	/* 1 (for now): the technologies and the inventions of Victoria 2 work as in the base game. 0: the countries have none of them from the start, do not research */ 	/* and do not invent (the definitions stay loaded, the history of the countries names them), the research of OpenVic (ov_data/common/ov_technology) takes their */ 	/* place. With 0 the economy loses their effects (the farms and mines +50 % and +30 %, tax efficiency, factories, the supply...), see docs/PENDING_PLANS.md */ 	INT(VIC2_TECHNOLOGIES_ENABLED, vic2_technologies_enabled, 1, 0, 1)
 #define OV_ECONOMY_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(MAX_FACTORIES_PER_STATE, max_factories_per_state, 12, 1, 64) \
 	INT(FACTORY_VALUE_PAYBACK_YEARS, factory_value_payback_years, 6, 1, 1000) \

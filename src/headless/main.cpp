@@ -1471,6 +1471,46 @@ static void run_pop_dump(InstanceManager& instance_manager) {
 			fmt::println("RGO_BUILDINGS type={} provinces={} building_now={}{}", name, counts.provinces, counts.building, levels);
 		}
 	}
+	{
+		// The modifiers of the first three countries that are not zero (what the technologies and the rest give): compare a run with and without the technologies
+		// of Victoria 2 (-o ov_research.VIC2_TECHNOLOGIES_ENABLED=1) to see which effect of them really works
+		ModifierManager const& modifier_manager = definitions.get_modifier_manager();
+		for (std::size_t index = 0; index < countries.size() && index < 3; ++index) {
+			CountryInstance const& country = *countries[index];
+			std::string line;
+			const auto add_effects = [&](auto const& effects) {
+				for (ModifierEffect const& effect : effects) {
+					const fixed_point_t value = country.get_modifier_effect_value(effect);
+					if (value != fixed_point_t::_0) {
+						line += fmt::format(" {}={:.4f}", effect.get_identifier(), static_cast<double>(value));
+					}
+				}
+			};
+			add_effects(modifier_manager.get_base_country_modifier_effects());
+			add_effects(modifier_manager.get_technology_modifier_effects());
+			fmt::println("POP_MODIFIERS country={}{}", country.get_identifier(), line);
+			// and of the first province of the country that has an RGO (the effects of the technologies on the RGOs are the ones of the province)
+			for (ProvinceInstance const* const province : country.get_owned_provinces()) {
+				if (province->get_rgo().is_valid()) {
+					std::string province_line;
+					for (ModifierEffect const& effect : modifier_manager.get_base_province_modifier_effects()) {
+						const fixed_point_t value = province->get_modifier_effect_value(effect);
+						if (value != fixed_point_t::_0) {
+							province_line += fmt::format(" {}={:.4f}", effect.get_identifier(), static_cast<double>(value));
+						}
+					}
+					for (ModifierEffect const& effect : modifier_manager.get_technology_modifier_effects()) {
+						const fixed_point_t value = province->get_modifier_effect_value(effect);
+						if (value != fixed_point_t::_0) {
+							province_line += fmt::format(" {}={:.4f}", effect.get_identifier(), static_cast<double>(value));
+						}
+					}
+					fmt::println("POP_MODIFIERS_PROVINCE country={}{}", country.get_identifier(), province_line);
+					break;
+				}
+			}
+		}
+	}
 	fmt::println("POP_JOB_MIGRATION moved={} changed_the_type={}", definitions.get_pop_manager().job_migrated_total, definitions.get_pop_manager().job_retrained_total);
 	fmt::println("POP_WORLD countries={} total={} change_last_month={}", countries.size(), world, world_change);
 

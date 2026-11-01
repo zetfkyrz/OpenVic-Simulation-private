@@ -126,6 +126,13 @@ namespace OpenVic {
 		// The reserve of goods the government keeps in the national stockpile is set in the group ov_economy of the
 		// defines; the pointer is set by the InstanceManager (the defines outlive all instances)
 		static inline OpenVicEconomyDefines const* openvic_economy_defines = nullptr;
+		// The technologies and the inventions of Victoria 2 (ov_research VIC2_TECHNOLOGIES_ENABLED): off by default, the countries have none of them,
+		// do not research and do not invent (the definitions stay loaded: the history of the countries names them)
+		static inline OpenVicResearchDefines const* openvic_research_defines = nullptr;
+		static void set_openvic_research_defines(OpenVicResearchDefines const& defines) {
+			openvic_research_defines = &defines;
+		}
+		[[nodiscard]] static bool are_vic2_technologies_enabled();
 		static void set_openvic_economy_defines(OpenVicEconomyDefines const& defines) {
 			openvic_economy_defines = &defines;
 		}
