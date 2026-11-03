@@ -471,20 +471,6 @@ bool GameActionManager::VariantVisitor::operator() (delete_front_argument_t cons
 	return instance_manager.get_war_manager().delete_front(war_action_country(instance_manager, country_index), front_id);
 }
 
-bool GameActionManager::VariantVisitor::operator() (toggle_front_province_argument_t const& argument) const {
-	const auto [country_index, front_id, province_index] = argument;
-
-	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
-	if (OV_unlikely(province == nullptr)) {
-		spdlog::error_s("GAME_ACTION_TOGGLE_FRONT_PROVINCE called with invalid province index: {}", province_index);
-		return false;
-	}
-
-	return instance_manager.get_war_manager().toggle_front_province(
-		war_action_country(instance_manager, country_index), front_id, *province
-	);
-}
-
 bool GameActionManager::VariantVisitor::operator() (set_front_mode_argument_t const& argument) const {
 	const auto [country_index, front_id, mode] = argument;
 	return instance_manager.get_war_manager().set_front_mode(
@@ -1290,10 +1276,10 @@ bool GameActionManager::VariantVisitor::operator() (set_army_group_front_argumen
 	return set_army_group_front(instance_manager, country, group_id, front_id, held);
 }
 
-bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_argument_t const& argument) const {
-	const auto [country_index, group_id, front_id, mode] = argument;
+bool GameActionManager::VariantVisitor::operator() (set_army_group_modes_argument_t const& argument) const {
+	const auto [country_index, group_id, aggression, integrity] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	return set_army_group_plan(instance_manager, country, group_id, front_id, mode);
+	return set_army_group_modes(country, group_id, aggression, integrity);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_active_argument_t const& argument) const {
@@ -1336,6 +1322,69 @@ bool GameActionManager::VariantVisitor::operator() (set_theatre_focus_argument_t
 bool GameActionManager::VariantVisitor::operator() (set_army_group_theatre_argument_t const& argument) const {
 	const auto [country_index, group_id, theatre_id] = argument;
 	return set_army_group_theatre(instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), group_id, theatre_id);
+}
+
+// The lines of the fronts and of the plans of the field marshals (docs/WAR_ASSUMPTIONS.md, section 6)
+bool GameActionManager::VariantVisitor::operator() (create_border_front_argument_t const& argument) const {
+	const auto [country_index, group_id, neighbour_index] = argument;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	CountryInstance& neighbour = war_action_country(instance_manager, neighbour_index);
+	return instance_manager.get_war_manager().create_border_front(instance_manager, country, group_id, neighbour) != 0;
+}
+
+bool GameActionManager::VariantVisitor::operator() (create_coastal_front_argument_t const& argument) const {
+	const auto [country_index, group_id, sea_index] = argument;
+	ProvinceInstance* const sea = instance_manager.get_map_instance().get_province_instance_by_index(sea_index);
+	if (OV_unlikely(sea == nullptr)) {
+		spdlog::error_s("GAME_ACTION_CREATE_COASTAL_FRONT called with invalid province index: {}", sea_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().create_coastal_front(instance_manager, war_action_country(instance_manager, country_index), group_id, *sea) != 0;
+}
+
+bool GameActionManager::VariantVisitor::operator() (toggle_front_edge_argument_t const& argument) const {
+	const auto [country_index, front_id, own_index, other_index] = argument;
+	ProvinceInstance* const own = instance_manager.get_map_instance().get_province_instance_by_index(own_index);
+	ProvinceInstance* const other = instance_manager.get_map_instance().get_province_instance_by_index(other_index);
+	if (OV_unlikely(own == nullptr || other == nullptr)) {
+		spdlog::error_s("GAME_ACTION_TOGGLE_FRONT_EDGE called with invalid province indices: {} {}", own_index, other_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().toggle_front_edge(instance_manager, war_action_country(instance_manager, country_index), front_id, *own, *other);
+}
+
+bool GameActionManager::VariantVisitor::operator() (create_plan_line_argument_t const& argument) const {
+	const auto [country_index, group_id, type, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr || type > static_cast<std::uint32_t>(PlanLine::type_t::NAVAL))) {
+		spdlog::error_s("GAME_ACTION_CREATE_PLAN_LINE called with invalid type or province index: {} {}", type, province_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().create_plan_line(
+		instance_manager, war_action_country(instance_manager, country_index), group_id, static_cast<PlanLine::type_t>(type), *province
+	) != 0;
+}
+
+bool GameActionManager::VariantVisitor::operator() (toggle_plan_line_province_argument_t const& argument) const {
+	const auto [country_index, line_id, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_TOGGLE_PLAN_LINE_PROVINCE called with invalid province index: {}", province_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().toggle_plan_line_province(
+		instance_manager, war_action_country(instance_manager, country_index), line_id, *province
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_plan_line_argument_t const& argument) const {
+	const auto [country_index, line_id] = argument;
+	return instance_manager.get_war_manager().delete_plan_line(war_action_country(instance_manager, country_index), line_id);
+}
+
+bool GameActionManager::VariantVisitor::operator() (delete_group_lines_argument_t const& argument) const {
+	const auto [country_index, group_id] = argument;
+	return instance_manager.get_war_manager().delete_group_lines(instance_manager, war_action_country(instance_manager, country_index), group_id);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_army_group_orders_argument_t const& argument) const {

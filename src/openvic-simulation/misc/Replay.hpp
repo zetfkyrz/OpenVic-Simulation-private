@@ -57,7 +57,10 @@ namespace OpenVic {
 		// 39: the land battles of the divisions (military/BattleFormulas.cpp battle_hit, docs/WAR_ASSUMPTIONS.md, section 6): the live divisions, the width of
 		//     the battle and the reserve, the losses from the first line, the retreat by the organisation or R, the conditions of the attacker (the river,
 		//     ov_data/common/ov_war/battle_conditions.txt); the battles are in the state hash
-		inline constexpr int SIMULATION_VERSION = 39;
+		// 40: the lines of the field marshals (docs/WAR_ASSUMPTIONS.md, section 6, P2): a front is the pieces of the border (or of the coast) with the
+		//     countries of its sector, the lines of the plans (offensive, defence, naval invasion), the modes of the execution (aggression, integrity);
+		//     the old plan of one front (set_army_group_plan) and toggle_front_province are gone
+		inline constexpr int SIMULATION_VERSION = 40;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

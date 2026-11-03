@@ -293,6 +293,9 @@ namespace OpenVic {
 	INT(NAVAL_MAX_DAMAGE_RATIO, naval_max_damage_ratio, 6, 1, 1000) \
 \
 	INT(FRONT_SPREAD_MAX_SPLITS_PER_DAY, front_spread_max_splits_per_day, 4, 0, 100) \
+	/* The zone of an offensive (docs/WAR_ASSUMPTIONS.md, section 6): the targets and the enemy provinces on the shortest ways (in provinces) from the */ \
+	/* front to them, with this many steps more (the width of the corridor of the arrow) */ \
+	INT(PLAN_ZONE_SLACK, plan_zone_slack, 1, 0, 20) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
 	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \

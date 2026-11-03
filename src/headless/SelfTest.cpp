@@ -3812,7 +3812,7 @@ namespace {
 		}
 	}
 
-	// ---- the plan of a field marshal (B3): the front he holds, the check mark that starts and stops it
+	// ---- the plan of a field marshal (docs/WAR_ASSUMPTIONS.md, section 6): the fronts he holds, the button of the execution that starts and stops it
 
 	void test_command_plan(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
@@ -3832,18 +3832,23 @@ namespace {
 		r.check(create_army_group(*country, palette_size), "plan: a group is created");
 		const std::uint32_t group_id = country->get_army_groups().back().id;
 		const std::uint32_t front_id = war_manager.create_front(im, *country, nullptr);
-		r.check(front_id != 0 && war_manager.get_front_by_id(front_id)->group_id == 0, "plan: a hand drawn front belongs to nobody");
-		r.check(war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front without a group always gets orders (the automatic plan and the player as before)");
+		r.check(front_id != 0 && war_manager.get_front_by_id(front_id)->group_id == 0, "plan: a front made without a group belongs to nobody");
+		r.check(war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front without a group always gets orders (the automatic plan)");
 
-		// The front first, then the plan
-		r.check(!set_army_group_plan(im, *country, group_id, front_id, 0), "plan: a plan needs a front that the group holds");
+		r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: the execution needs a front of the group");
 		r.check(set_army_group_front(im, *country, group_id, front_id, true) && war_manager.get_front_by_id(front_id)->group_id == group_id
 				&& !set_army_group_front(im, *country, group_id, front_id, true) && !set_army_group_front(im, *country, 9999, front_id, true),
 			"plan: a group holds a front (once, a known group)");
-		r.check(!war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front of a group gets no orders without an active plan");
-		r.check(set_army_group_plan(im, *country, group_id, front_id, 0) && !set_army_group_plan(im, *country, group_id, front_id, 0) && !set_army_group_plan(im, *country, group_id, front_id, 2),
-			"plan: a plan is set (attack), a change is needed, the modes are 0 and 1");
-		r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: a plan does not start without a field marshal");
+		r.check(!war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front of a group gets no orders while the plan is not executed");
+		r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: the execution does not start without a field marshal");
+
+		// The modes of the execution
+		ArmyGroup const& group = country->get_army_groups().back();
+		r.check(group.aggression == 2 && group.integrity == 1, "plan: a new group executes balanced (2) with the medium integrity (1)");
+		r.check(set_army_group_modes(*country, group_id, 3, 0) && group.aggression == 3 && group.integrity == 0
+				&& !set_army_group_modes(*country, group_id, 3, 0) && !set_army_group_modes(*country, group_id, 0, 1)
+				&& !set_army_group_modes(*country, group_id, 4, 1) && !set_army_group_modes(*country, group_id, 2, 3),
+			"plan: the modes are set (aggression 1..3, integrity 0..2, a change is needed)");
 
 		// A field marshal
 		unique_id_t leader_id = 0;
@@ -3860,18 +3865,13 @@ namespace {
 		} else {
 			r.check(set_army_group_marshal(im, *country, group_id, leader_id), "plan: a marshal is set");
 			first.set_army_group_id(group_id);
-			r.check(set_army_group_plan_active(im, *country, group_id, true) && country->get_army_groups().back().plan_active, "plan: the check mark starts the plan");
+			r.check(set_army_group_plan_active(im, *country, group_id, true) && country->get_army_groups().back().plan_active, "plan: the button starts the execution");
 			Front const* const front = war_manager.get_front_by_id(front_id);
-			r.check(war_manager.is_front_commanded(*front) && front->mode == Front::mode_t::ATTACK
-					&& std::find(front->army_ids.begin(), front->army_ids.end(), first.unique_id) != front->army_ids.end(),
-				"plan: the front gets orders, in the mode of the plan, with the armies of the group");
+			r.check(war_manager.is_front_commanded(*front) && std::find(front->army_ids.begin(), front->army_ids.end(), first.unique_id) != front->army_ids.end(),
+				"plan: the front gets orders, with the armies of the group");
 			r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: a plan that runs is not started again");
-			r.check(set_army_group_plan(im, *country, group_id, front_id, 1) && !country->get_army_groups().back().plan_active,
-				"plan: a change of the plan stops it");
-			r.check(set_army_group_plan_active(im, *country, group_id, true) && war_manager.get_front_by_id(front_id)->mode == Front::mode_t::DEFEND,
-				"plan: the hold plan sets the front to defend");
 			r.check(set_army_group_plan_active(im, *country, group_id, false) && !war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)),
-				"plan: the check mark stops the plan, the front gets no orders again");
+				"plan: the button stops the execution, the front gets no orders again");
 			// the marshal leaves while the plan runs: the daily update stops it
 			set_army_group_plan_active(im, *country, group_id, true);
 			set_army_group_marshal(im, *country, group_id, 0);
@@ -3880,16 +3880,189 @@ namespace {
 		}
 
 		// Letting go and deleting
-		r.check(set_army_group_front(im, *country, group_id, front_id, false) && war_manager.get_front_by_id(front_id)->group_id == 0
-				&& country->get_army_groups().back().plan_front_id == 0,
-			"plan: a front that is let go is nobody's and the plan is gone");
+		r.check(set_army_group_front(im, *country, group_id, front_id, false) && war_manager.get_front_by_id(front_id)->group_id == 0,
+			"plan: a front that is let go is nobody's");
 		set_army_group_front(im, *country, group_id, front_id, true);
-		set_army_group_plan(im, *country, group_id, front_id, 0);
 		delete_army_group(im, *country, group_id);
-		r.check(war_manager.get_front_by_id(front_id) != nullptr && war_manager.get_front_by_id(front_id)->group_id == 0,
-			"plan: the front of a group that is deleted is nobody's");
+		r.check(war_manager.get_front_by_id(front_id) == nullptr, "plan: the fronts of a group that is deleted go with it");
 		first.set_army_group_id(first_group_before);
-		war_manager.delete_front(*country, front_id);
+	}
+
+	// ---- the lines of a field marshal (docs/WAR_ASSUMPTIONS.md, section 6, P2): a front along the border with a neighbour, a coastal front, the edit
+	// mode, the offensive and its zone, the defence, the naval invasion, the deletion
+
+	void test_plan_lines(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		// A country with mechanic:command, a land neighbour and a coast
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		ProvinceInstance* sea = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			CountryInstance* found_neighbour = nullptr;
+			ProvinceInstance* found_sea = nullptr;
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				if (province->get_controller() != &candidate) {
+					continue;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					ProvinceInstance& other = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !other.province_definition.is_water()
+						&& other.get_controller() != nullptr && other.get_controller() != &candidate && found_neighbour == nullptr) {
+						found_neighbour = other.get_controller();
+					}
+					if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::COASTAL && other.province_definition.is_water() && found_sea == nullptr) {
+						found_sea = &other;
+					}
+				}
+			}
+			if (found_neighbour != nullptr && found_sea != nullptr) {
+				country = &candidate;
+				neighbour = found_neighbour;
+				sea = found_sea;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO plan lines: no country with mechanic:command, a neighbour and a coast, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+
+		// A border front
+		r.check(war_manager.create_border_front(im, *country, 9999, *neighbour) == 0, "lines: a front needs a group of the country (or none)");
+		r.check(war_manager.create_border_front(im, *country, group_id, *country) == 0, "lines: no front against the country itself");
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		Front const* front = war_manager.get_front_by_id(front_id);
+		bool edges_valid = front != nullptr && !front->edges.empty();
+		if (front != nullptr) {
+			for (FrontEdge const& edge : front->edges) {
+				edges_valid &= edge.own->get_controller() == country && edge.other->get_controller() == neighbour
+					&& std::find(front->provinces.begin(), front->provinces.end(), edge.own) != front->provinces.end();
+			}
+		}
+		r.check(edges_valid && front->group_id == group_id && front->kind == Front::kind_t::BORDER && front->enemy == neighbour,
+			"lines: a border front runs along the whole border with the neighbour (our land, his land), held by the marshal");
+		std::size_t border_pieces = 0;
+		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+			if (province.get_controller() != country || province.province_definition.is_water()) {
+				continue;
+			}
+			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+				ProvinceInstance const& other = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				border_pieces += adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other.get_controller() == neighbour;
+			}
+		}
+		r.check(front != nullptr && front->edges.size() == border_pieces, "lines: every piece of the border with the neighbour is on the line");
+
+		// The edit mode
+		if (front != nullptr && front->edges.size() >= 2) {
+			const FrontEdge piece = front->edges.front();
+			const std::size_t before = front->edges.size();
+			r.check(war_manager.toggle_front_edge(im, *country, front_id, *piece.own, *piece.other) && war_manager.get_front_by_id(front_id)->edges.size() == before - 1
+					&& war_manager.get_front_by_id(front_id)->edited,
+				"lines: the edit mode takes a piece of the border away (the front is edited)");
+			r.check(war_manager.toggle_front_edge(im, *country, front_id, *piece.own, *piece.other) && war_manager.get_front_by_id(front_id)->edges.size() == before,
+				"lines: and puts it back");
+			r.check(!war_manager.toggle_front_edge(im, *country, front_id, *piece.other, *piece.own), "lines: a piece has our land on our side");
+		}
+
+		// An offensive from the front: its targets are land we do not control, the zone holds the targets and the land between
+		front = war_manager.get_front_by_id(front_id);
+		ProvinceInstance* const target = front->edges.front().other;
+		r.check(war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *front->provinces.front()) == 0,
+			"lines: the target of an offensive is not our land");
+		const std::uint32_t offensive_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *target);
+		PlanLine const* offensive = war_manager.get_plan_line_by_id(offensive_id);
+		r.check(offensive != nullptr && offensive->front_id == front_id && offensive->provinces.size() == 1, "lines: an offensive starts from the nearest front of the marshal");
+		const memory::vector<ProvinceInstance*> zone = offensive != nullptr ? war_manager.get_offensive_zone(im, *offensive) : memory::vector<ProvinceInstance*> {};
+		bool zone_valid = std::find(zone.begin(), zone.end(), target) != zone.end();
+		for (ProvinceInstance const* const province : zone) {
+			zone_valid &= province->get_controller() != country;
+		}
+		r.check(zone_valid, "lines: the zone of an offensive holds its targets and no land of ours");
+		// A target farther away: the zone reaches it over the land between
+		ProvinceInstance* far_target = nullptr;
+		for (ProvinceDefinition::adjacency_t const& adjacency : target->province_definition.get_adjacencies()) {
+			ProvinceInstance& other = map_instance.get_province_instance_by_definition(adjacency.get_to());
+			bool next_to_us = false;
+			for (ProvinceDefinition::adjacency_t const& second : other.province_definition.get_adjacencies()) {
+				next_to_us |= map_instance.get_province_instance_by_definition(second.get_to()).get_controller() == country;
+			}
+			if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !other.province_definition.is_water()
+				&& other.get_controller() != country && !next_to_us) {
+				far_target = &other;
+				break;
+			}
+		}
+		if (far_target != nullptr && offensive != nullptr) {
+			r.check(war_manager.toggle_plan_line_province(im, *country, offensive_id, *far_target)
+					&& war_manager.toggle_plan_line_province(im, *country, offensive_id, *target), "lines: a target is added and one taken away");
+			offensive = war_manager.get_plan_line_by_id(offensive_id);
+			const memory::vector<ProvinceInstance*> far_zone = war_manager.get_offensive_zone(im, *offensive);
+			r.check(std::find(far_zone.begin(), far_zone.end(), far_target) != far_zone.end() && far_zone.size() >= 2,
+				"lines: the zone of a farther target holds the land between the front and it");
+			r.check(!war_manager.toggle_plan_line_province(im, *country, offensive_id, *far_target), "lines: the last target cannot be taken away");
+		}
+
+		// One order: a second offensive takes the place of the first, the front stays
+		const std::uint32_t second_offensive = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *target);
+		r.check(second_offensive != 0 && war_manager.get_plan_line_by_id(offensive_id) == nullptr && war_manager.get_front_by_id(front_id) != nullptr,
+			"lines: a new offensive takes the place of the earlier one, the front stays");
+
+		// A line of defence and a naval invasion: each takes the place of the whole earlier order
+		front = war_manager.get_front_by_id(front_id);
+		ProvinceInstance* const own = front->provinces.front();
+		r.check(war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::DEFENCE, *target) == 0, "lines: a line of defence holds our land");
+		const std::uint32_t defence_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::DEFENCE, *own);
+		r.check(defence_id != 0 && war_manager.get_front_by_id(front_id) == nullptr && war_manager.get_plan_line_by_id(second_offensive) == nullptr,
+			"lines: a line of defence takes the place of the front and its offensive (one order)");
+		ProvinceInstance* port = nullptr;
+		for (ProvinceInstance* province : country->get_owned_provinces()) {
+			if (province->get_controller() == country && province->province_definition.has_port()) {
+				port = province;
+				break;
+			}
+		}
+		if (port != nullptr) {
+			r.check(war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::NAVAL, *own) == 0 || own->province_definition.has_port(),
+				"lines: a naval invasion starts from a port");
+			const std::uint32_t naval_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::NAVAL, *port);
+			r.check(naval_id != 0 && war_manager.get_plan_line_by_id(naval_id)->port == port && war_manager.get_plan_line_by_id(naval_id)->provinces.empty()
+					&& war_manager.get_plan_line_by_id(defence_id) == nullptr,
+				"lines: a naval invasion has its port, the coast is added afterwards; it takes the place of the line of defence");
+		}
+
+		// A coastal front
+		const std::uint32_t coast_id = war_manager.create_coastal_front(im, *country, group_id, *sea);
+		Front const* const coast = war_manager.get_front_by_id(coast_id);
+		bool coast_valid = coast != nullptr && !coast->edges.empty() && coast->kind == Front::kind_t::COAST && coast->sea == sea;
+		if (coast != nullptr) {
+			for (FrontEdge const& edge : coast->edges) {
+				coast_valid &= edge.other == sea && edge.own->get_controller() == country;
+			}
+		}
+		r.check(coast_valid, "lines: a coastal front runs along our coast next to the sea province");
+		r.check(war_manager.create_coastal_front(im, *country, group_id, *own) == 0, "lines: a coastal front needs a sea province");
+		r.check(coast != nullptr && war_manager.get_plan_lines().end() == std::find_if(war_manager.get_plan_lines().begin(), war_manager.get_plan_lines().end(),
+				[group_id](PlanLine const& line) -> bool { return line.group_id == group_id; }),
+			"lines: a coastal front takes the place of the earlier order");
+
+		// The plan is in the state hash, the trash deletes all the lines of the marshal
+		const std::uint64_t hash_before = StateHash::compute(im);
+		set_army_group_modes(*country, group_id, 1, 2);
+		r.check(StateHash::compute(im) != hash_before, "lines: the modes of the plan are in the state hash");
+		r.check(war_manager.delete_group_lines(im, *country, group_id) && war_manager.find_front_of_group(*country, group_id) == nullptr
+				&& std::none_of(war_manager.get_plan_lines().begin(), war_manager.get_plan_lines().end(), [group_id](PlanLine const& line) -> bool {
+					return line.group_id == group_id;
+				}),
+			"lines: the trash deletes the fronts and the lines of the marshal");
+		delete_army_group(im, *country, group_id);
 	}
 
 	// ---- the theatres of the field marshals (B4)
@@ -4876,8 +5049,9 @@ namespace {
 		WarManager& war_manager = im.get_war_manager();
 		const std::uint32_t front_id = war_manager.create_front(im, *country, nullptr);
 		r.check(front_id != 0, "fronts: an empty front can be made");
+		// The line of the front by hand (the player draws lines along the border, the test wants three provinces of its own choice)
 		for (ProvinceInstance* province : line) {
-			war_manager.toggle_front_province(*country, front_id, *province);
+			const_cast<Front*>(war_manager.get_front_by_id(front_id))->provinces.push_back(province);
 		}
 		r.check(war_manager.set_front_army(im, *country, front_id, army_id, true), "fronts: an army can be assigned to the front");
 		r.check(war_manager.get_front_by_id(front_id) != nullptr && war_manager.get_front_by_id(front_id)->provinces.size() == 3,
@@ -5300,6 +5474,7 @@ namespace {
 		test_group_limit(r, *im);
 		test_command_colours(r, *im);
 		test_command_plan(r, *im);
+		test_plan_lines(r, *im);
 		test_theatres(r, *im);
 		test_attached_generals_technologies(r, *im);
 		test_fleet_to_port(r, *im);

@@ -48,11 +48,15 @@ namespace OpenVic {
 		unique_id_t marshal_id = 0; // the unique id of the general, 0 if there is none
 		bool execute_orders = true; // the armies of the group follow the orders of the marshal (the switch of the panel of the commanders)
 		std::uint32_t colour_index = 0; // the index in the palette of the command
-		// The plan of the marshal (B3): one front that the group holds (Front::group_id) and the orders for it; the plan runs while plan_active is true
-		// (the check mark of the panel). Stopping it cancels the moves of the armies of the front, they stay where they are
-		std::uint32_t plan_front_id = 0; // 0: no plan
-		std::uint32_t plan_mode = 0; // 0: attack the enemy land next to the line, 1: hold the line
+		// The plan of the marshal (docs/WAR_ASSUMPTIONS.md, section 6): the fronts the group holds (Front::group_id) and the lines of its plan (PlanLine::group_id).
+		// The group executes it while plan_active is true (the button of the execution of the plate). Stopping it cancels the moves of the armies of its
+		// fronts, they stay where they are
 		bool plan_active = false;
+		// How the plan is executed: 1 careful (attacks only where the battle is surely won), 2 balanced, 3 aggressive
+		std::uint32_t aggression = 2;
+		// How the divisions hold the line of a front: 0 firm (they keep their places, a changed line may get holes), 1 medium, 2 loose (they move more
+		// to keep the line even)
+		std::uint32_t integrity = 1;
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 	};
 
@@ -105,9 +109,9 @@ namespace OpenVic {
 	bool set_army_group_colour(CountryInstance& country, std::uint32_t group_id, std::uint32_t colour_index, std::size_t palette_size);
 	// The front is held by the group (held) or let go; the front is the country's and is not held by another group
 	bool set_army_group_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, std::uint32_t front_id, bool held);
-	// The plan of the group: a front it holds and the mode (0 attack, 1 hold); a plan that runs is stopped first
-	bool set_army_group_plan(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, std::uint32_t front_id, std::uint32_t mode);
-	// Starts or stops the plan (the check mark): it needs a plan and a field marshal; the armies of the group go on the front
+	// The modes of the execution of the plan: aggression 1..3, integrity 0..2
+	bool set_army_group_modes(CountryInstance& country, std::uint32_t group_id, std::uint32_t aggression, std::uint32_t integrity);
+	// Starts or stops the execution of the plan: it needs a front of the group and a field marshal; the armies of the group go on its fronts
 	bool set_army_group_plan_active(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool active);
 	bool delete_army_group(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id);
 	// group_id 0 takes the army out of its group

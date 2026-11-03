@@ -111,9 +111,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army_group.marshal_id));
 			hasher.add(army_group.execute_orders ? 1 : 0);
 			hasher.add(static_cast<std::uint64_t>(army_group.colour_index));
-			hasher.add(static_cast<std::uint64_t>(army_group.plan_front_id));
-			hasher.add(static_cast<std::uint64_t>(army_group.plan_mode));
 			hasher.add(army_group.plan_active ? 1 : 0);
+			hasher.add(static_cast<std::uint64_t>(army_group.aggression));
+			hasher.add(static_cast<std::uint64_t>(army_group.integrity));
 			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
 		}
 		for (Theatre const& theatre : country.get_theatres()) {
@@ -194,6 +194,23 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(front.mode));
 		hasher.add(static_cast<std::uint64_t>(front.provinces.size()));
 		hasher.add(static_cast<std::uint64_t>(front.army_ids.size()));
+		hasher.add(static_cast<std::uint64_t>(front.kind));
+		hasher.add(front.edited ? 1 : 0);
+		for (FrontEdge const& edge : front.edges) {
+			hasher.add(static_cast<std::uint64_t>(type_safe::get(edge.own->index)));
+			hasher.add(static_cast<std::uint64_t>(type_safe::get(edge.other->index)));
+		}
+	}
+	// The lines of the plans of the field marshals
+	for (PlanLine const& line : instance_manager.get_war_manager().get_plan_lines()) {
+		hasher.add(static_cast<std::uint64_t>(line.id));
+		hasher.add(static_cast<std::uint64_t>(line.group_id));
+		hasher.add(static_cast<std::uint64_t>(line.type));
+		hasher.add(static_cast<std::uint64_t>(line.front_id));
+		hasher.add(line.port != nullptr ? static_cast<std::uint64_t>(type_safe::get(line.port->index)) + 1 : 0);
+		for (ProvinceInstance const* const province : line.provinces) {
+			hasher.add(static_cast<std::uint64_t>(type_safe::get(province->index)));
+		}
 	}
 	// The land battles that go on (in the order of the provinces): the days, the counter of the breakthrough, the divisions of the front
 	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {

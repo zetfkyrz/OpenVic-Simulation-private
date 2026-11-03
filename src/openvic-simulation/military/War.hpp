@@ -87,22 +87,54 @@ namespace OpenVic {
 		}
 	};
 
-	// A front is a line of provinces (usually along the border with an enemy) that armies are assigned to.
-	// Assigned armies are moved automatically: in DEFEND mode they spread along the line, in ATTACK mode they advance
-	// into the enemy provinces next to the line, one target per army.
+	// A piece of a line between two neighbouring provinces: ours (the side of the country) and the other one (the land of a neighbour, or the sea of a
+	// coastal front)
+	struct FrontEdge {
+		ProvinceInstance* own = nullptr;
+		ProvinceInstance* other = nullptr;
+
+		bool operator==(FrontEdge const&) const = default;
+	};
+
+	// A front is a line along the border (docs/WAR_ASSUMPTIONS.md, section 6): the pieces of the border between the land the country controls and the land
+	// held by the countries of the sector (the neighbour it was made against and, while they fight the country in the same war, his allies), or a coastal
+	// front along the coast of the country next to a sea province. The provinces are ours on the line, in order along it. Assigned armies are moved
+	// automatically: in DEFEND mode they spread along the line, in ATTACK mode they advance into the enemy provinces next to the line.
 	struct Front {
 		enum struct mode_t : std::uint32_t { DEFEND = 0, ATTACK = 1 };
+		enum struct kind_t : std::uint32_t { BORDER = 0, COAST = 1 };
 
 		std::uint32_t id = 0;
 		CountryInstance* country = nullptr;
-		// Enemy the front was generated against, nullptr for a hand drawn front
+		// The neighbour the front was made against (BORDER), nullptr for a coastal front or a front without a line
 		CountryInstance const* enemy = nullptr;
 		mode_t mode = mode_t::DEFEND;
+		kind_t kind = kind_t::BORDER;
+		// The sea province of a coastal front
+		ProvinceInstance const* sea = nullptr;
+		memory::vector<FrontEdge> edges;
 		memory::vector<ProvinceInstance*> provinces;
 		memory::vector<unique_id_t> army_ids;
-		// The group of armies (the field marshal) that holds the front, 0 if none (B3, docs/COMMAND.md). A front of a group is commanded only while the plan
-		// of the group for this front is active: the armies of it get no orders otherwise and the automatic plan does not touch it
+		// The group of armies (the field marshal) that holds the front, 0 if none (B3, docs/COMMAND.md). A front of a group is commanded only while the
+		// group executes its plan: the armies of it get no orders otherwise and the automatic plan does not touch it
 		std::uint32_t group_id = 0;
+		// The player changed the pieces of the line (the edit mode): the line keeps them instead of the whole border
+		bool edited = false;
+	};
+
+	// A line of the plan of a field marshal (docs/WAR_ASSUMPTIONS.md, section 6): an offensive (the enemy provinces to take, from a front of the
+	// marshal), a line of defence (provinces of the country to hold and dig in) or a naval invasion (a port of the country and the coast to land on)
+	struct PlanLine {
+		enum struct type_t : std::uint32_t { OFFENSIVE = 0, DEFENCE = 1, NAVAL = 2 };
+
+		std::uint32_t id = 0;
+		CountryInstance* country = nullptr;
+		std::uint32_t group_id = 0;
+		type_t type = type_t::OFFENSIVE;
+		std::uint32_t front_id = 0; // OFFENSIVE: the front it starts from
+		ProvinceInstance* port = nullptr; // NAVAL: where the divisions embark
+		// OFFENSIVE: the targets (the line of the offensive is their far border), DEFENCE: the provinces to hold, NAVAL: the coast to land on
+		memory::vector<ProvinceInstance*> provinces;
 	};
 
 	// A land battle in a province (docs/WAR_ASSUMPTIONS.md, section 6), kept from day to day: which side attacks, the counter of the breakthrough rule
@@ -221,19 +253,24 @@ namespace OpenVic {
 
 		memory::vector<Front> fronts;
 		std::uint32_t next_front_id = 1;
+		memory::vector<PlanLine> plan_lines;
+		std::uint32_t next_plan_line_id = 1;
 		// Countries whose fronts and army assignments are managed automatically
 		std::unordered_set<CountryInstance const*> auto_plan_countries;
 
 		Front* find_front(std::uint32_t id);
+		PlanLine* find_plan_line(std::uint32_t id);
+		// The lines of the fronts and of the plans lose what does not exist any more (fronts of groups that are gone, provinces taken from a line)
+		void update_plan_lines(InstanceManager& instance_manager);
 		void update_fronts(InstanceManager& instance_manager);
 		void update_auto_plan(InstanceManager& instance_manager);
-		void order_front_armies(InstanceManager& instance_manager, Front& front);
+		// The zone (when limited) holds the provinces the armies may attack: the offensives of a field marshal
+		void order_front_armies(InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone = {}, bool limited = false);
 		// Spreads the divisions of the armies of the front over its line: while the front has fewer armies than sectors (the provinces
 		// of the line, or the enemy provinces to attack), a division of the biggest idle army leaves it as an army of its own
-		void spread_front_divisions(InstanceManager& instance_manager, Front& front);
+		void spread_front_divisions(InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone = {}, bool limited = false);
 
 		War* find_war(std::uint32_t id);
-		War* find_war_between(CountryInstance const& first, CountryInstance const& second);
 
 		void update_combat(InstanceManager& instance_manager);
 		void update_sieges(InstanceManager& instance_manager);
@@ -348,6 +385,8 @@ namespace OpenVic {
 			InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& proposer, peace_type_t peace_type
 		);
 
+		War* find_war_between(CountryInstance const& first, CountryInstance const& second);
+
 		std::span<const Front> get_fronts() const {
 			return fronts;
 		}
@@ -356,14 +395,41 @@ namespace OpenVic {
 			return auto_plan_countries.contains(&country);
 		}
 
-		// Creates a front for the country. With an enemy the border provinces of the country next to the enemy are
-		// added in order along the border (auto front), without one the front starts empty to be drawn by hand.
-		// Returns the id of the front, 0 on failure.
+		// Creates a front for the country. With an enemy the line is the border of the country with the land the enemy holds (auto front), without one
+		// the front starts empty. Returns the id of the front, 0 on failure.
 		std::uint32_t create_front(InstanceManager& instance_manager, CountryInstance& country, CountryInstance const* enemy);
+		// A field marshal has one order (docs/WAR_ASSUMPTIONS.md, section 6): a front (along a border or a coast, with at most one offensive from it), a
+		// line of defence or a naval invasion; a new front, line of defence or naval invasion deletes all his earlier lines, a new offensive the earlier one.
+		// The front of a field marshal drawn on the map (0: nobody's): along the whole border with the neighbour (and, at war, with his allies in the
+		// war with the country), the neighbour has to touch the land the country controls. Returns the id of the front, 0 on failure
+		std::uint32_t create_border_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, CountryInstance const& neighbour);
+		// A coastal front of a field marshal: the coast of the country next to the sea province. Returns the id of the front, 0 on failure
+		std::uint32_t create_coastal_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, ProvinceInstance const& sea);
+		// The edit mode: a piece of the border between the provinces is added to the line of the front (or taken away if it is on it). The other province
+		// has to be held by a country of the sector (a border front) or be the sea of a coastal front
+		bool toggle_front_edge(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t front_id, ProvinceInstance& own, ProvinceInstance& other);
 		bool delete_front(CountryInstance const& country, std::uint32_t front_id);
-		// Adds a province of the country to the end of the front (or removes it if it is already in the line)
-		bool toggle_front_province(CountryInstance const& country, std::uint32_t front_id, ProvinceInstance& province);
+		// The lines of the plans of the field marshals. A new line starts with one province: an offensive with a target (land the country does not control,
+		// its front is the front of the marshal nearest to the target), a defence with a province the country controls, a naval invasion with a port of the
+		// country (its coast is added afterwards). Returns the id of the line, 0 on failure
+		std::uint32_t create_plan_line(
+			InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, PlanLine::type_t type, ProvinceInstance& province
+		);
+		// Adds the province to the line or takes it away (the last one cannot be taken: the line is deleted instead)
+		bool toggle_plan_line_province(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t line_id, ProvinceInstance& province);
+		bool delete_plan_line(CountryInstance const& country, std::uint32_t line_id);
+		// The fronts and the lines of the plan of the field marshal are deleted (the armies stop where they are)
+		bool delete_group_lines(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t group_id);
+		std::span<const PlanLine> get_plan_lines() const {
+			return plan_lines;
+		}
+		PlanLine const* get_plan_line_by_id(std::uint32_t id) const;
+		// The enemy provinces of an offensive: its targets and the provinces between the front and them (docs/WAR_ASSUMPTIONS.md, section 6), in the order
+		// of the province indices
+		[[nodiscard]] memory::vector<ProvinceInstance*> get_offensive_zone(InstanceManager& instance_manager, PlanLine const& line) const;
 		bool set_front_mode(CountryInstance const& country, std::uint32_t front_id, Front::mode_t mode);
+		// The first front of the group (nullptr if it has none)
+		Front const* find_front_of_group(CountryInstance const& country, std::uint32_t group_id) const;
 		bool set_front_army(
 			InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t front_id, unique_id_t army_id,
 			bool assigned
@@ -373,7 +439,7 @@ namespace OpenVic {
 		void set_auto_plan(CountryInstance const& country, bool enabled);
 		// The group of the front (0 takes it from the group); the front has to be the country's
 		bool set_front_group(CountryInstance const& country, std::uint32_t front_id, std::uint32_t group_id);
-		// Does the front get orders: a front without a group always does, a front of a group only while its plan is active
+		// Does the front get orders: a front without a group always does, a front of a group only while the group executes its plan
 		[[nodiscard]] bool is_front_commanded(Front const& front) const;
 		// The armies of the front stop where they are (the moves are cancelled, the armies in a battle stay in it)
 		void stop_front_armies(InstanceManager& instance_manager, std::uint32_t front_id);

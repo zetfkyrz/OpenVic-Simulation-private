@@ -119,7 +119,6 @@ X(stop_army, unique_id_t) \
 X(propose_peace, country_index_t, std::uint32_t, std::uint32_t) \
 X(create_front, country_index_t, country_index_t) \
 X(delete_front, country_index_t, std::uint32_t) \
-X(toggle_front_province, country_index_t, std::uint32_t, province_index_t) \
 X(set_front_mode, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_front_army, country_index_t, std::uint32_t, unique_id_t, bool) \
 X(assign_free_armies, country_index_t, std::uint32_t) \
@@ -158,14 +157,21 @@ X(set_division_template_companies, country_index_t, std::uint32_t, DivisionCompa
 X(set_army_group_orders, country_index_t, std::uint32_t, bool) \
 X(set_army_group_colour, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_army_group_front, country_index_t, std::uint32_t, std::uint32_t, bool) \
-X(set_army_group_plan, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t) \
+X(set_army_group_modes, country_index_t, std::uint32_t, std::uint32_t, std::uint32_t) \
 X(set_army_group_plan_active, country_index_t, std::uint32_t, bool) \
 X(create_theatre, country_index_t) \
 X(delete_theatre, country_index_t, std::uint32_t) \
 X(rename_theatre, country_index_t, std::uint32_t, theatre_name_t) \
 X(set_theatre_colour, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_theatre_focus, country_index_t, std::uint32_t, std::uint32_t) \
-X(set_army_group_theatre, country_index_t, std::uint32_t, std::uint32_t)
+X(set_army_group_theatre, country_index_t, std::uint32_t, std::uint32_t) \
+X(create_border_front, country_index_t, std::uint32_t, country_index_t) \
+X(create_coastal_front, country_index_t, std::uint32_t, province_index_t) \
+X(toggle_front_edge, country_index_t, std::uint32_t, province_index_t, province_index_t) \
+X(create_plan_line, country_index_t, std::uint32_t, std::uint32_t, province_index_t) \
+X(toggle_plan_line_province, country_index_t, std::uint32_t, province_index_t) \
+X(delete_plan_line, country_index_t, std::uint32_t) \
+X(delete_group_lines, country_index_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

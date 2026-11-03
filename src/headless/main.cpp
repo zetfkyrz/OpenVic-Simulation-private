@@ -1703,14 +1703,24 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				break;
 			}
 		}
-		const std::uint32_t front_id = war_manager.create_front(instance_manager, *side_a, side_b);
-		// one after the other: the order in which the arguments of a call are evaluated is not defined
-		const bool held = set_army_group_front(instance_manager, *side_a, scenario_group_id, front_id, true);
-		const bool planned = set_army_group_plan(instance_manager, *side_a, scenario_group_id, front_id, 0);
+		// The front of the marshal along the border with the enemy and an offensive on the whole strip of the enemy land next to it
+		const std::uint32_t front_id = war_manager.create_border_front(instance_manager, *side_a, scenario_group_id, *side_b);
+		std::uint32_t offensive_id = 0;
+		if (Front const* const front = war_manager.get_front_by_id(front_id); front != nullptr) {
+			const memory::vector<FrontEdge> edges = front->edges;
+			for (FrontEdge const& edge : edges) {
+				if (offensive_id == 0) {
+					offensive_id = war_manager.create_plan_line(instance_manager, *side_a, scenario_group_id, PlanLine::type_t::OFFENSIVE, *edge.other);
+				} else if (PlanLine const* const line = war_manager.get_plan_line_by_id(offensive_id);
+					std::find(line->provinces.begin(), line->provinces.end(), edge.other) == line->provinces.end()) {
+					war_manager.toggle_plan_line_province(instance_manager, *side_a, offensive_id, *edge.other);
+				}
+			}
+		}
 		const bool started = set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, true);
 		fmt::println(
-			"FRONT_GROUP setup group={} marshal={} front={} held={} plan={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0, front_id,
-			held, planned, started
+			"FRONT_GROUP setup group={} marshal={} front={} offensive={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0, front_id,
+			offensive_id, started
 		);
 	}
 	const std::size_t stop_day = std::getenv("OV_FRONT_STOP") != nullptr ? static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_STOP")))) : 0;
@@ -1761,7 +1771,7 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		}
 		if (group_scenario && !side_a->get_army_groups().empty()) {
 			ArmyGroup const& group = side_a->get_army_groups().back();
-			Front const* const plan_front = war_manager.get_front_by_id(group.plan_front_id);
+			Front const* const plan_front = war_manager.find_front_of_group(*side_a, group.id);
 			std::size_t group_armies = 0;
 			std::size_t group_moving = 0;
 			for (ArmyInstance const& army : side_a->get_armies()) {
@@ -1771,8 +1781,8 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				}
 			}
 			fmt::println(
-				"FRONT_GROUP day={} group={} plan_active={} plan_mode={} front_commanded={} group_armies={} moving={} front_armies={}", day, group.id, group.plan_active ? 1 : 0,
-				group.plan_mode, plan_front != nullptr && war_manager.is_front_commanded(*plan_front) ? 1 : 0, group_armies, group_moving, plan_front != nullptr ? plan_front->army_ids.size() : 0
+				"FRONT_GROUP day={} group={} plan_active={} front_mode={} front_commanded={} group_armies={} moving={} front_armies={}", day, group.id, group.plan_active ? 1 : 0,
+				plan_front != nullptr ? static_cast<std::uint32_t>(plan_front->mode) : 0, plan_front != nullptr && war_manager.is_front_commanded(*plan_front) ? 1 : 0, group_armies, group_moving, plan_front != nullptr ? plan_front->army_ids.size() : 0
 			);
 		}
 		for (CountryInstance* const side : { side_a, side_b }) {
