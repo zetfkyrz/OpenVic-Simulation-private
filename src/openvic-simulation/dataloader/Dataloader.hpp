@@ -14,6 +14,7 @@
 #include "openvic-simulation/dataloader/NodeTools.hpp"
 
 namespace OpenVic {
+	struct BattleConditions;
 	namespace fs = std::filesystem;
 
 	struct DefinitionManager;
@@ -133,6 +134,8 @@ namespace OpenVic {
 		/* The keys every country has from the start (common/ov_equipment/default_unlocks.txt). Returns the number of keys. */
 		std::size_t load_default_unlocks(DefaultUnlocks& default_unlocks) const;
 		/* The colours of the field marshals (common/ov_command/palette.txt, the built-in ones if it is missing). Returns the number of colours. */
+		// ov_data/common/ov_war/battle_conditions.txt (military/BattleFormulas.hpp); the defaults stay without the file
+		void load_battle_conditions(BattleConditions& conditions) const;
 		std::size_t load_command_palette(CommandPalette& palette) const;
 		std::size_t load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const;
 		path_vector_t lookup_basic_identifier_prefixed_files_in_dir(std::string_view path, fs::path const& extension) const;

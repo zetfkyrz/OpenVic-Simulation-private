@@ -330,7 +330,7 @@ DivisionLayout OpenVic::layout_division(
 	std::span<const std::reference_wrapper<const RegimentInstance>> const regiments = army.get_regiment_instances();
 	for (std::size_t index = 0; index < regiments.size(); ++index) {
 		RegimentInstance const& regiment = regiments[index];
-		if (regiment.get_division_id() == division.id) {
+		if (regiment.get_division_id() == division.id && regiment.get_strength() > fixed_point_t::_0) {
 			indices.push_back(static_cast<std::uint32_t>(index));
 			types.push_back(&regiment.get_regiment_type());
 		}

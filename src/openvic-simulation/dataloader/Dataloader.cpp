@@ -269,6 +269,19 @@ std::size_t Dataloader::load_command_palette(CommandPalette& palette) const {
 	return palette.size();
 }
 
+void Dataloader::load_battle_conditions(BattleConditions& conditions) const {
+	const fs::path file = lookup_file("common/ov_war/battle_conditions.txt", false);
+	if (file.empty()) {
+		return;
+	}
+	const v2script::Parser parser = parse_defines(file);
+	if (parser.has_fatal_error() || parser.has_error()) {
+		spdlog::warn_s("The conditions of the battles {} are skipped, they have errors", file);
+		return;
+	}
+	conditions.load(file.string(), parser.get_file_node());
+}
+
 std::size_t Dataloader::load_provisional_unlocks(ProvisionalUnlocks& provisional_unlocks, ModifierManager const& modifier_manager) const {
 	static constexpr std::string_view provisional_unlocks_file = "common/ov_equipment/provisional_unlocks.txt";
 
@@ -1213,6 +1226,7 @@ bool Dataloader::load_defines(
 			"Loaded {} default unlock keys", load_default_unlocks(definition_manager.get_military_manager().get_default_unlocks())
 		);
 		SPDLOG_INFO("Loaded {} colours of the command palette", load_command_palette(definition_manager.get_military_manager().get_command_palette()));
+		load_battle_conditions(definition_manager.get_military_manager().get_battle_conditions());
 	}
 	if (!definition_manager.get_pop_manager().get_culture_manager().load_graphical_culture_type_file(
 		parse_defines(lookup_file(graphical_culture_type_file)).get_file_node()

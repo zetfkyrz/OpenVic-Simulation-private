@@ -34,6 +34,7 @@ namespace OpenVic {
 		memory::vector<std::reference_wrapper<UnitInstance>> SPAN_PROPERTY(units);
 		LeaderInstance* PROPERTY_PTR(leader, nullptr);
 		std::reference_wrapper<ProvinceInstance> location;
+		ProvinceInstance const* previous_location = nullptr;
 		std::reference_wrapper<CountryInstance> country;
 
 		fixed_point_t PROPERTY(total_organisation);
@@ -95,6 +96,13 @@ namespace OpenVic {
 
 		void set_name(std::string_view new_name);
 		bool set_location(ProvinceInstance& new_location);
+		// The province the group was in before its present one (nullptr: none, a new group): an army that attacks over a river (BattleConditions)
+		[[nodiscard]] ProvinceInstance const* get_previous_location() const {
+			return previous_location;
+		}
+		void set_previous_location(ProvinceInstance const* province) {
+			previous_location = province;
+		}
 		bool set_country(CountryInstance& new_country);
 		bool set_leader(LeaderInstance* new_leader);
 

@@ -4,6 +4,7 @@
 
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/military/DivisionStats.hpp"
+#include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
 
@@ -52,18 +53,27 @@ battle_formulas::DensityEffect battle_formulas::density_effect(OpenVicWarDefines
 	return effect;
 }
 
-fixed_point_t battle_formulas::effective_defence(OpenVicWarDefines const& defines, DivisionStats const& defender, const fixed_point_t extra_bonus) {
-	return defender.defence * (fixed_point_t::_1 + defines.fortification_per_level.of(defender.fortification) + extra_bonus);
+fixed_point_t battle_formulas::defender_protection(
+	OpenVicWarDefines const& defines, const fixed_point_t defence, const fixed_point_t fortification_levels, const fixed_point_t terrain_multiplier
+) {
+	return defence * (fixed_point_t::_1 + defines.fortification_per_level.of(fortification_levels)) * terrain_multiplier;
+}
+
+fixed_point_t battle_formulas::effective_defence(OpenVicWarDefines const& defines, DivisionStats const& defender, const fixed_point_t terrain_multiplier) {
+	return defender_protection(defines, defender.defence, defender.fortification, terrain_multiplier);
+}
+
+fixed_point_t battle_formulas::breakthrough_ratio(const fixed_point_t attacker_breakthrough, const fixed_point_t defender_protection) {
+	if (defender_protection <= fixed_point_t::_0) {
+		return attacker_breakthrough > fixed_point_t::_0 ? fixed_point_t(1000) : fixed_point_t::_0;
+	}
+	return std::min(fixed_point_t(1000), attacker_breakthrough / defender_protection);
 }
 
 fixed_point_t battle_formulas::breakthrough_ratio(
-	OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, const fixed_point_t extra_defence_bonus
+	OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, const fixed_point_t terrain_multiplier
 ) {
-	const fixed_point_t defence = effective_defence(defines, defender, extra_defence_bonus);
-	if (defence <= fixed_point_t::_0) {
-		return attacker.breakthrough > fixed_point_t::_0 ? fixed_point_t(1000) : fixed_point_t::_0;
-	}
-	return std::min(fixed_point_t(1000), attacker.breakthrough / defence);
+	return breakthrough_ratio(attacker.breakthrough, effective_defence(defines, defender, terrain_multiplier));
 }
 
 bool battle_formulas::breakthrough_day(OpenVicWarDefines const& defines, const fixed_point_t ratio, BreakthroughCounter& counter) {
@@ -104,17 +114,48 @@ fixed_point_t battle_formulas::weapon_ratio(const fixed_point_t first_points, co
 	return first_points + clamped_fill * (best_points - first_points);
 }
 
-fixed_point_t battle_formulas::damage_per_day(
-	OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, const bool target_is_attacker
+battle_formulas::Hit battle_formulas::battle_hit(
+	OpenVicWarDefines const& defines, const fixed_point_t attack, const fixed_point_t conditions, const fixed_point_t density,
+	const fixed_point_t protection, const fixed_point_t casualties_taken
 ) {
-	// In proportion to the attack of the one who deals it (so to its width; its density is in it), less against a strong defence, more against a dense
-	// formation (the casualties of the density). The attacker's defence softens the damage it takes only by ATTACKER_DEFENSE_FACTOR.
-	const fixed_point_t defence = effective_defence(defines, defender);
-	const fixed_point_t softening = target_is_attacker ? defines.attacker_defense_factor.of(defence) : defence;
-	const fixed_point_t defence_factor = fixed_point_t::_1 + softening / defines.battle_defence_reference;
-	return attacker.attack * defines.battle_damage_per_attack * defender.casualties_mult / defence_factor;
+	Hit hit;
+	if (attack <= fixed_point_t::_0) {
+		return hit;
+	}
+	// The protection blocks BATTLE_BLOCK_SHARE of the attack at most: a protection as big as the attack or bigger lets 1 - BATTLE_BLOCK_SHARE through
+	const fixed_point_t blocked = std::min(fixed_point_t::_1, std::max(protection, fixed_point_t::_0) / attack);
+	const fixed_point_t softening = fixed_point_t::_1 - defines.battle_block_share.of(blocked);
+	hit.damage = attack * conditions * density * softening;
+	hit.strength_loss = hit.damage * defines.battle_strength_per_hit * casualties_taken;
+	hit.organisation_loss = hit.damage * defines.battle_organisation_per_hit;
+	return hit;
 }
 
-fixed_point_t battle_formulas::days_to_destroy(const fixed_point_t durability, const fixed_point_t damage_per_day) {
-	return damage_per_day > fixed_point_t::_0 ? durability / damage_per_day : fixed_point_t::_0;
+bool BattleConditions::load(std::string_view source, ast::NodeCPtr root) {
+	using namespace NodeTools;
+	terrain.clear();
+	const bool parsed = expect_dictionary_keys(
+		"terrain", ZERO_OR_ONE, expect_dictionary([this](std::string_view identifier, ast::NodeCPtr value) -> bool {
+			fixed_point_t multiplier = fixed_point_t::_1;
+			const bool ok = expect_fixed_point(assign_variable_callback(multiplier))(value);
+			terrain.emplace_back(memory::string { identifier }, multiplier);
+			return ok;
+		}),
+		"river_crossing", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(river_crossing)),
+		"night", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(night)),
+		"weather", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(weather))
+	)(root);
+	if (!parsed) {
+		spdlog::warn_s("The conditions of the battles {} are broken, what could be read is used", source);
+	}
+	return parsed;
+}
+
+fixed_point_t BattleConditions::get_terrain(std::string_view terrain_identifier) const {
+	for (auto const& [identifier, multiplier] : terrain) {
+		if (identifier == terrain_identifier) {
+			return multiplier;
+		}
+	}
+	return fixed_point_t::_1;
 }

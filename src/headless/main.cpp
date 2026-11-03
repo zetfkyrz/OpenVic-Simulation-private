@@ -1801,8 +1801,27 @@ static void run_front_dump(InstanceManager& instance_manager) {
 			fmt::println("FRONT_GROUP stop plan={}", set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, false));
 		}
 		instance_manager.force_tick_and_update();
+		// The land battles of the two (one line a battle and a day)
+		for (LandBattleReport const& report : war_manager.get_battle_reports()) {
+			if ((report.attacker != side_a && report.attacker != side_b) || (report.defender != side_a && report.defender != side_b)) {
+				continue;
+			}
+			fmt::println(
+				"FRONT_BATTLE day={} province={} attacker={} defender={} battle_day={} width={} front={}+{}/{}+{} ranks={}/{} attack={:.1f}/{:.1f} conditions={:.2f} R={:.2f} "
+				"lost={:.3f}/{:.3f} strength={:.2f}/{:.2f} of {:.2f}/{:.2f} organisation={:.1f}/{:.1f} retreated={}/{} breakthrough={} ended={} attacker_won={}",
+				day, report.province->get_identifier(), report.attacker->get_identifier(), report.defender->get_identifier(), report.day, report.width,
+				report.attacker_front, report.attacker_reserve, report.defender_front, report.defender_reserve, report.attacker_ranks, report.defender_ranks,
+				static_cast<double>(report.attacker_attack), static_cast<double>(report.defender_attack), static_cast<double>(report.conditions),
+				static_cast<double>(report.ratio), static_cast<double>(report.attacker_strength_lost), static_cast<double>(report.defender_strength_lost),
+				static_cast<double>(report.attacker_strength), static_cast<double>(report.defender_strength), static_cast<double>(report.attacker_max_strength),
+				static_cast<double>(report.defender_max_strength), static_cast<double>(report.attacker_organisation), static_cast<double>(report.defender_organisation),
+				report.attacker_retreated, report.defender_retreated, report.breakthrough ? 1 : 0, report.ended ? 1 : 0, report.attacker_won ? 1 : 0
+			);
+		}
+		std::fflush(stdout);
 		if (day % 10 == 0) {
 			print_state(day);
+			std::fflush(stdout);
 		}
 	}
 	fmt::println("FRONT_SUMMARY days={} fronts_total={}", days, war_manager.get_fronts().size());
@@ -1895,6 +1914,129 @@ static void run_company_dump(InstanceManager& instance_manager) {
 	}
 }
 
+// --dump-battle, the live duel (docs/WAR_ASSUMPTIONS.md, section 6): France attacks Prussia with one full division of the standard template against one
+// on a plain of Prussia, the Prussian one dug in one level (the fortification 1); BATTLE_DUEL lines every day until the battle ends (the real
+// update_combat: the live numbers of the divisions, the losses from the first line, the retreat rules)
+static void run_battle_duel(InstanceManager& instance_manager) {
+	WarManager& war_manager = instance_manager.get_war_manager();
+	UnitTypeManager const& unit_types = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+	CountryInstance* const attacker = instance_manager.get_country_instance_manager().get_country_instance_by_identifier("FRA");
+	CountryInstance* const defender = instance_manager.get_country_instance_manager().get_country_instance_by_identifier("PRU");
+	if (attacker == nullptr || defender == nullptr || !war_manager.declare_war(instance_manager, *attacker, *defender)) {
+		fmt::println("BATTLE_DUEL FAIL no war of France and Prussia");
+		return;
+	}
+	ProvinceInstance* field = nullptr;
+	for (ProvinceInstance* province : defender->get_owned_provinces()) {
+		if (province->get_controller() == defender && province->get_armies().empty() && province->get_terrain_type() != nullptr
+			&& province->get_terrain_type()->get_defence_bonus() == fixed_point_t::_0
+			&& province->get_terrain_type()->get_combat_width_percentage_change() == fixed_point_t::_0) {
+			field = province;
+			break;
+		}
+	}
+	// Two equal divisions: four regiments of line infantry and two of cuirassiers of the country make one division of the standard template, an army of
+	// its own (the regiments of the history are seldom such a division: the armies of Vic2 have their infantry and their cavalry apart). The regiments
+	// are taken from armies that keep at least one regiment
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	const auto make_division = [&](CountryInstance& country) -> ArmyInstance* {
+		std::vector<std::pair<ArmyInstance*, RegimentInstance*>> chosen;
+		for (auto const& [identifier, wanted] : { std::pair { std::string_view { "line_infantry" }, 4 }, std::pair { std::string_view { "cuirassier" }, 2 } }) {
+			int found = 0;
+			for (ArmyInstance& army : country.get_armies()) {
+				if (army.get_transport_navy() != nullptr || army.is_in_combat()) {
+					continue;
+				}
+				std::size_t left = army.get_unit_count();
+				for (auto const& [taken_army, regiment] : chosen) {
+					left -= taken_army == &army;
+				}
+				for (RegimentInstance& regiment : army.get_regiment_instances()) {
+					if (found < wanted && left > 1 && regiment.get_regiment_type().get_identifier() == identifier) {
+						chosen.emplace_back(&army, &regiment);
+						found++;
+						left--;
+					}
+				}
+			}
+			if (found < wanted) {
+				return nullptr;
+			}
+		}
+		ArmyInstance* const army = unit_manager.split_regiment(*chosen.front().first, *chosen.front().second);
+		if (army == nullptr) {
+			return nullptr;
+		}
+		for (std::size_t index = 1; index < chosen.size(); ++index) {
+			if (chosen[index].first->remove_unit(*chosen[index].second)) {
+				army->add_unit(*chosen[index].second);
+				chosen[index].first->update_gamestate();
+			}
+		}
+		const std::uint32_t division_id = unit_manager.next_division_id++;
+		army->get_mutable_divisions().clear();
+		army->get_mutable_divisions().push_back({ division_id, 1 });
+		for (RegimentInstance& regiment : army->get_regiment_instances()) {
+			regiment.set_division_id(division_id);
+		}
+		army->update_gamestate();
+		return army;
+	};
+	ArmyInstance* const attacking = make_division(*attacker);
+	ArmyInstance* const defending = make_division(*defender);
+	if (field == nullptr || attacking == nullptr || defending == nullptr) {
+		fmt::println("BATTLE_DUEL FAIL field={} attacker_division={} defender_division={}", field != nullptr, attacking != nullptr, defending != nullptr);
+		return;
+	}
+	for (ArmyInstance* army : { attacking, defending }) {
+		army->clear_path();
+		army->set_location(*field);
+		army->set_previous_location(nullptr);
+	}
+	// The fortification 1: one level of dig in
+	while (defending->get_dig_in_level() < 1) {
+		defending->advance_dig_in(1, 1);
+	}
+	for (ArmyInstance* army : { attacking, defending }) {
+		DivisionStats const& stats = war_manager.get_live_division_stats(instance_manager, *army, army->get_divisions().front());
+		fmt::println(
+			"BATTLE_DUEL division country={} attack={:.2f} defence={:.2f} breakthrough={:.2f} density={:.3f} fortification={:.2f} dig_in={} organisation={:.1f} strength={:.2f}",
+			army->get_country().get_identifier(), static_cast<double>(stats.attack), static_cast<double>(stats.defence), static_cast<double>(stats.breakthrough),
+			static_cast<double>(stats.density), static_cast<double>(stats.fortification), static_cast<int>(army->get_dig_in_level()),
+			static_cast<double>(stats.current_organisation), static_cast<double>(stats.strength)
+		);
+	}
+	for (int day = 1; day <= 30; ++day) {
+		instance_manager.force_tick_and_update();
+		LandBattleReport const* report = nullptr;
+		for (LandBattleReport const& candidate : war_manager.get_battle_reports()) {
+			if (candidate.province == field) {
+				report = &candidate;
+			}
+		}
+		if (report == nullptr) {
+			fmt::println("BATTLE_DUEL day={} no battle", day);
+			break;
+		}
+		const auto percent = [](const fixed_point_t part, const fixed_point_t whole) -> double {
+			return whole > fixed_point_t::_0 ? static_cast<double>(part / whole) * 100.0 : 0.0;
+		};
+		fmt::println(
+			"BATTLE_DUEL day={} attack={:.2f}/{:.2f} R={:.2f} attacker_men_lost_pct={:.2f} defender_men_lost_pct={:.2f} attacker_organisation={:.1f} defender_organisation={:.1f} "
+			"retreated={}/{} ended={} attacker_won={}",
+			report->day, static_cast<double>(report->attacker_attack), static_cast<double>(report->defender_attack), static_cast<double>(report->ratio),
+			percent(report->attacker_strength_lost, report->attacker_max_strength), percent(report->defender_strength_lost, report->defender_max_strength),
+			static_cast<double>(report->attacker_organisation), static_cast<double>(report->defender_organisation), report->attacker_retreated,
+			report->defender_retreated, report->ended ? 1 : 0, report->attacker_won ? 1 : 0
+		);
+		// The game prints its log to the same output: the line goes out whole
+		std::fflush(stdout);
+		if (report->ended) {
+			break;
+		}
+	}
+}
+
 static void run_template_battle_dump(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& war = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
 	std::size_t printed = 0;
@@ -1919,16 +2061,28 @@ static void run_template_battle_dump(InstanceManager& instance_manager) {
 				narrow.rebuild_counts();
 				const DivisionStats narrow_stats = compute_division_stats(instance_manager, country, narrow);
 				const auto line = [&](std::string_view label, DivisionStats const& a, DivisionStats const& b) {
-					// a attacks b: a deals the damage to b (the defence of b softens it), b deals the damage back (the defence of a softens it only by ATTACKER_DEFENSE_FACTOR);
-					// R = the breakthrough of a over the effective defence of b: R of BREAK_RATIO_DAY in a day, or of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days, and b retreats
-					const fixed_point_t damage = battle_formulas::damage_per_day(war, a, b);
-					const fixed_point_t damage_back = battle_formulas::damage_per_day(war, b, a, true);
-					const fixed_point_t ratio = battle_formulas::breakthrough_ratio(war, a, b);
+					// a attacks b on a plain (conditions 1, fortification 1 of b: the dig in of a day): a day of battle_hit each way. The protection of b is its
+					// defence with the fortification, the one of a its breakthrough; R = the breakthrough of a over the protection of b: R of BREAK_RATIO_DAY in
+					// a day, or of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days, and b retreats; else the one whose organisation reaches 0 first
+					const fixed_point_t protection = battle_formulas::defender_protection(war, b.defence, b.fortification + fixed_point_t::_1);
+					const battle_formulas::Hit to_b = battle_formulas::battle_hit(war, a.attack, fixed_point_t::_1, b.density, protection, b.casualties_taken);
+					const battle_formulas::Hit to_a = battle_formulas::battle_hit(war, b.attack, fixed_point_t::_1, a.density, a.breakthrough, a.casualties_taken);
+					const fixed_point_t ratio = battle_formulas::breakthrough_ratio(a.breakthrough, protection);
+					const auto percent = [](const fixed_point_t part, const fixed_point_t whole) -> double {
+						return whole > fixed_point_t::_0 ? static_cast<double>(part / whole) * 100.0 : 0.0;
+					};
+					const auto days_to_zero = [](const fixed_point_t organisation, const fixed_point_t loss) -> double {
+						return loss > fixed_point_t::_0 ? static_cast<double>(organisation / loss) : 0.0;
+					};
 					fmt::println(
-						"BATTLE country={} template={} {} attacker_width={} defender_width={} damage_per_day={:.3f} damage_back={:.3f} defender_durability={:.2f} days_to_destroy={:.1f} "
-						"R={:.2f} retreat={}",
-						country.get_identifier(), division_template.id, label, a.width, b.width, static_cast<double>(damage), static_cast<double>(damage_back),
-						static_cast<double>(b.durability), static_cast<double>(battle_formulas::days_to_destroy(b.durability, damage)), static_cast<double>(ratio),
+						"BATTLE country={} template={} {} attacker_width={} defender_width={} attack={:.2f}/{:.2f} protection={:.2f}/{:.2f} damage_to_defender={:.3f} "
+						"defender_men_pct={:.2f} defender_org_pct={:.1f} damage_to_attacker={:.3f} attacker_men_pct={:.2f} attacker_org_pct={:.1f} "
+						"defender_org_days={:.1f} attacker_org_days={:.1f} R={:.2f} retreat={}",
+						country.get_identifier(), division_template.id, label, a.width, b.width, static_cast<double>(a.attack), static_cast<double>(b.attack),
+						static_cast<double>(a.breakthrough), static_cast<double>(protection), static_cast<double>(to_b.damage),
+						percent(to_b.strength_loss, b.max_strength), percent(to_b.organisation_loss, b.organisation), static_cast<double>(to_a.damage),
+						percent(to_a.strength_loss, a.max_strength), percent(to_a.organisation_loss, a.organisation), days_to_zero(b.organisation, to_b.organisation_loss),
+						days_to_zero(a.organisation, to_a.organisation_loss), static_cast<double>(ratio),
 						ratio >= war.break_ratio_day ? "day" : ratio >= war.break_ratio_week ? fmt::format("{}_days", war.break_week_days) : "no"
 					);
 				};
@@ -2216,6 +2370,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 	}
 	if (ret && (dump_templates || dump_battles)) {
 		run_template_battle_dump(*game_manager.get_instance_manager());
+		if (dump_battles) {
+			run_battle_duel(*game_manager.get_instance_manager());
+		}
 	}
 
 	if (ret && run_army_test) {

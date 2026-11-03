@@ -54,7 +54,10 @@ namespace OpenVic {
 		// 38: every country fights with divisions: the default template of ov_data/common/ov_units/default_template.txt lays out the regiments of the
 		//     history, generals, field marshals and fronts need mechanic:command (standardized_army), templates mechanic:division_templates; the AI without
 		//     mechanic:command gives its divisions orders by hand
-		inline constexpr int SIMULATION_VERSION = 38;
+		// 39: the land battles of the divisions (military/BattleFormulas.cpp battle_hit, docs/WAR_ASSUMPTIONS.md, section 6): the live divisions, the width of
+		//     the battle and the reserve, the losses from the first line, the retreat by the organisation or R, the conditions of the attacker (the river,
+		//     ov_data/common/ov_war/battle_conditions.txt); the battles are in the state hash
+		inline constexpr int SIMULATION_VERSION = 39;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

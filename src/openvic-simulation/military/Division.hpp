@@ -84,8 +84,8 @@ namespace OpenVic {
 	// Where the regiments of a division stand (docs/WAR_ASSUMPTIONS.md, section 6). The cells of the template are filled line by line (the first
 	// line of every rank, then the second, ...): a cell takes a regiment of its type, else one of the same category (infantry, cavalry, support);
 	// the regiments in the order of the army. The regiments with no cell stand behind the ranks: the rows after the depth of the template, rank by
-	// rank. A division out of the template has no cells: its regiments stand in ranks of extra_depth rows. A rank with no regiment does not count
-	// (the width is the ranks that have one).
+	// rank. A division out of the template has no cells: its regiments stand in ranks of extra_depth rows. A regiment with no men left is not in
+	// the layout (the next line of its rank takes its place); a rank with no regiment does not count (the width is the ranks that have one).
 	struct DivisionLayout {
 		struct Entry {
 			std::uint32_t regiment = 0; // the index of the regiment in ArmyInstance::get_regiment_instances

@@ -225,6 +225,7 @@ bool UnitInstanceGroup::set_location(ProvinceInstance& new_location) {
 
 	if (location != new_location) {
 		ret &= location.get().remove_unit_instance_group(*this);
+		previous_location = &location.get();
 		location = new_location;
 		ret &= new_location.add_unit_instance_group(*this);
 	}
@@ -1251,7 +1252,8 @@ ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentIn
 		new_army_id, fmt::format("{} ({})", army.get_name(), new_army_id), army.get_country(), army.get_location()
 	);
 	unit_instance_group_map.emplace(new_army.unique_id, new_army);
-	// The new army keeps the supplies and the priority of the one it was split from
+	// The new army keeps the supplies, the priority and the province it came from of the one it was split from
+	new_army.set_previous_location(army.get_previous_location());
 	new_army.set_supply_level(army.get_supply_level());
 	new_army.set_supply_priority(army.get_supply_priority());
 	new_army.set_supply_priority_custom(army.is_supply_priority_custom());

@@ -776,8 +776,9 @@ namespace {
 			"division stats: the attack and the defence (before the density) are in proportion to the width at the same depth"
 		);
 		const DivisionStats target = compute_division_stats(im, *country, standard);
-		const fixed_point_t damage_narrow = battle_formulas::damage_per_day(war, narrow, target);
-		const fixed_point_t damage_wide = battle_formulas::damage_per_day(war, wide, target);
+		// A protection the attack never reaches (a quarter of the attack goes through in both cases): the damage is in proportion to the attack
+		const fixed_point_t damage_narrow = battle_formulas::battle_hit(war, narrow.attack, fixed_point_t::_1, fixed_point_t::_1, fixed_point_t(1000), fixed_point_t::_1).damage;
+		const fixed_point_t damage_wide = battle_formulas::battle_hit(war, wide.attack, fixed_point_t::_1, fixed_point_t::_1, fixed_point_t(1000), fixed_point_t::_1).damage;
 		r.check(
 			damage_narrow > fixed_point_t::_0 && near(damage_wide / wide.attack, damage_narrow / narrow.attack, fixed_point_t(1) / 1000),
 			"battle: the damage a division deals is in proportion to its attack (so to its width, its density counted)",
@@ -787,11 +788,7 @@ namespace {
 		// ---- the depth is the durability: more rows last longer, a rank of one row and a rank of two give a depth of 1.5
 		const DivisionStats shallow = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 1)));
 		const DivisionStats deep = compute_division_stats(im, *country, make_template(grid_with(*infantry, 2, 2)));
-		r.check(
-			near(deep.durability, shallow.durability * 2, fixed_point_t(1) / 100)
-				&& near(battle_formulas::days_to_destroy(deep.durability, damage_narrow), battle_formulas::days_to_destroy(shallow.durability, damage_narrow) * 2, fixed_point_t(1) / 10),
-			"division stats: twice the depth, twice the durability, twice the days to destroy"
-		);
+		r.check(near(deep.durability, shallow.durability * 2, fixed_point_t(1) / 100), "division stats: twice the depth, twice the durability");
 		DivisionGrid uneven = grid_with(*infantry, 1, 2);
 		uneven[DivisionTemplate::cell_index(1, 0)] = cell(*infantry);
 		const DivisionStats uneven_stats = compute_division_stats(im, *country, make_template(uneven));
@@ -1778,7 +1775,8 @@ namespace {
 		defender.fortification = fixed_point_t(2);
 		r.check(near(breakthrough_ratio(war, attacker, defender), fixed_point_t(30) / (fixed_point_t(10) * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t(2)))), eps),
 			"battle: the fortification (5 % of the defence a level) and the bonus of the terrain are in the effective defence");
-		r.check(effective_defence(war, defender, fixed_point_t(1) / 10) == defender.defence * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t(2)) + fixed_point_t(1) / 10), "battle: the bonus of the terrain is added");
+		r.check(near(effective_defence(war, defender, fixed_point_t(11) / 10), defender.defence * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t(2))) * fixed_point_t(11) / 10, eps * 10),
+			"battle: the bonus of the terrain multiplies the protection");
 
 		BreakthroughCounter counter;
 		r.check(breakthrough_day(war, fixed_point_t(3), counter), "battle: R of 3 in one day makes the defence retreat");
@@ -1802,19 +1800,29 @@ namespace {
 		r.check(!later, "battle: after the counter went back six more days of R = 2 are still not enough");
 		r.check(!breakthrough_day(war, fixed_point_t(199) / 100, counter) && counter.days == 0, "battle: R just under 2 is nothing");
 
-		// The attacker's defence does not soften the damage it takes (ATTACKER_DEFENSE_FACTOR = 0), the defender's defence does
-		DivisionStats strong;
-		strong.attack = fixed_point_t(20);
-		strong.defence = fixed_point_t(40);
-		DivisionStats weak;
-		weak.attack = fixed_point_t(20);
-		weak.defence = fixed_point_t(0);
-		const fixed_point_t to_defender = damage_per_day(war, strong, strong);
-		const fixed_point_t to_attacker = damage_per_day(war, strong, strong, true);
-		r.check(to_attacker > to_defender && to_attacker == damage_per_day(war, strong, weak, true), "battle: the defence of the attacker does not soften the damage it takes, the defence of the defender does");
-		DivisionStats casualties = strong;
-		casualties.casualties_mult = fixed_point_t(2);
-		r.check(near(damage_per_day(war, strong, casualties), damage_per_day(war, strong, strong) * 2, eps), "battle: the casualties of the one who takes the damage multiply it");
+		// The damage of a day (battle_hit): attack x conditions x density x (1 - BATTLE_BLOCK_SHARE x min(1, protection / attack)); the men lost are
+		// damage x BATTLE_STRENGTH_PER_HIT x casualties_taken_mult, the organisation damage x BATTLE_ORGANISATION_PER_HIT
+		const fixed_point_t attack = fixed_point_t(20);
+		const Hit full_block = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t::_1, attack, fixed_point_t::_1);
+		const Hit over_block = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t::_1, attack * 3, fixed_point_t::_1);
+		r.check(near(full_block.damage, attack / 4, eps) && near(over_block.damage, attack / 4, eps),
+			"battle: a protection as big as the attack or bigger lets 25 % of the attack through", fmt::format("{} {}", dbl(full_block.damage), dbl(over_block.damage)));
+		const Hit half_block = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t::_1, attack / 2, fixed_point_t::_1);
+		r.check(near(half_block.damage, attack * 5 / 8, eps), "battle: a protection of half the attack lets 62.5 % through", fmt::format("{}", dbl(half_block.damage)));
+		const Hit no_block = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t::_1, fixed_point_t::_0, fixed_point_t::_1);
+		r.check(near(no_block.damage, attack, eps), "battle: no protection lets all of the attack through");
+		const Hit dense_target = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t(2), attack / 2, fixed_point_t::_1);
+		r.check(near(dense_target.damage, half_block.damage * 2, eps), "battle: the density of the target multiplies the damage");
+		const Hit hard_conditions = battle_hit(war, attack, fixed_point_t(3) / 4, fixed_point_t::_1, attack / 2, fixed_point_t::_1);
+		r.check(near(hard_conditions.damage, half_block.damage * 3 / 4, eps), "battle: the conditions of the attacker (a river) multiply the damage");
+		const Hit medicine = battle_hit(war, attack, fixed_point_t::_1, fixed_point_t::_1, attack / 2, fixed_point_t::_1 / 2);
+		r.check(near(medicine.strength_loss, half_block.strength_loss / 2, eps) && medicine.organisation_loss == half_block.organisation_loss
+				&& medicine.damage == half_block.damage,
+			"battle: the medicine (casualties_taken_mult) lowers the men lost only, not the damage and not the organisation");
+		r.check(near(half_block.strength_loss, half_block.damage * war.battle_strength_per_hit, eps) && near(half_block.organisation_loss, half_block.damage * war.battle_organisation_per_hit, eps),
+			"battle: the men and the organisation lost are the damage times BATTLE_STRENGTH_PER_HIT and BATTLE_ORGANISATION_PER_HIT");
+		r.check(near(defender_protection(war, fixed_point_t(10), fixed_point_t::_1, fixed_point_t(12) / 10), fixed_point_t(10) * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t::_1)) * fixed_point_t(12) / 10, eps),
+			"battle: the protection of a defender is its defence x (1 + 0.05 x fortification) x the terrain");
 
 		// The modifiers of the country count in the attack, the defence and the breakthrough of a template (percents are summed)
 		CountryInstance* country = nullptr;
@@ -2981,7 +2989,7 @@ namespace {
 				ProvinceInstance* target = nullptr;
 				for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
 					if (!province.province_definition.is_water() && province.get_owner() != nullptr && province.get_owner() == province.get_controller()
-						&& attacker.is_at_war_with(*province.get_owner())
+						&& attacker.is_at_war_with(*province.get_owner()) && province.get_armies().empty()
 						&& calculate_supply_territory(province, im.get_map_instance(), attacker, raider_friends, defines).kind
 							== SupplyTerritory::kind_t::FAR) {
 						target = &province;
@@ -4540,6 +4548,282 @@ namespace {
 		}
 	}
 
+	// A division of the standard template with at least four regiments in two ranks or more (the armies of Vic2 seldom make a whole one), nullptr if none
+	std::pair<ArmyInstance*, DivisionInstance const*> find_full_division(InstanceManager& im, CountryInstance& country) {
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.is_in_combat() || army.is_moving() || army.get_transport_navy() != nullptr) {
+				continue;
+			}
+			for (DivisionInstance const& division : army.get_divisions()) {
+				std::size_t count = 0;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					count += regiment.get_division_id() == division.id;
+				}
+				const DivisionLayout layout = layout_division(
+					im.definition_manager.get_military_manager().get_unit_type_manager(), country, army, division, 2
+				);
+				if (division.template_id == 1 && count >= 4 && layout.width >= 2 && layout.entries.size() == count) {
+					return { &army, &division };
+				}
+			}
+		}
+		return { nullptr, nullptr };
+	}
+
+	// The live division: the cache of its numbers is computed again when what they depend on changes, a line that lost its regiment is taken by the next one
+	void test_live_divisions(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		CountryInstance* country = im.get_country_instance_manager().get_country_instance_by_identifier("FRA");
+		r.check(country != nullptr, "live division: France exists");
+		if (country == nullptr) {
+			return;
+		}
+		const std::pair<ArmyInstance*, DivisionInstance const*> found = find_full_division(im, *country);
+		ArmyInstance* const army = found.first;
+		DivisionInstance const* const division = found.second;
+		r.check(army != nullptr, "live division: France has a division of the standard template with four regiments");
+		if (army == nullptr) {
+			return;
+		}
+		const std::uint32_t division_id = division->id;
+		const auto stats = [&]() -> DivisionStats const& {
+			DivisionInstance const* current = nullptr;
+			for (DivisionInstance const& candidate : army->get_divisions()) {
+				if (candidate.id == division_id) {
+					current = &candidate;
+				}
+			}
+			return war_manager.get_live_division_stats(im, *army, *current);
+		};
+		const DivisionStats full = stats();
+		const DivisionStats template_stats = compute_division_stats(im, *country, *country->find_division_template(1));
+		r.check(full.regiments >= 4 && full.width >= 2 && full.attack > fixed_point_t::_0 && full.strength > fixed_point_t::_0,
+			"live division: the division has its regiments, its width, an attack and its men", fmt::format("{} (template {})", dbl(full.attack), dbl(template_stats.attack)));
+		std::uint64_t computed = war_manager.get_live_stats_computed();
+		(void) stats();
+		r.check(war_manager.get_live_stats_computed() == computed, "live division: the numbers come from the cache when nothing changed");
+
+		// The first line of the first rank loses its men: the second line takes its place with the weight of the first
+		std::vector<RegimentInstance*> members;
+		for (RegimentInstance& regiment : army->get_regiment_instances()) {
+			if (regiment.get_division_id() == division_id) {
+				members.push_back(&regiment);
+			}
+		}
+		DivisionInstance const* current_division = nullptr;
+		for (DivisionInstance const& candidate : army->get_divisions()) {
+			if (candidate.id == division_id) {
+				current_division = &candidate;
+			}
+		}
+		const DivisionLayout before = layout_division(unit_types, *country, *army, *current_division, 2);
+		RegimentInstance* first_line = nullptr;
+		RegimentInstance* second_line = nullptr;
+		for (DivisionLayout::Entry const& entry : before.entries) {
+			RegimentInstance& regiment = army->get_regiment_instances()[entry.regiment];
+			if (entry.rank == 0 && entry.line == 0) {
+				first_line = &regiment;
+			} else if (entry.rank == 0 && entry.line == 1) {
+				second_line = &regiment;
+			}
+		}
+		r.check(first_line != nullptr && second_line != nullptr, "live division: the first rank has two lines");
+		if (first_line == nullptr || second_line == nullptr) {
+			return;
+		}
+		const fixed_point_t first_strength = first_line->get_strength();
+		first_line->take_damage(fixed_point_t::_0, first_line->get_strength());
+		const DivisionLayout after = layout_division(unit_types, *country, *army, *current_division, 2);
+		bool second_now_first = false;
+		for (DivisionLayout::Entry const& entry : after.entries) {
+			if (&army->get_regiment_instances()[entry.regiment].get() == second_line) {
+				second_now_first = entry.line == 0;
+			}
+		}
+		r.check(after.entries.size() + 1 == before.entries.size() && second_now_first, "live division: the regiment of the second line takes the place of the first one that lost its men (its weight is 1)");
+		computed = war_manager.get_live_stats_computed();
+		const DivisionStats damaged = stats();
+		r.check(war_manager.get_live_stats_computed() == computed + 1 && damaged.attack < full.attack && damaged.regiments + 1 == full.regiments,
+			"live division: the losses compute the numbers again", fmt::format("{} {}", dbl(damaged.attack), dbl(full.attack)));
+		first_line->recover(fixed_point_t::_0, first_strength);
+		computed = war_manager.get_live_stats_computed();
+		r.check(near(stats().attack, full.attack, fixed_point_t(1) / 1000) && war_manager.get_live_stats_computed() == computed + 1,
+			"live division: the reinforcement computes them again");
+		// Half the men of a regiment: its cell is worth half
+		second_line->take_damage(fixed_point_t::_0, second_line->get_strength() / 2);
+		const DivisionStats half = stats();
+		r.check(half.attack < full.attack && half.regiments == full.regiments, "live division: a regiment with half its men is worth less");
+		second_line->recover(fixed_point_t::_0, second_line->get_max_strength());
+		// The weapon and the general
+		const fixed_point_t ratio_before = second_line->get_weapon_attack_ratio();
+		computed = war_manager.get_live_stats_computed();
+		second_line->set_weapon_attack_ratio(ratio_before * 2);
+		const DivisionStats armed = stats();
+		r.check(war_manager.get_live_stats_computed() == computed + 1 && armed.attack > full.attack, "live division: a new weapon computes the numbers again");
+		second_line->set_weapon_attack_ratio(ratio_before);
+		(void) stats();
+		computed = war_manager.get_live_stats_computed();
+		LeaderInstance* const leader_before = army->get_leader();
+		LeaderInstance* other = nullptr;
+		for (LeaderInstance& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (&leader != leader_before && leader.get_unit_instance_group() == nullptr && leader.get_can_be_used() && !leader.is_marshal()) {
+				other = &leader;
+			}
+		}
+		if (other != nullptr) {
+			army->set_leader(other);
+			(void) stats();
+			r.check(war_manager.get_live_stats_computed() == computed + 1, "live division: a new general computes the numbers again");
+			army->set_leader(leader_before);
+		}
+		// The next day (the modifiers and the technologies of the country are summed every day)
+		(void) stats();
+		computed = war_manager.get_live_stats_computed();
+		im.force_tick_and_update();
+		bool still_there = false;
+		for (DivisionInstance const& candidate : army->get_divisions()) {
+			still_there |= candidate.id == division_id;
+		}
+		if (still_there) {
+			(void) stats();
+			r.check(war_manager.get_live_stats_computed() == computed + 1, "live division: a new day (the modifiers and the technologies) computes the numbers again");
+		}
+	}
+
+	// A battle set up by hand: France attacks Prussia on a plain; the width of the battle limits the divisions of the front, the others wait in the reserve
+	void test_live_battle(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		CountryInstance* attacker = im.get_country_instance_manager().get_country_instance_by_identifier("FRA");
+		CountryInstance* defender = im.get_country_instance_manager().get_country_instance_by_identifier("PRU");
+		r.check(attacker != nullptr && defender != nullptr && war_manager.declare_war(im, *attacker, *defender), "live battle: France declares war on Prussia");
+		if (attacker == nullptr || defender == nullptr || !attacker->is_at_war_with(*defender)) {
+			return;
+		}
+		// A plain of Prussia with no army
+		ProvinceInstance* field = nullptr;
+		for (ProvinceInstance* province : defender->get_owned_provinces()) {
+			if (province->get_controller() == defender && province->get_armies().empty() && province->get_terrain_type() != nullptr
+				&& province->get_terrain_type()->get_defence_bonus() == fixed_point_t::_0
+			&& province->get_terrain_type()->get_combat_width_percentage_change() == fixed_point_t::_0 && !province->province_definition.is_water()) {
+				field = province;
+				break;
+			}
+		}
+		r.check(field != nullptr, "live battle: Prussia has a plain with no army");
+		if (field == nullptr) {
+			return;
+		}
+		// All the divisions of France in one army there, one division of Prussia
+		std::vector<ArmyInstance*> french;
+		for (ArmyInstance& army : attacker->get_armies()) {
+			if (army.get_transport_navy() == nullptr && !army.is_in_combat()) {
+				french.push_back(&army);
+			}
+		}
+		std::size_t french_divisions = 0;
+		for (ArmyInstance* army : french) {
+			army->clear_path();
+			army->set_location(*field);
+			army->set_previous_location(nullptr);
+			french_divisions += army->get_divisions().size();
+		}
+		const std::pair<ArmyInstance*, DivisionInstance const*> prussian_found = find_full_division(im, *defender);
+		ArmyInstance* const prussian = prussian_found.first;
+		DivisionInstance const* const prussian_division = prussian_found.second;
+		r.check(prussian != nullptr && french_divisions > 6, "live battle: a division of Prussia and more than six divisions of France",
+			fmt::format("{}", french_divisions));
+		if (prussian == nullptr) {
+			return;
+		}
+		ArmyInstance* defending = prussian;
+		if (prussian->get_divisions().size() > 1) {
+			defending = split_division(im.get_unit_instance_manager(), *prussian, prussian_division->id);
+		}
+		if (defending == nullptr) {
+			return;
+		}
+		defending->clear_path();
+		defending->set_location(*field);
+		// The estimate (no change of the game): one French army, then all of them (the support of several armies)
+		std::vector<ArmyInstance const*> one_army { french.front() };
+		std::vector<ArmyInstance const*> all_armies { french.begin(), french.end() };
+		const std::uint64_t battles_before = war_manager.get_land_battle_count();
+		const BattleEstimate one_estimate = war_manager.estimate_battle(im, one_army, *field);
+		const BattleEstimate estimate = war_manager.estimate_battle(im, all_armies, *field);
+		r.check(estimate.valid && one_estimate.valid && estimate.attacker_attack >= one_estimate.attacker_attack && estimate.ratio >= one_estimate.ratio
+				&& war_manager.get_land_battle_count() == battles_before,
+			"live battle: the estimate counts the support of all the armies and changes nothing",
+			fmt::format("R {} with one army, {} with all", dbl(one_estimate.ratio), dbl(estimate.ratio)));
+		im.force_tick_and_update();
+		LandBattleReport const* report = nullptr;
+		for (LandBattleReport const& candidate : war_manager.get_battle_reports()) {
+			if (candidate.province == field) {
+				report = &candidate;
+			}
+		}
+		r.check(report != nullptr, "live battle: the battle is fought");
+		if (report == nullptr) {
+			return;
+		}
+		OpenVicWarDefines const& war = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		r.check(report->attacker == attacker && report->defender == defender, "live battle: the country that came attacks, the controller of the province defends");
+		r.check(report->width == static_cast<std::uint32_t>(war.battle_width_base) && report->attacker_ranks <= report->width && report->attacker_reserve > 0
+				&& report->attacker_front + report->attacker_reserve == french_divisions,
+			"live battle: the width of the battle (a plain: BATTLE_WIDTH_BASE ranks) limits the divisions of the front, the others wait in the reserve",
+			fmt::format("width {} ranks {} front {} reserve {}", report->width, report->attacker_ranks, report->attacker_front, report->attacker_reserve));
+		r.check(report->defender_front == 1 && report->defender_strength_lost > fixed_point_t::_0 && report->attacker_strength_lost > fixed_point_t::_0,
+			"live battle: both sides lose men");
+		r.check(report->ratio > fixed_point_t::_0, "live battle: R is counted", fmt::format("{}", dbl(report->ratio)));
+		r.check(near(estimate.ratio, report->ratio, report->ratio / 5) && estimate.attacker_wins == (report->ended && report->attacker_won),
+			"live battle: the estimate of the day before gives about the R of the battle and its winner (the supply of a day may differ)",
+			fmt::format("estimate R {} wins {}, battle R {} won {}", dbl(estimate.ratio), estimate.attacker_wins, dbl(report->ratio), report->attacker_won));
+		// The divisions of a new day: the front keeps its divisions while they stay
+		std::uint32_t day = 1;
+		while (day < 30) {
+			bool going = false;
+			for (LandBattleReport const& candidate : war_manager.get_battle_reports()) {
+				going |= candidate.province == field && !candidate.ended;
+			}
+			if (!going) {
+				break;
+			}
+			im.force_tick_and_update();
+			day++;
+		}
+		bool prussian_left = true;
+		for (ArmyInstance const& army : field->get_armies()) {
+			prussian_left &= &army.get_country() != defender;
+		}
+		r.check(prussian_left, "live battle: the one division of Prussia leaves the field (retreat or destroyed)", fmt::format("{} days", day));
+		for (CountryInstance* country : { attacker, defender }) {
+			r.check(war_manager.get_battle_stats(*country).battle_days > 0, "live battle: the statistics count the days of the battle");
+		}
+	}
+
+	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
+	void test_ai_war_captures(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		std::size_t held = 0;
+		for (auto const& [first, second] : { std::pair { "RUS", "TUR" } }) {
+			CountryInstance* a = im.get_country_instance_manager().get_country_instance_by_identifier(first);
+			CountryInstance* b = im.get_country_instance_manager().get_country_instance_by_identifier(second);
+			if (a == nullptr || b == nullptr || a->is_at_war_with(*b) || !war_manager.declare_war(im, *a, *b)) {
+				continue;
+			}
+			for (int day = 0; day < 60; ++day) {
+				im.force_tick_and_update();
+			}
+			for (ProvinceInstance const* province : a->get_owned_provinces()) {
+				held += province->get_controller() == b;
+			}
+			for (ProvinceInstance const* province : b->get_owned_provinces()) {
+				held += province->get_controller() == a;
+			}
+		}
+		r.check(held > 0, "live battles: the AI countries at war take provinces of each other (Russia and Turkey, 60 days)", fmt::format("{} provinces", held));
+	}
+
 	// World trade: the routes by land and sea exist and are the same both ways, the freight of the sellers reaches the treasuries, the
 	// workers keep part of the output, and the people who are hungry for a month and have no job emigrate or die
 	// Fronts (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 5): the divisions of the armies of a front spread over its line, one army for every province
@@ -5039,6 +5323,17 @@ namespace {
 		test_job_migration(r, *im);
 		test_rgo_buildings(r, *im); // ticks days too
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
+		game.end();
+
+		// ---- run 9: the live divisions and the land battles (docs/WAR_ASSUMPTIONS.md, section 6)
+		im = game.start();
+		r.check(im != nullptr, "live battles: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_live_divisions(r, *im);
+		test_live_battle(r, *im);
+		test_ai_war_captures(r, *im); // ticks 60 days
 		game.end();
 
 		// ---- the defines hash does not change while playing

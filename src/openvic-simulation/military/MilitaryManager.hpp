@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openvic-simulation/military/ArmyGroup.hpp"
+#include "openvic-simulation/military/BattleFormulas.hpp"
 #include "openvic-simulation/military/Companies.hpp"
 #include "openvic-simulation/military/Deployment.hpp"
 #include "openvic-simulation/military/Equipment.hpp"
@@ -21,5 +22,6 @@ namespace OpenVic {
 		DefaultUnlocks PROPERTY_REF(default_unlocks);
 		CompanyTypeManager PROPERTY_REF(company_type_manager);
 		CommandPalette PROPERTY_REF(command_palette);
+		BattleConditions PROPERTY_REF(battle_conditions);
 	};
 }

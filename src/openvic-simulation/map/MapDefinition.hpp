@@ -58,8 +58,18 @@ namespace OpenVic {
 		ProvinceSet water_provinces;
 		TerrainTypeManager PROPERTY_REF(terrain_type_manager);
 
-		memory::vector<river_t> SPAN_PROPERTY(rivers); // TODO: calculate provinces affected by crossing
+		memory::vector<river_t> SPAN_PROPERTY(rivers);
+		// The borders of land provinces along a river (the battles over a river, docs/WAR_ASSUMPTIONS.md, section 6): the pair of the province indices
+		// (the smaller first) -> the share of the pixels of their border that touch a river pixel
+		ordered_map<std::uint64_t, fixed_point_t> river_border_shares;
 		void _trace_river(BMP& rivers_bmp, ivec2_t start, river_t& river);
+		void _find_river_borders(uint8_t const* river_data);
+
+	public:
+		// The share (0..1) of the border of the two provinces that runs along a river, 0 if they have no common border or no river on it
+		[[nodiscard]] fixed_point_t get_river_border_share(ProvinceDefinition const& first, ProvinceDefinition const& second) const;
+
+	private:
 
 		ivec2_t PROPERTY(dims, { 0, 0 });
 		memory::vector<shape_pixel_t> SPAN_PROPERTY(province_shape_image);

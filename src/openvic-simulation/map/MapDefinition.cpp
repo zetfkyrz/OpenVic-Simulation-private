@@ -1000,8 +1000,65 @@ bool MapDefinition::load_map_images(fs::path const& province_path, fs::path cons
 	}
 
 	SPDLOG_INFO("Generated {} rivers.", rivers.size());
+	_find_river_borders(river_data);
 
 	return ret;
+}
+
+namespace {
+	std::uint64_t river_border_key(const std::uint32_t first, const std::uint32_t second) {
+		return first < second ? (static_cast<std::uint64_t>(first) << 32) | second : (static_cast<std::uint64_t>(second) << 32) | first;
+	}
+}
+
+void MapDefinition::_find_river_borders(uint8_t const* river_data) {
+	// Every pair of neighbouring pixels (right and down) of two land provinces is a pixel of their border; it is on a river when one of the two is
+	// a river pixel (the colours below 12 of the rivers image are the rivers)
+	static constexpr uint8_t RIVER_COLOURS = 12;
+	ordered_map<std::uint64_t, std::pair<std::uint32_t, std::uint32_t>> counts; // the border pixels, the ones on a river
+	const auto land_index = [this](const size_t pixel_index) -> std::uint32_t {
+		const ProvinceDefinition::province_number_t number = province_shape_image[pixel_index].province_number;
+		if (number == ProvinceDefinition::NULL_PROVINCE_NUMBER) {
+			return 0;
+		}
+		ProvinceDefinition const* const province = get_province_definition_by_index(ProvinceDefinition::get_index_from_province_number(number));
+		return province != nullptr && !province->is_water() ? number : 0;
+	};
+	for (ivec2_t pos {}; pos.y < get_height(); ++pos.y) {
+		for (pos.x = 0; pos.x < get_width(); ++pos.x) {
+			const size_t pixel_index = get_pixel_index_from_pos(pos);
+			const std::uint32_t here = land_index(pixel_index);
+			if (here == 0) {
+				continue;
+			}
+			for (const ivec2_t step : { ivec2_t { 1, 0 }, ivec2_t { 0, 1 } }) {
+				const ivec2_t next_pos = pos + step;
+				if (next_pos.x >= get_width() || next_pos.y >= get_height()) {
+					continue;
+				}
+				const size_t next_index = get_pixel_index_from_pos(next_pos);
+				const std::uint32_t there = land_index(next_index);
+				if (there == 0 || there == here) {
+					continue;
+				}
+				std::pair<std::uint32_t, std::uint32_t>& count = counts[river_border_key(here, there)];
+				count.first++;
+				count.second += river_data[pixel_index] < RIVER_COLOURS || river_data[next_index] < RIVER_COLOURS;
+			}
+		}
+	}
+	river_border_shares.clear();
+	for (auto const& [key, count] : counts) {
+		if (count.second > 0) {
+			river_border_shares.emplace(key, fixed_point_t(static_cast<std::int32_t>(count.second)) / static_cast<std::int32_t>(count.first));
+		}
+	}
+	SPDLOG_INFO("Found {} borders of provinces along rivers.", river_border_shares.size());
+}
+
+fixed_point_t MapDefinition::get_river_border_share(ProvinceDefinition const& first, ProvinceDefinition const& second) const {
+	const auto it = river_border_shares.find(river_border_key(first.get_province_number(), second.get_province_number()));
+	return it != river_border_shares.end() ? it->second : fixed_point_t::_0;
 }
 
 /* REQUIREMENTS:

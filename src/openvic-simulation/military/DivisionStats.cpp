@@ -13,6 +13,7 @@
 #include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitEquipment.hpp"
 #include "openvic-simulation/military/UnitModifiers.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
@@ -22,7 +23,7 @@ using namespace OpenVic;
 
 DivisionStats OpenVic::compute_division_stats(
 	InstanceManager const& instance_manager, CountryInstance const& country, DivisionTemplate const& division_template,
-	const fixed_point_t equipment_fill
+	const fixed_point_t equipment_fill, std::span<const DivisionLiveCell> live
 ) {
 	DefinitionManager const& definitions = instance_manager.definition_manager;
 	OpenVicDefines const& defines = definitions.get_define_manager().get_openvic_defines();
@@ -100,13 +101,16 @@ DivisionStats OpenVic::compute_division_stats(
 			EquipmentDefinition const* const goods_weapon = info.weapon.best != nullptr ? info.weapon.best : first;
 			EquipmentDefinition const* const effective = info.weapon.effective;
 			const fixed_point_t keep = info.weapon.keep;
-			const fixed_point_t attack_ratio = has_weapon
+			DivisionLiveCell const* const live_cell = live.size() == DIVISION_GRID_SIZE ? &live[DivisionTemplate::cell_index(rank, row)] : nullptr;
+			const fixed_point_t attack_ratio = live_cell != nullptr ? live_cell->attack_ratio : has_weapon
 				? battle_formulas::weapon_ratio(first->attack_mult, effective->attack_mult * keep, equipment_fill) : fixed_point_t::_1;
-			const fixed_point_t defence_ratio = has_weapon
+			const fixed_point_t defence_ratio = live_cell != nullptr ? live_cell->defence_ratio : has_weapon
 				? battle_formulas::weapon_ratio(first->defense_mult, effective->defense_mult * keep, equipment_fill) : fixed_point_t::_1;
-			const fixed_point_t breakthrough_ratio = has_weapon
+			const fixed_point_t breakthrough_ratio = live_cell != nullptr ? live_cell->breakthrough_ratio : has_weapon
 				? battle_formulas::weapon_ratio(first->breakthrough_mult, effective->breakthrough_mult * keep, equipment_fill) : fixed_point_t::_1;
-			const fixed_point_t row_weight = battle_formulas::row_weight(row, limits.row_weight_shift);
+			// The men of the regiment (a live division) count in what it is worth in battle
+			const fixed_point_t fill = live_cell != nullptr ? live_cell->fill : fixed_point_t::_1;
+			const fixed_point_t row_weight = battle_formulas::row_weight(row, limits.row_weight_shift) * fill;
 
 			stats.regiments++;
 			cells_in_rank[rank]++;
@@ -120,9 +124,25 @@ DivisionStats OpenVic::compute_division_stats(
 				+ company_buff(scoped_effect_t::BREAKTHROUGH_MULT, weights);
 			casualties_sum += get_scoped_product(country, cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, weights);
 			occupation_weight_sum += regiment_type->ov.occupation_weight;
-			stats.attack += regiment_type->attack * attack_ratio * attack_factor * row_weight;
-			stats.defence += regiment_type->defence * defence_ratio * defence_factor * row_weight;
-			stats.breakthrough += regiment_type->get_breakthrough() * breakthrough_ratio * breakthrough_factor * row_weight;
+			const fixed_point_t attack = regiment_type->attack * attack_ratio * attack_factor * row_weight;
+			const fixed_point_t defence = regiment_type->defence * defence_ratio * defence_factor * row_weight;
+			const fixed_point_t breakthrough = regiment_type->get_breakthrough() * breakthrough_ratio * breakthrough_factor * row_weight;
+			stats.attack += attack;
+			stats.defence += defence;
+			stats.breakthrough += breakthrough;
+			{
+				auto part = std::find_if(stats.parts.begin(), stats.parts.end(), [regiment_type](DivisionStats::TypePart const& candidate) -> bool {
+					return candidate.type == regiment_type;
+				});
+				if (part == stats.parts.end()) {
+					stats.parts.push_back({ regiment_type, 0, fixed_point_t::_0, fixed_point_t::_0, fixed_point_t::_0 });
+					part = stats.parts.end() - 1;
+				}
+				part->regiments++;
+				part->attack += attack;
+				part->defence += defence;
+				part->breakthrough += breakthrough;
+			}
 			durability_sum += regiment_type->max_strength * defence_ratio;
 			strength_sum += regiment_type->max_strength;
 			organisation_sum += regiment_type->default_organisation;
@@ -212,7 +232,13 @@ DivisionStats OpenVic::compute_division_stats(
 		stats.attack = stats.attack * density.attack_mult;
 		stats.defence = stats.defence * density.defence_mult;
 		stats.breakthrough = stats.breakthrough * density.breakthrough_mult;
-		stats.casualties_mult = casualties_sum / static_cast<std::int32_t>(stats.regiments) * density.casualties_mult;
+		for (DivisionStats::TypePart& part : stats.parts) {
+			part.attack = part.attack * density.attack_mult;
+			part.defence = part.defence * density.defence_mult;
+			part.breakthrough = part.breakthrough * density.breakthrough_mult;
+		}
+		stats.casualties_taken = casualties_sum / static_cast<std::int32_t>(stats.regiments);
+		stats.casualties_mult = stats.casualties_taken * density.casualties_mult;
 	}
 	stats.fortification = fortification_sum / static_cast<std::int32_t>(std::max<std::uint32_t>(stats.regiments, 1));
 	stats.reconnaissance += effect_value(cache.get_division_reconnaissance());
@@ -224,6 +250,9 @@ DivisionStats OpenVic::compute_division_stats(
 	stats.occupation_instant = country.has_unlock(UNLOCK_MECHANIC_INSTANT_OCCUPATION);
 	stats.occupation_days = battle_formulas::occupation_days(fixed_point_t(defines.war.occupation_base_days), stats.occupation_speed, stats.occupation_instant);
 	stats.men = (strength_sum + company_men) * defines.war.template_men_per_strength;
+	stats.strength = strength_sum;
+	stats.max_strength = strength_sum;
+	stats.current_organisation = stats.organisation;
 
 	const auto to_vector = [](std::map<std::string, fixed_point_t> const& map, memory::vector<DivisionGoodAmount>& out) {
 		for (auto const& [good, amount] : map) {
@@ -235,3 +264,44 @@ DivisionStats OpenVic::compute_division_stats(
 	to_vector(ammo, stats.ammo_per_day);
 	return stats;
 }
+
+DivisionStats OpenVic::compute_live_division_stats(
+	InstanceManager const& instance_manager, CountryInstance const& country, ArmyInstance const& army, DivisionInstance const& division
+) {
+	UnitTypeManager const& unit_type_manager = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+	const DivisionTemplateLimits limits = get_template_limits(instance_manager, country);
+	const DivisionLayout layout = layout_division(unit_type_manager, country, army, division, limits.depth);
+	// The grid of where the regiments stand: the rank and the line (a line that lost its regiments is taken by the next one)
+	DivisionTemplate placed;
+	placed.id = division.template_id;
+	if (DivisionTemplate const* const division_template = division.template_id != 0 ? country.find_division_template(division.template_id) : nullptr) {
+		placed.companies = division_template->companies;
+	}
+	std::array<DivisionLiveCell, DIVISION_GRID_SIZE> cells {};
+	std::span<const std::reference_wrapper<const RegimentInstance>> const regiments = army.get_regiment_instances();
+	fixed_point_t strength = fixed_point_t::_0, organisation = fixed_point_t::_0;
+	std::int32_t counted = 0;
+	for (DivisionLayout::Entry const& entry : layout.entries) {
+		RegimentInstance const& regiment = regiments[entry.regiment];
+		strength += regiment.get_strength();
+		organisation += regiment.get_organisation();
+		counted++;
+		// A line behind the eighth weighs nothing a fixed point number shows: its men count in the strength only
+		if (entry.rank >= DIVISION_MAX_RANKS || entry.line >= DIVISION_MAX_DEPTH) {
+			continue;
+		}
+		const std::size_t cell = DivisionTemplate::cell_index(entry.rank, entry.line);
+		placed.cells[cell] = static_cast<std::uint8_t>(get_division_slot_kind(regiment.get_regiment_type()) + 1);
+		DivisionLiveCell& live = cells[cell];
+		live.attack_ratio = regiment.get_weapon_attack_ratio();
+		live.defence_ratio = regiment.get_weapon_defence_ratio();
+		live.breakthrough_ratio = regiment.get_weapon_breakthrough_ratio();
+		live.fill = regiment.get_max_strength() > fixed_point_t::_0 ? regiment.get_strength() / regiment.get_max_strength() : fixed_point_t::_0;
+	}
+	placed.rebuild_counts();
+	DivisionStats stats = compute_division_stats(instance_manager, country, placed, fixed_point_t::_1, cells);
+	stats.strength = strength;
+	stats.current_organisation = counted > 0 ? organisation / counted : fixed_point_t::_0;
+	return stats;
+}
+

@@ -195,6 +195,17 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(front.provinces.size()));
 		hasher.add(static_cast<std::uint64_t>(front.army_ids.size()));
 	}
+	// The land battles that go on (in the order of the provinces): the days, the counter of the breakthrough, the divisions of the front
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (LandBattle const* const battle = instance_manager.get_war_manager().get_land_battle(province)) {
+			hasher.add(static_cast<std::uint64_t>(type_safe::get(province.province_definition.index)));
+			hasher.add(static_cast<std::uint64_t>(battle->days));
+			hasher.add(static_cast<std::uint64_t>(battle->counter.days));
+			for (const std::uint32_t division_id : battle->front_divisions) {
+				hasher.add(static_cast<std::uint64_t>(division_id));
+			}
+		}
+	}
 	hasher.add(instance_manager.get_colonisation_manager().get_projects().size());
 	hasher.add(instance_manager.get_notification_log().get_entries().size());
 	return hasher.value;

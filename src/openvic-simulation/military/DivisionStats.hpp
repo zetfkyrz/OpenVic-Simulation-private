@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #include "openvic-simulation/core/memory/String.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
@@ -51,10 +52,40 @@ namespace OpenVic {
 		memory::vector<DivisionGoodAmount> cost; // goods of the construction of all the regiments, with the weapons of the best generation
 		memory::vector<DivisionGoodAmount> supply_per_day; // goods the regiments use in a day on the move or in camp (weapons, artillery too)
 		memory::vector<DivisionGoodAmount> ammo_per_day; // ammunition the weapons use in a day of battle, by good
+		// What every regiment type of the division is worth (the density counted): the buffs of the types (against a terrain, an enemy) are added in
+		// battle to the part of their type
+		struct TypePart {
+			RegimentType const* type = nullptr;
+			std::uint32_t regiments = 0;
+			fixed_point_t attack, defence, breakthrough;
+		};
+		memory::vector<TypePart> parts;
+		fixed_point_t casualties_taken = fixed_point_t::_1; // the average casualties_taken_mult of the regiments (medicine), without the density
+		// A live division (compute_live_division_stats): the strength points and the organisation its regiments have now (a template: the full ones)
+		fixed_point_t strength;
+		fixed_point_t max_strength;
+		fixed_point_t current_organisation;
 	};
 
+	// A cell of a live division: the multipliers of the weapon its regiment really has and the share of its men (strength / max strength)
+	struct DivisionLiveCell {
+		fixed_point_t attack_ratio = fixed_point_t::_1;
+		fixed_point_t defence_ratio = fixed_point_t::_1;
+		fixed_point_t breakthrough_ratio = fixed_point_t::_1;
+		fixed_point_t fill = fixed_point_t::_1;
+	};
+
+	// live: a cell for every cell of the grid (DIVISION_GRID_SIZE) of a live division: its regiment has these weapons and men instead of the best weapons
+	// of the country (empty: a template)
 	[[nodiscard]] DivisionStats compute_division_stats(
 		InstanceManager const& instance_manager, CountryInstance const& country, DivisionTemplate const& division_template,
-		fixed_point_t equipment_fill = fixed_point_t::_1
+		fixed_point_t equipment_fill = fixed_point_t::_1, std::span<const DivisionLiveCell> live = {}
+	);
+
+	// What a division of an army is worth now (docs/WAR_ASSUMPTIONS.md, section 6): the grid is where its regiments stand (layout_division; a line
+	// that lost its regiments is taken by the next one, which gets its weight), every cell is worth its regiment with the weapon it has and its men
+	// (strength / max strength); the companies of its template, the modifiers of the country. WarManager::get_live_division_stats keeps it in a cache.
+	[[nodiscard]] DivisionStats compute_live_division_stats(
+		InstanceManager const& instance_manager, CountryInstance const& country, ArmyInstance const& army, DivisionInstance const& division
 	);
 }

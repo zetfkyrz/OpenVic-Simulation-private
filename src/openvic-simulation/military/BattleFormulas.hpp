@@ -2,12 +2,30 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
+#include <utility>
 
+#include "openvic-simulation/core/memory/String.hpp"
+#include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/dataloader/NodeTools.hpp"
 
 namespace OpenVic {
 	struct OpenVicWarDefines;
 	struct DivisionStats;
+	struct UnitTypeManager;
+
+	// The conditions of the attacker in a battle (ov_data/common/ov_war/battle_conditions.txt, docs/WAR_ASSUMPTIONS.md, section 6): multipliers of the
+	// damage the attacking side deals. A terrain that is not listed is 1; the game has no night and no weather yet, their multipliers are kept for them
+	struct BattleConditions {
+		memory::vector<std::pair<memory::string, fixed_point_t>> terrain; // the id of a terrain type of Vic2 -> the multiplier
+		fixed_point_t river_crossing = fixed_point_t::_1; // the attacker came over a river (the border of the two provinces is along a river)
+		fixed_point_t night = fixed_point_t::_1;
+		fixed_point_t weather = fixed_point_t::_1;
+
+		bool load(std::string_view source, ast::NodeCPtr root);
+		[[nodiscard]] fixed_point_t get_terrain(std::string_view terrain_identifier) const;
+	};
 
 	// ALL the battle mathematics of the divisions is in this file and in BattleFormulas.cpp, nothing else computes damage. The formulas are
 	// simple on purpose (the rules of the owner: the weights of the rows, the density, the damage in proportion to the width, the depth as the
@@ -36,12 +54,17 @@ namespace OpenVic {
 		};
 		[[nodiscard]] DensityEffect density_effect(OpenVicWarDefines const& defines, fixed_point_t density);
 
-		// The defence of a division in battle: with its fortification (each level adds FORTIFICATION_PER_LEVEL) and a bonus of the terrain or the
-		// modifiers (a share, 0.1 is +10 %)
-		[[nodiscard]] fixed_point_t effective_defence(OpenVicWarDefines const& defines, DivisionStats const& defender, fixed_point_t extra_bonus = fixed_point_t::_0);
+		// The protection of a defending division: its defence x (1 + FORTIFICATION_PER_LEVEL x the levels of its fortification) x the multiplier of the
+		// terrain (1 + TERRAIN_DEFENCE_PER_POINT x the defence of the terrain of Vic2). The levels are the fortification of the division (the modifiers and
+		// the companies) and the dig in of its army
+		[[nodiscard]] fixed_point_t defender_protection(
+			OpenVicWarDefines const& defines, fixed_point_t defence, fixed_point_t fortification_levels, fixed_point_t terrain_multiplier = fixed_point_t::_1
+		);
+		[[nodiscard]] fixed_point_t effective_defence(OpenVicWarDefines const& defines, DivisionStats const& defender, fixed_point_t terrain_multiplier = fixed_point_t::_1);
 		// R: the breakthrough of the attacker over the effective defence of the defender (a defence of 0 gives a very big R)
+		[[nodiscard]] fixed_point_t breakthrough_ratio(fixed_point_t attacker_breakthrough, fixed_point_t defender_protection);
 		[[nodiscard]] fixed_point_t breakthrough_ratio(
-			OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, fixed_point_t extra_defence_bonus = fixed_point_t::_0
+			OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, fixed_point_t terrain_multiplier = fixed_point_t::_1
 		);
 		// One day of the battle for the breakthrough: R of BREAK_RATIO_DAY at once, or R of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days in a row, makes the defence
 		// retreat (true; the counter starts again); the counter goes back to 0 on a day with R under BREAK_RATIO_WEEK
@@ -62,13 +85,21 @@ namespace OpenVic {
 		[[nodiscard]] fixed_point_t occupation_speed(fixed_point_t power, fixed_point_t speed_pct_sum, fixed_point_t speed_mult_product);
 		[[nodiscard]] fixed_point_t occupation_days(fixed_point_t base_days, fixed_point_t speed, bool instant);
 
-		// Durability points a division loses in a day of battle against another one (the damage is in proportion to the attack, so to the width of the
-		// front: a division half as wide deals half the damage at the same depth; the defence of the one who gets it softens it and the casualties of its density change it)
-		// target_is_attacker: the one who takes the damage is the one who attacks, its defence softens the damage by ATTACKER_DEFENSE_FACTOR only
-		[[nodiscard]] fixed_point_t damage_per_day(
-			OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, bool target_is_attacker = false
+		// The damage of a day of battle to one division (docs/WAR_ASSUMPTIONS.md, section 6; the formula of the owner, every coefficient in ov_war):
+		//   damage = attack x conditions x density x softening, softening = 1 - BATTLE_BLOCK_SHARE x min(1, protection / attack)
+		//   the men it loses = damage x BATTLE_STRENGTH_PER_HIT x casualties_taken (the modifiers casualties_taken_mult: medicine), in strength points
+		//   the organisation it loses = damage x BATTLE_ORGANISATION_PER_HIT (points of every regiment)
+		// attack: the part of the attack of the enemy side directed at this division (in proportion to its width); conditions: the terrain, the river,
+		// the night and the weather of the attacker (1 for the damage the defender deals); density: the density of the division that takes the damage;
+		// protection: the defence of a defender (defender_protection), the breakthrough of an attacker. The organisation does not change the damage.
+		struct Hit {
+			fixed_point_t damage;
+			fixed_point_t strength_loss;
+			fixed_point_t organisation_loss;
+		};
+		[[nodiscard]] Hit battle_hit(
+			OpenVicWarDefines const& defines, fixed_point_t attack, fixed_point_t conditions, fixed_point_t density, fixed_point_t protection,
+			fixed_point_t casualties_taken
 		);
-		// The days a division with the durability lasts under the damage per day (0 damage: never, the result is 0)
-		[[nodiscard]] fixed_point_t days_to_destroy(fixed_point_t durability, fixed_point_t damage_per_day);
 	}
 }

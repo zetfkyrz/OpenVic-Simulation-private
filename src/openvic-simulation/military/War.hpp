@@ -9,6 +9,8 @@
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
+#include "openvic-simulation/military/BattleFormulas.hpp"
+#include "openvic-simulation/military/DivisionStats.hpp"
 #include "openvic-simulation/types/UniqueId.hpp"
 
 namespace OpenVic {
@@ -103,6 +105,47 @@ namespace OpenVic {
 		std::uint32_t group_id = 0;
 	};
 
+	// A land battle in a province (docs/WAR_ASSUMPTIONS.md, section 6), kept from day to day: which side attacks, the counter of the breakthrough rule
+	// and the divisions that were in the front of the battle yesterday (they keep their places, the reserve takes the free ones)
+	struct LandBattle {
+		CountryInstance const* attacker = nullptr; // a country of the attacking side: the side is it and the countries that fight the other side with it
+		battle_formulas::BreakthroughCounter counter;
+		std::int32_t days = 0;
+		memory::vector<std::uint32_t> front_divisions;
+	};
+
+	// What a day of a land battle came to (the dumps and the tests; the reports of the last day only)
+	struct LandBattleReport {
+		ProvinceInstance const* province = nullptr;
+		CountryInstance const* attacker = nullptr;
+		CountryInstance const* defender = nullptr;
+		std::int32_t day = 0; // the day of the battle (1 for the first)
+		std::uint32_t width = 0; // the ranks of the battle (the terrain)
+		std::uint32_t attacker_front = 0, attacker_reserve = 0, defender_front = 0, defender_reserve = 0; // divisions
+		std::uint32_t attacker_ranks = 0, defender_ranks = 0; // the ranks the divisions of the front fill
+		fixed_point_t attacker_attack, defender_attack; // of the front, with the buffs and the multipliers (the attacker without its conditions)
+		fixed_point_t conditions; // the conditions of the attacker (the terrain, the river, the night, the weather)
+		fixed_point_t ratio; // R: the breakthrough of the attackers over the protection of the defenders
+		fixed_point_t attacker_strength_lost, defender_strength_lost; // strength points
+		fixed_point_t attacker_strength, defender_strength, attacker_max_strength, defender_max_strength; // of all the divisions of the battle, after the day
+		fixed_point_t attacker_organisation, defender_organisation; // the average of the front divisions after the day (points)
+		std::uint32_t attacker_retreated = 0, defender_retreated = 0; // divisions that left the battle today
+		bool breakthrough = false; // the rule of the breakthrough made the defence retreat today
+		bool ended = false;
+		bool attacker_won = false;
+	};
+
+	// What a battle would come to (WarManager::estimate_battle; the same work out of a day as the battle, without changing the game)
+	struct BattleEstimate {
+		bool valid = false; // false: no attacking division
+		fixed_point_t ratio; // R of the first day (1000 when nobody defends)
+		fixed_point_t attacker_attack, defender_attack; // of the fronts
+		fixed_point_t attacker_damage, defender_damage; // the damage the fronts take in a day
+		fixed_point_t attacker_days, defender_days; // the days until the first division of the front has no organisation left (1000: never)
+		std::uint32_t breakthrough_days = 0; // the breakthrough rule makes the defence retreat after these days (1 or BREAK_WEEK_DAYS), 0: not by R
+		bool attacker_wins = false; // the defence leaves first (by R or by the organisation)
+	};
+
 	// What the land battles of a country came to since the start of the game (the dumps and the comparison of the battle models; not in the state hash)
 	struct BattleStats {
 		std::uint32_t battle_days = 0; // days a division (or a regiment of the earlier model) of the country fought, one per province and day
@@ -161,6 +204,16 @@ namespace OpenVic {
 		std::unordered_map<ProvinceInstance const*, Siege> sieges;
 		std::unordered_set<unique_id_t> fought_today;
 		std::unordered_map<CountryInstance const*, BattleStats> battle_stats;
+		std::unordered_map<ProvinceInstance const*, LandBattle> land_battles;
+		memory::vector<LandBattleReport> battle_reports;
+		// What the divisions are worth now (compute_live_division_stats): the division id -> the signature of what it depends on and the numbers.
+		// Not a state of the game: the same numbers come out without it
+		struct LiveStatsEntry {
+			std::uint64_t signature = 0;
+			DivisionStats stats;
+		};
+		mutable std::unordered_map<std::uint32_t, LiveStatsEntry> live_stats_cache;
+		mutable std::uint64_t live_stats_computed = 0;
 
 		// Ports with an enemy fleet in front of them and no fleet of the owner, and the share of ports of each country
 		std::unordered_set<ProvinceInstance const*> blockaded_ports;
@@ -195,6 +248,31 @@ namespace OpenVic {
 		void transfer_states(InstanceManager& instance_manager, War const& war, bool winners_are_attackers);
 
 	public:
+		// What the division of the army is worth now (docs/WAR_ASSUMPTIONS.md, section 6), from the cache: it is computed again when the regiments of
+		// the division, their men, their weapons, the general of the army, its template or the day (the modifiers and the technologies of the country
+		// are summed every day) change
+		DivisionStats const& get_live_division_stats(InstanceManager const& instance_manager, ArmyInstance const& army, DivisionInstance const& division) const;
+		// What a battle of these armies (in any provinces: the support from several directions) against the enemies in the province would come to
+		// (docs/WAR_ASSUMPTIONS.md, section 6). The same work out of a day as the battle: the width, the front, the live divisions, the buffs, the
+		// generals, the supply, the fortification, the terrain, the river from where every army stands. Changes nothing (the cache of the numbers only).
+		[[nodiscard]] BattleEstimate estimate_battle(
+			InstanceManager const& instance_manager, std::span<ArmyInstance const* const> attacking_armies, ProvinceInstance const& target
+		) const;
+		// How many times get_live_division_stats computed the numbers (the tests of the cache)
+		std::uint64_t get_live_stats_computed() const {
+			return live_stats_computed;
+		}
+		std::span<const LandBattleReport> get_battle_reports() const {
+			return battle_reports;
+		}
+		LandBattle const* get_land_battle(ProvinceInstance const& province) const {
+			const auto it = land_battles.find(&province);
+			return it != land_battles.end() ? &it->second : nullptr;
+		}
+		std::size_t get_land_battle_count() const {
+			return land_battles.size();
+		}
+
 		BattleStats get_battle_stats(CountryInstance const& country) const {
 			const auto it = battle_stats.find(&country);
 			return it != battle_stats.end() ? it->second : BattleStats {};

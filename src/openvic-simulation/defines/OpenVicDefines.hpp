@@ -274,15 +274,10 @@ namespace OpenVic {
 	INT(NAVAL_BATTLE_SCORE_SHIP_CAP, naval_battle_score_ship_cap, 12, 0, 1000) \
 	INT(LEADER_POINT_DIVISOR, leader_point_divisor, 10, 1, 1000) \
 	RATE(LEADER_MIN_MULTIPLIER, leader_min_multiplier, Rate(1, 4), 0, 1) \
-	INT(DIG_IN_DIVISOR, dig_in_divisor, 10, 1, 1000) \
 	INT(LEADER_DEATH_ODDS, leader_death_odds, 30, 1, 1000000) \
 	RATE(LEADER_VICTORY_PRESTIGE, leader_victory_prestige, Rate(1, 100), 0, 100) \
 	RATE(LEADER_DEFEAT_PRESTIGE, leader_defeat_prestige, Rate(1, 100), 0, 100) \
 	RATE(MIN_ORGANISATION_FACTOR, min_organisation_factor, Rate(3, 10), 0, 1) \
-	RATE(DEFENCE_FACTOR_MIN, defence_factor_min, Rate(1, 2), 0.01, 100) \
-	INT(DEFENCE_VALUE_DIVISOR, defence_value_divisor, 2, 1, 1000) \
-	RATE(ORGANISATION_DAMAGE, organisation_damage, Rate(5, 100), 0, 100) \
-	RATE(STRENGTH_DAMAGE, strength_damage, Rate(1, 100), 0, 100) \
 	INT(ROUT_STRENGTH_MULTIPLIER, rout_strength_multiplier, 3, 1, 1000) \
 	RATE(ROUT_THRESHOLD, rout_threshold, Rate(1, 10), 0, 1) \
 	RATE(SIEGE_SPEED_PER_REGIMENT, siege_speed_per_regiment, Rate(1, 8), 0, 100) \
@@ -328,8 +323,6 @@ namespace OpenVic {
 	INT(THEATRES_MAX, theatres_max, 8, 1, 32) \
 	/* 1: the transports carry any number of regiments (for now); 0: REGIMENTS_PER_TRANSPORT of every transport ship */ \
 	INT(TRANSPORT_UNLIMITED, transport_unlimited, 1, 0, 1) \
-	/* The battle of divisions (military/BattleFormulas.cpp, replaceable): durability points lost in a day per point of attack, the defence that */ \
-	/* halves the damage, the damage added by the density of the formation per point of density */ \
 	/* The weapons of the regiments (military/RegimentEquipment in CountryInstance.cpp): how many regiments a day get a weapon of a better */ \
 	/* generation out of the national stockpile (the government buys the goods for them), and the share of the attack, the defence and the */ \
 	/* breakthrough a unit loses for every generation below the lowest weapon its type may have, when the country has none of them */ \
@@ -337,8 +330,6 @@ namespace OpenVic {
 	RATE(EQUIPMENT_BELOW_MIN_PENALTY, equipment_below_min_penalty, Rate(25, 100), 0, 1) \
 	/* A level of the fortification adds this share to the defence */ \
 	RATE(FORTIFICATION_PER_LEVEL, fortification_per_level, Rate(5, 100), 0, 10) \
-	FIXED(BATTLE_DAMAGE_PER_ATTACK, battle_damage_per_attack, fixed_point_t::_0_10, 0, 1000) \
-	FIXED(BATTLE_DEFENCE_REFERENCE, battle_defence_reference, fixed_point_t(20), 1, 100000) \
 	/* The density of a division (military/BattleFormulas.cpp): density = DENSITY_DEPTH_FACTOR x depth / width (a width twice the depth is 1.0); x = |1 - density|; */ \
 	/* the penalty is DENSITY_LINEAR x x + DENSITY_QUADRATIC x x^2 (the rule of the owner is x^2 + x). Below 1 the defence and the breakthrough fall by the penalty; */ \
 	/* above 1 the casualties and the breakthrough grow by it and the attack by DENSITY_ATTACK_SHARE of it */ \
@@ -346,10 +337,21 @@ namespace OpenVic {
 	FIXED(DENSITY_LINEAR, density_linear, fixed_point_t::_1, 0, 10) \
 	FIXED(DENSITY_QUADRATIC, density_quadratic, fixed_point_t::_1, 0, 10) \
 	RATE(DENSITY_ATTACK_SHARE, density_attack_share, Rate(1, 2), 0, 1) \
-	/* The breakthrough (R = the breakthrough of the attacker / the effective defence of the defender): R of BREAK_RATIO_DAY in one day, or R of */ \
-	/* BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days in a row, makes the defence retreat. The defence of the attacker softens the damage it takes by */ \
-	/* ATTACKER_DEFENSE_FACTOR (0: not at all) */ \
-	RATE(ATTACKER_DEFENSE_FACTOR, attacker_defense_factor, Rate(0, 100), 0, 1) \
+	/* The battle of divisions (military/BattleFormulas.cpp battle_hit, docs/WAR_ASSUMPTIONS.md, section 6): damage = attack x conditions x density x */ \
+	/* (1 - BATTLE_BLOCK_SHARE x min(1, protection / attack)); the men lost = damage x BATTLE_STRENGTH_PER_HIT (strength points) x casualties_taken_mult, */ \
+	/* the organisation = damage x BATTLE_ORGANISATION_PER_HIT (points of the division: every regiment in proportion to its maximum). The width of a battle is BATTLE_WIDTH_BASE ranks (15 ranks of */ \
+	/* 2 rows are the 30 regiments of BASE_COMBAT_WIDTH of Vic2) times 1 + the combat_width of the terrain; the other divisions wait in the reserve. */ \
+	/* The defence of the terrain of Vic2 (0, 1, 2) adds TERRAIN_DEFENCE_PER_POINT each to the protection of the defender. The border of two provinces */ \
+	/* is a river when at least RIVER_BORDER_MIN_SHARE of it runs along a river (the attacker coming over it has the river_crossing of */ \
+	/* ov_data/common/ov_war/battle_conditions.txt) */ \
+	RATE(BATTLE_BLOCK_SHARE, battle_block_share, Rate(75, 100), 0, 1) \
+	FIXED(BATTLE_STRENGTH_PER_HIT, battle_strength_per_hit, fixed_point_t(25) / 1000, 0, 100) \
+	FIXED(BATTLE_ORGANISATION_PER_HIT, battle_organisation_per_hit, fixed_point_t(6) / 10, 0, 1000) \
+	INT(BATTLE_WIDTH_BASE, battle_width_base, 15, 1, 120) \
+	RATE(TERRAIN_DEFENCE_PER_POINT, terrain_defence_per_point, Rate(10, 100), 0, 10) \
+	RATE(RIVER_BORDER_MIN_SHARE, river_border_min_share, Rate(25, 100), 0, 1) \
+	/* The breakthrough (R = the breakthrough of the attackers in the battle / the protection of the defenders): R of BREAK_RATIO_DAY in one day, or */ \
+	/* R of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days in a row, makes the defence retreat; a division with no organisation left retreats by itself */ \
 	FIXED(BREAK_RATIO_DAY, break_ratio_day, fixed_point_t(3), 0, 1000) \
 	FIXED(BREAK_RATIO_WEEK, break_ratio_week, fixed_point_t(2), 0, 1000) \
 	INT(BREAK_WEEK_DAYS, break_week_days, 7, 1, 365) \
