@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/types/UnitBranchType.hpp"
 
 namespace OpenVic {
@@ -12,13 +13,14 @@ namespace OpenVic {
 	struct UnitInstanceManager;
 	struct UnitTypeManager;
 
-	// Divisions and the templates of the divisions (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 4 and 4b).
+	// Divisions and the templates of the divisions (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 4 and 4b; docs/WAR_ASSUMPTIONS.md, section 6).
 	//
-	// A country that has the technology of the organisation of the army (CountryInstance::has_army_organisation, the civilised countries) has
-	// armies that consist of divisions and the divisions of regiments. A division has a template or none: "out of the template", like all the
-	// regiments of the start of the game, which are not touched. The regiments that are not in a division of a template wait in a division
-	// out of the template (the reserve of the army). A country without the technology has groups of regiments only, that are merged and
-	// split like in Victoria 2 (no divisions, no templates, no generals).
+	// Every army of every country consists of divisions and the divisions of regiments: a regiment is always in a division. Every country has the
+	// default template (ov_data/common/ov_units/default_template.txt); the regiments of the history of Vic2 are laid out by it when the game starts
+	// (whole divisions, then what is left). A country with mechanic:division_templates (the technology standardized_army) makes more templates and
+	// changes them; the regiments of such a country that fit no division wait in a division out of the template (the reserve of the army), the ones
+	// of a country without the mechanic make new divisions of the default template. Generals, field marshals, fronts and plans need mechanic:command
+	// (the same technology, CountryInstance::has_army_command); without it the divisions only take orders by hand.
 	//
 	// A template is a grid: the ranks (columns, the width of the front) of rows (lines, the depth), a cell holds a regiment type or is
 	// empty; every rank also has slots of support companies. How many ranks, rows and slots a country may use is
@@ -73,25 +75,47 @@ namespace OpenVic {
 	// The kind of the slot a regiment fills: the index of its regiment type (a cell holds a regiment type, so a regiment fills a cell of its own type)
 	[[nodiscard]] std::size_t get_division_slot_kind(RegimentType const& regiment_type);
 
-	// The standard template: four regiments of infantry as 2 ranks of 2 rows and two of cavalry as 1 rank of 2 rows (3 ranks, 2 rows). The types
-	// are the ones named "infantry" and "cavalry", or the first of the category. The grid is empty if the game has no such type.
+	// The default template: the ranks of ov_data/common/ov_units/default_template.txt (UnitTypeManager::get_default_template_ranks); without the
+	// file, four regiments of infantry as 2 ranks of 2 rows and two of cavalry as 1 rank of 2 rows. The grid is empty if the game has no such type.
 	[[nodiscard]] DivisionGrid make_standard_division_grid(UnitTypeManager const& unit_type_manager);
 	// Whether the grid is a template the country may have: it uses the ranks and the rows the limits give, the types are regiment types, it has a regiment
 	[[nodiscard]] bool is_valid_division_grid(InstanceManager const& instance_manager, CountryInstance const& country, DivisionGrid const& grid);
 
-	// Every day (one thread, before the supply is worked out): the armies of the countries with the technology get their regiments into
-	// divisions (new regiments fill the free slots of the divisions of the templates or wait in the reserve), the armies of the countries
-	// without it have no divisions and no generals; a country that has the technology for the first time gets the standard template
+	// Where the regiments of a division stand (docs/WAR_ASSUMPTIONS.md, section 6). The cells of the template are filled line by line (the first
+	// line of every rank, then the second, ...): a cell takes a regiment of its type, else one of the same category (infantry, cavalry, support);
+	// the regiments in the order of the army. The regiments with no cell stand behind the ranks: the rows after the depth of the template, rank by
+	// rank. A division out of the template has no cells: its regiments stand in ranks of extra_depth rows. A rank with no regiment does not count
+	// (the width is the ranks that have one).
+	struct DivisionLayout {
+		struct Entry {
+			std::uint32_t regiment = 0; // the index of the regiment in ArmyInstance::get_regiment_instances
+			std::uint8_t rank = 0;
+			std::uint8_t row = 0;
+			std::uint8_t line = 0; // the line it fights in: 0 for the first row of its rank that has a regiment, 1 for the next one, ...
+		};
+		memory::vector<Entry> entries; // by rank, then by row
+		std::uint32_t width = 0;
+	};
+	[[nodiscard]] DivisionLayout layout_division(
+		UnitTypeManager const& unit_type_manager, CountryInstance const& country, ArmyInstance const& army, DivisionInstance const& division,
+		std::uint32_t extra_depth
+	);
+
+	// Every day (one thread, before the supply is worked out): every regiment gets into a division (new regiments fill the free cells of the
+	// divisions of their army, the others wait in the reserve of a country with mechanic:division_templates or make new divisions of the default
+	// template). The first time a country is seen it gets the default template and the regiments of its armies are laid out by it. The armies of a
+	// country without mechanic:command have no generals.
 	void update_all_divisions(InstanceManager& instance_manager);
 
-	// The units a front spreads over its line (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 5): a division of a template is one unit, the regiments out
-	// of the templates are counted in groups of chunk_size
-	[[nodiscard]] std::size_t count_division_units(ArmyInstance const& army, std::uint32_t chunk_size);
-	// Moves one unit (a division of a template, else chunk_size regiments out of the templates) out of the army into a new army in the same
-	// province; a division keeps its id and template. nullptr if the army has fewer than two units.
-	ArmyInstance* split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army, std::uint32_t chunk_size);
+	// The units a front spreads over its line (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 5): the divisions of the army
+	[[nodiscard]] std::size_t count_division_units(ArmyInstance const& army);
+	// Moves the last division out of the army into a new army in the same province (it keeps its id and template). nullptr if the army has fewer
+	// than two divisions.
+	ArmyInstance* split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army);
+	// Moves the division into a new army in the same province; nullptr if the army has no other division (the army itself is the division)
+	ArmyInstance* split_division(UnitInstanceManager& unit_manager, ArmyInstance& army, std::uint32_t division_id);
 
-	// The commands (false if nothing changed or the command is not allowed):
+	// The commands (false if nothing changed or the command is not allowed; making, changing and deleting templates needs mechanic:division_templates):
 	// a new template; changing the cells of a template changes all the divisions made of it (the regiments that do not fit go to the reserve
 	// of the army, the free slots are filled from it); deleting a template leaves its divisions out of the template
 	bool create_division_template(InstanceManager& instance_manager, CountryInstance& country, DivisionGrid const& grid);

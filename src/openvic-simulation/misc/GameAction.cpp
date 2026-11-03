@@ -969,8 +969,8 @@ bool GameActionManager::VariantVisitor::operator() (set_army_leader_argument_t c
 	if (leader == nullptr || leader->branch != group->branch || &leader->country != &group->get_country() || !leader->get_can_be_used()) {
 		return false;
 	}
-	// Generals command the armies of the countries with the technology of the organisation of the army only
-	if (group->branch == unit_branch_t::LAND && !group->get_country().has_army_organisation()) {
+	// Generals command the armies of the countries with mechanic:command only
+	if (group->branch == unit_branch_t::LAND && !group->get_country().has_army_command()) {
 		return false;
 	}
 	return group->set_leader(leader);

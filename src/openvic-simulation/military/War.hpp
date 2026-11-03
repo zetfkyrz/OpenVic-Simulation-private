@@ -103,6 +103,14 @@ namespace OpenVic {
 		std::uint32_t group_id = 0;
 	};
 
+	// What the land battles of a country came to since the start of the game (the dumps and the comparison of the battle models; not in the state hash)
+	struct BattleStats {
+		std::uint32_t battle_days = 0; // days a division (or a regiment of the earlier model) of the country fought, one per province and day
+		std::uint32_t won = 0; // battles the enemy left (retreated or was destroyed)
+		std::uint32_t lost = 0; // battles the country left
+		fixed_point_t strength_lost; // strength points the regiments lost in battle (a point is ov_war.TEMPLATE_MEN_PER_STRENGTH men)
+	};
+
 	struct WarManager {
 		enum struct peace_type_t : std::uint32_t {
 			WHITE_PEACE = 0, // nothing changes hands
@@ -152,6 +160,7 @@ namespace OpenVic {
 
 		std::unordered_map<ProvinceInstance const*, Siege> sieges;
 		std::unordered_set<unique_id_t> fought_today;
+		std::unordered_map<CountryInstance const*, BattleStats> battle_stats;
 
 		// Ports with an enemy fleet in front of them and no fleet of the owner, and the share of ports of each country
 		std::unordered_set<ProvinceInstance const*> blockaded_ports;
@@ -186,6 +195,11 @@ namespace OpenVic {
 		void transfer_states(InstanceManager& instance_manager, War const& war, bool winners_are_attackers);
 
 	public:
+		BattleStats get_battle_stats(CountryInstance const& country) const {
+			const auto it = battle_stats.find(&country);
+			return it != battle_stats.end() ? it->second : BattleStats {};
+		}
+
 		bool is_blockaded(ProvinceInstance const& port) const {
 			return blockaded_ports.contains(&port);
 		}

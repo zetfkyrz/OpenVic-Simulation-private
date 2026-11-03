@@ -111,7 +111,7 @@ std::uint32_t OpenVic::get_main_theatre_id(CountryInstance const& country) {
 }
 
 bool OpenVic::create_theatre(CountryInstance& country, const std::size_t palette_size, const std::size_t max_theatres) {
-	if (!country.has_army_organisation()) {
+	if (!country.has_army_command()) {
 		return false;
 	}
 	ensure_main_theatre(country, palette_size);
@@ -219,7 +219,7 @@ bool OpenVic::set_army_group_theatre(CountryInstance& country, const std::uint32
 }
 
 bool OpenVic::create_army_group(CountryInstance& country, const std::size_t palette_size) {
-	if (!country.has_army_organisation() || country.get_army_groups().size() >= MAX_ARMY_GROUPS) {
+	if (!country.has_army_command() || country.get_army_groups().size() >= MAX_ARMY_GROUPS) {
 		return false;
 	}
 	// The first colour of the palette that no other group of the country has (all taken: the one that is used the least, the first of them)
@@ -280,7 +280,7 @@ namespace {
 bool OpenVic::set_army_group_front(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const std::uint32_t front_id, const bool held
 ) {
-	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	ArmyGroup* const group = country.has_army_command() ? find_mutable_group(country, group_id) : nullptr;
 	WarManager& war_manager = instance_manager.get_war_manager();
 	Front const* const front = war_manager.get_front_by_id(front_id);
 	if (group == nullptr || front == nullptr || front->country != &country) {
@@ -302,7 +302,7 @@ bool OpenVic::set_army_group_front(
 bool OpenVic::set_army_group_plan(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const std::uint32_t front_id, const std::uint32_t mode
 ) {
-	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	ArmyGroup* const group = country.has_army_command() ? find_mutable_group(country, group_id) : nullptr;
 	Front const* const front = instance_manager.get_war_manager().get_front_by_id(front_id);
 	if (group == nullptr || front == nullptr || front->country != &country || front->group_id != group_id || mode > 1) {
 		return false;
@@ -319,7 +319,7 @@ bool OpenVic::set_army_group_plan(
 bool OpenVic::set_army_group_plan_active(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const bool active
 ) {
-	ArmyGroup* const group = country.has_army_organisation() ? find_mutable_group(country, group_id) : nullptr;
+	ArmyGroup* const group = country.has_army_command() ? find_mutable_group(country, group_id) : nullptr;
 	if (group == nullptr || group->plan_active == active) {
 		return false;
 	}
@@ -348,7 +348,7 @@ bool OpenVic::set_army_group_plan_active(
 }
 
 bool OpenVic::set_army_group_colour(CountryInstance& country, const std::uint32_t group_id, const std::uint32_t colour_index, const std::size_t palette_size) {
-	if (!country.has_army_organisation() || colour_index >= palette_size) {
+	if (!country.has_army_command() || colour_index >= palette_size) {
 		return false;
 	}
 	for (ArmyGroup& group : country.get_mutable_army_groups()) {
@@ -396,7 +396,7 @@ bool OpenVic::delete_army_group(InstanceManager& instance_manager, CountryInstan
 }
 
 bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army, const std::uint32_t group_id, const std::uint32_t max_attached) {
-	if (!country.has_army_organisation() || army.get_army_group_id() == group_id) {
+	if (!country.has_army_command() || army.get_army_group_id() == group_id) {
 		return false;
 	}
 	if (group_id != 0 && country.find_army_group(group_id) == nullptr) {
@@ -416,7 +416,7 @@ bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army,
 }
 
 bool OpenVic::set_army_group_orders(CountryInstance& country, const std::uint32_t group_id, const bool execute) {
-	if (!country.has_army_organisation()) {
+	if (!country.has_army_command()) {
 		return false;
 	}
 	for (ArmyGroup& group : country.get_mutable_army_groups()) {
@@ -434,7 +434,7 @@ bool OpenVic::set_army_group_orders(CountryInstance& country, const std::uint32_
 bool OpenVic::set_army_group_marshal(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const unique_id_t leader_id
 ) {
-	if (!country.has_army_organisation()) {
+	if (!country.has_army_command()) {
 		return false;
 	}
 	ArmyGroup* group = nullptr;
@@ -467,7 +467,7 @@ bool OpenVic::set_army_group_marshal(
 
 void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInstance& country) {
 	memory::vector<ArmyGroup>& groups = country.get_mutable_army_groups();
-	if (!country.has_army_organisation()) {
+	if (!country.has_army_command()) {
 		// No technology, no groups (the generals stay, they are only free)
 		for (ArmyGroup& group : groups) {
 			free_marshal(instance_manager, group);

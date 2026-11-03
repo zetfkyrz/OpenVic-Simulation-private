@@ -557,6 +557,10 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 			unit_type_manager.load_vic2_aliases(file.string(), parser.get_file_node());
 			continue;
 		}
+		if (file.filename() == "default_template.txt") {
+			unit_type_manager.load_default_template(file.string(), parser.get_file_node());
+			continue;
+		}
 		ov_unit_count += unit_type_manager.load_ov_unit_file(
 			definition_manager.get_economy_manager().get_good_definition_manager(),
 			definition_manager.get_military_manager().get_equipment_manager(), file.string(), parser.get_file_node()

@@ -1554,7 +1554,7 @@ static void run_theatre_dump(InstanceManager& instance_manager) {
 	const std::size_t max_theatres = static_cast<std::size_t>(instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.theatres_max);
 	CountryInstance* country = nullptr;
 	for (CountryInstance& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 6) {
+		if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.get_armies().size() >= 6) {
 			country = &candidate;
 			break;
 		}
@@ -1775,6 +1775,21 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				group.plan_mode, plan_front != nullptr && war_manager.is_front_commanded(*plan_front) ? 1 : 0, group_armies, group_moving, plan_front != nullptr ? plan_front->army_ids.size() : 0
 			);
 		}
+		for (CountryInstance* const side : { side_a, side_b }) {
+			const BattleStats stats = war_manager.get_battle_stats(*side);
+			fixed_point_t strength = fixed_point_t::_0;
+			std::size_t regiments = 0;
+			for (ArmyInstance const& army : side->get_armies()) {
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					strength += regiment.get_strength();
+					regiments++;
+				}
+			}
+			fmt::println(
+				"FRONT_BATTLES day={} country={} battle_days={} won={} lost={} strength_lost={:.2f} regiments={} strength={:.2f}", day, side->get_identifier(),
+				stats.battle_days, stats.won, stats.lost, static_cast<double>(stats.strength_lost), regiments, static_cast<double>(strength)
+			);
+		}
 		fmt::println(
 			"FRONT_HELD day={} {}_holds_of_{}={} {}_holds_of_{}={}", day, side_a->get_identifier(), side_b->get_identifier(), count_held(*side_b, *side_a),
 			side_b->get_identifier(), side_a->get_identifier(), count_held(*side_a, *side_b)
@@ -1807,7 +1822,7 @@ static void run_command_dump(InstanceManager& instance_manager) {
 	fmt::println("COMMAND_LIMIT base={} limit={} max_groups={}", war.marshal_max_attached, war.marshal_max_attached_limit, MAX_ARMY_GROUPS);
 	std::size_t with_organisation = 0;
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (!country.exists() || country.is_rebel_country() || !country.has_army_organisation()) {
+		if (!country.exists() || country.is_rebel_country() || !country.has_army_command()) {
 			continue;
 		}
 		with_organisation++;
@@ -1859,7 +1874,7 @@ static void run_company_dump(InstanceManager& instance_manager) {
 	}
 	std::size_t printed = 0;
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (!country.exists() || !country.has_army_organisation() || country.get_division_templates().empty() || printed >= 3) {
+		if (!country.exists() || !country.has_army_command() || country.get_division_templates().empty() || printed >= 3) {
 			continue;
 		}
 		printed++;
@@ -1884,7 +1899,7 @@ static void run_template_battle_dump(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& war = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
 	std::size_t printed = 0;
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (!country.exists() || !country.has_army_organisation() || country.get_division_templates().empty() || printed >= 3) {
+		if (!country.exists() || !country.has_army_command() || country.get_division_templates().empty() || printed >= 3) {
 			continue;
 		}
 		printed++;

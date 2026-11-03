@@ -680,7 +680,7 @@ namespace {
 
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && candidate.has_army_organisation()) {
+			if (candidate.exists() && candidate.has_army_command()) {
 				country = &candidate;
 			}
 		}
@@ -1819,7 +1819,7 @@ namespace {
 		// The modifiers of the country count in the attack, the defence and the breakthrough of a template (percents are summed)
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && !candidate.get_division_templates().empty()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && !candidate.get_division_templates().empty()) {
 				country = &candidate;
 			}
 		}
@@ -1888,7 +1888,7 @@ namespace {
 		ArmyTechnology const* const operational_planning = technologies.find("operational_planning");
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command()) {
 				country = &candidate;
 			}
 		}
@@ -3058,51 +3058,65 @@ namespace {
 		return grid;
 	}
 
-	// Divisions and templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 4): the civilised countries have armies of divisions (the regiments of the start
-	// are out of the template), the others have groups of regiments only and no generals; templates and reforming
+	// Divisions and templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, section 4; docs/WAR_ASSUMPTIONS.md, section 6): every country has armies of divisions
+	// of the default template (the regiments of the history are laid out by it: whole divisions, then what is left), generals only with
+	// mechanic:command, templates of its own only with mechanic:division_templates; templates and reforming
 	void test_divisions(Results& r, InstanceManager& im) {
-		std::size_t civilised_armies = 0, regiments_without_division = 0, bad_division = 0, templated_at_start = 0, plain_with_division = 0, plain_leaders = 0;
-		std::size_t civilised_without_template = 0, plain_with_template = 0, plain_armies = 0;
+		UnitTypeManager const& unit_types = im.definition_manager.get_military_manager().get_unit_type_manager();
+		std::size_t armies = 0, plain_armies = 0, regiments_without_division = 0, bad_division = 0, out_of_template_at_start = 0, plain_leaders = 0;
+		std::size_t without_default = 0, plain_with_more_templates = 0, too_few_whole = 0, not_laid_out = 0;
 		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
 			if (!country.exists() || !country.has_armies()) {
 				continue;
 			}
-			if (country.has_army_organisation()) {
-				civilised_without_template += country.get_division_templates().empty();
-			} else {
-				plain_with_template += !country.get_division_templates().empty();
-			}
+			without_default += country.get_division_templates().empty() || country.get_division_templates().front().cells != make_standard_division_grid(unit_types);
+			plain_with_more_templates += !country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES) && country.get_division_templates().size() != 1;
 			for (ArmyInstance const& army : country.get_armies()) {
-				if (country.has_army_organisation()) {
-					civilised_armies++;
-					for (DivisionInstance const& division : army.get_divisions()) {
-						templated_at_start += division.template_id != 0;
-					}
-					for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-						bool found = false;
-						for (DivisionInstance const& division : army.get_divisions()) {
-							found |= division.id == regiment.get_division_id();
-						}
-						regiments_without_division += regiment.get_division_id() == 0;
-						bad_division += !found;
-					}
-				} else {
+				armies++;
+				if (!country.has_army_command()) {
 					plain_armies++;
-					plain_with_division += !army.get_divisions().empty();
 					plain_leaders += army.get_leader() != nullptr;
-					for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-						plain_with_division += regiment.get_division_id() != 0;
-					}
 				}
+				for (DivisionInstance const& division : army.get_divisions()) {
+					out_of_template_at_start += division.template_id == 0;
+				}
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					bool found = false;
+					for (DivisionInstance const& division : army.get_divisions()) {
+						found |= division.id == regiment.get_division_id();
+					}
+					regiments_without_division += regiment.get_division_id() == 0;
+					bad_division += !found;
+				}
+				// Whole divisions: at least as many as the infantry and the cavalry of the army make by the template (4 + 2 of the categories)
+				std::size_t infantry = 0, cavalry = 0, whole = 0;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					infantry += regiment.get_regiment_type().unit_category == UnitType::unit_category_t::INFANTRY;
+					cavalry += regiment.get_regiment_type().unit_category == UnitType::unit_category_t::CAVALRY;
+				}
+				for (DivisionInstance const& division : army.get_divisions()) {
+					const DivisionLayout layout = layout_division(unit_types, country, army, division, 2);
+					std::size_t in_cells = 0;
+					for (DivisionLayout::Entry const& entry : layout.entries) {
+						in_cells += entry.row < 2;
+					}
+					whole += in_cells >= 6;
+				}
+				if (country.get_division_templates().size() == 1 && country.get_division_templates().front().get_total_slots() == 6) {
+					too_few_whole += whole < std::min(infantry / 4, cavalry / 2);
+				}
+				not_laid_out += army.get_divisions().empty() && army.get_unit_count() > 0;
 			}
 		}
-		r.check(civilised_armies > 50 && plain_armies > 0, "divisions: there are armies of civilised and of other countries", fmt::format("{} {}", civilised_armies, plain_armies));
-		r.check(regiments_without_division == 0 && bad_division == 0, "divisions: every regiment of a civilised country is in a division of its army",
-			fmt::format("{} {}", regiments_without_division, bad_division));
-		r.check(templated_at_start == 0, "divisions: the regiments of the start are out of the template (they are not touched)", fmt::format("{}", templated_at_start));
-		r.check(civilised_without_template == 0, "divisions: a civilised country has the standard template");
-		r.check(plain_with_division == 0 && plain_with_template == 0, "divisions: a country without the technology has no divisions and no templates");
-		r.check(plain_leaders == 0, "divisions: the armies of a country without the technology have no general");
+		r.check(armies > 50 && plain_armies > 0, "divisions: there are armies of countries with and without mechanic:command", fmt::format("{} {}", armies, plain_armies));
+		r.check(regiments_without_division == 0 && bad_division == 0 && not_laid_out == 0, "divisions: every regiment of every country is in a division of its army",
+			fmt::format("{} {} {}", regiments_without_division, bad_division, not_laid_out));
+		r.check(out_of_template_at_start == 0, "divisions: the regiments of the history are laid out by the default template (no division out of it)",
+			fmt::format("{}", out_of_template_at_start));
+		r.check(too_few_whole == 0, "divisions: the regiments of the history make the whole divisions they can", fmt::format("{}", too_few_whole));
+		r.check(without_default == 0, "divisions: every country has the default template of ov_data/common/ov_units/default_template.txt");
+		r.check(plain_with_more_templates == 0, "divisions: a country without mechanic:division_templates has the default template only");
+		r.check(plain_leaders == 0, "divisions: the armies of a country without mechanic:command have no general");
 
 		// The standard template: four regiments of infantry (2 x 2) and two of cavalry (1 x 2)
 		const std::size_t kind_infantry = regiment_kind(im, "line_infantry");
@@ -3112,7 +3126,7 @@ namespace {
 		{
 			std::map<std::size_t, std::size_t> cavalry_regiments;
 			for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-				if (candidate.exists() && candidate.has_army_organisation()) {
+				if (candidate.exists() && candidate.has_army_command()) {
 					for (ArmyInstance& candidate_army : candidate.get_armies()) {
 						for (RegimentInstance const& regiment : candidate_army.get_regiment_instances()) {
 							if (regiment.get_regiment_type().unit_category == UnitType::unit_category_t::CAVALRY) {
@@ -3133,7 +3147,7 @@ namespace {
 		CountryInstance* country = nullptr;
 		ArmyInstance* army = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (!candidate.exists() || !candidate.has_army_organisation() || candidate.is_at_war()) {
+			if (!candidate.exists() || !candidate.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES) || candidate.is_at_war()) {
 				continue;
 			}
 			for (ArmyInstance& candidate_army : candidate.get_armies()) {
@@ -3189,19 +3203,14 @@ namespace {
 			return count;
 		};
 
-		// The standard template: one whole division for every four regiments of infantry (with two regiments of cavalry for each)
-		std::size_t standard_infantry = 0, standard_cavalry = 0;
-		for (RegimentInstance const& regiment : army->get_regiment_instances()) {
-			standard_infantry += get_division_slot_kind(regiment.get_regiment_type()) == kind_infantry;
-			standard_cavalry += get_division_slot_kind(regiment.get_regiment_type()) == kind_named_cavalry;
-		}
-		const std::size_t standard_expected = std::min(standard_infantry / 4, standard_cavalry / 2);
+		// The regiments of the history are all in divisions of the standard template: reforming has nothing to do
+		const std::size_t standard_divisions = count_templated(1);
 		const std::size_t standard_regiments = army->get_unit_count();
 		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), std::uint32_t(1));
 		im.force_tick_and_update();
-		r.check(count_templated(1) == standard_expected && army->get_unit_count() == standard_regiments,
-			"divisions: the regiments make whole divisions of the standard template (the others stay as they were)",
-			fmt::format("{} of {}", count_templated(1), standard_expected));
+		r.check(standard_divisions > 0 && count_templated(1) == standard_divisions && army->get_unit_count() == standard_regiments,
+			"divisions: the army is in divisions of the standard template from the start (reforming has no regiments out of the template)",
+			fmt::format("{} {}", count_templated(1), standard_divisions));
 		// The template is deleted: its divisions stay, out of the template (the regiments are free for the next template)
 		im.queue_game_action<delete_division_template_argument_t>(country->index, std::uint32_t(1));
 		im.force_tick_and_update();
@@ -3283,7 +3292,8 @@ namespace {
 		CountryInstance* plain = nullptr;
 		ArmyInstance* plain_army = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.has_army_organisation() && candidate.has_armies() && !candidate.get_leaders<unit_branch_t::LAND>().empty()) {
+			if (candidate.exists() && !candidate.has_army_command() && !candidate.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES) && candidate.has_armies()
+				&& !candidate.get_leaders<unit_branch_t::LAND>().empty()) {
 				plain = &candidate;
 				plain_army = &candidate.get_armies().front().get();
 				break;
@@ -3292,11 +3302,11 @@ namespace {
 		if (plain != nullptr) {
 			im.queue_game_action<create_division_template_argument_t>(plain->index, make_test_grid(kind_infantry, 1, kind_infantry, 0));
 			im.force_tick_and_update();
-			r.check(plain->get_division_templates().empty(), "divisions: a country without the technology cannot make templates");
+			r.check(plain->get_division_templates().size() == 1, "divisions: a country without mechanic:division_templates cannot make templates");
 			LeaderInstance const& general = plain->get_leaders<unit_branch_t::LAND>().front();
 			im.queue_game_action<set_army_leader_argument_t>(plain_army->unique_id, general.unique_id);
 			im.force_tick_and_update();
-			r.check(plain_army->get_leader() == nullptr, "divisions: a general cannot command the army of a country without the technology");
+			r.check(plain_army->get_leader() == nullptr, "divisions: a general cannot command the army of a country without mechanic:command");
 		}
 	}
 
@@ -3487,7 +3497,7 @@ namespace {
 		CountryInstance* country = nullptr;
 		DivisionTemplate* division_template = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_organisation()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command()) {
 				continue;
 			}
 			// an army with three regiments of line infantry (a template of three ranks of one line infantry regiment is made for the test)
@@ -3629,7 +3639,17 @@ namespace {
 			}
 		}
 		if (division_count == 0) {
+			// The regiments of the history are in divisions of the default template: they go to the reserve of their army first
 			for (ArmyInstance& army : country->get_armies()) {
+				if (army.is_in_combat()) {
+					continue;
+				}
+				const std::uint32_t reserve_id = im.get_unit_instance_manager().next_division_id++;
+				army.get_mutable_divisions().clear();
+				army.get_mutable_divisions().push_back({ reserve_id, 0 });
+				for (RegimentInstance& regiment : army.get_regiment_instances()) {
+					regiment.set_division_id(reserve_id);
+				}
 				reform_army_to_template(im, army, 0, template_id);
 			}
 			for (ArmyInstance const& army : country->get_armies()) {
@@ -3673,7 +3693,7 @@ namespace {
 		OpenVicWarDefines& war = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 2
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.get_armies().size() >= 2
 				&& candidate.get_army_groups().size() < MAX_ARMY_GROUPS) {
 				country = &candidate;
 				break;
@@ -3728,7 +3748,7 @@ namespace {
 
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_army_groups().empty()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.get_army_groups().empty()) {
 				country = &candidate;
 				break;
 			}
@@ -3790,7 +3810,7 @@ namespace {
 		WarManager& war_manager = im.get_war_manager();
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_armies().size() >= 2
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.get_armies().size() >= 2
 				&& candidate.get_army_groups().empty()) {
 				country = &candidate;
 				break;
@@ -3869,7 +3889,7 @@ namespace {
 	void test_theatres(Results& r, InstanceManager& im) {
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_organisation() && candidate.get_army_groups().empty() && candidate.get_theatres().size() <= 1
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.get_army_groups().empty() && candidate.get_theatres().size() <= 1
 				&& !candidate.get_owned_provinces().empty()) {
 				country = &candidate;
 				break;
@@ -4400,7 +4420,7 @@ namespace {
 		OpenVicSupplyDefines& defines = const_cast<OpenVicSupplyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().supply);
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && candidate.has_army_organisation() && candidate.get_armies().size() >= 3
+			if (candidate.exists() && candidate.has_army_command() && candidate.get_armies().size() >= 3
 				&& candidate.get_leaders<unit_branch_t::LAND>().size() >= 3) {
 				country = &candidate;
 				break;
@@ -4508,7 +4528,7 @@ namespace {
 		// Without the technology
 		CountryInstance* plain = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (candidate.exists() && !candidate.has_army_organisation() && candidate.has_armies()) {
+			if (candidate.exists() && !candidate.has_army_command() && candidate.has_armies()) {
 				plain = &candidate;
 				break;
 			}
@@ -4526,16 +4546,14 @@ namespace {
 	// of the line, and a division keeps its template when it leaves its army
 	void test_fronts(Results& r, InstanceManager& im) {
 		OpenVicWarDefines& war_defines = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
-		const auto chunk_before = war_defines.front_spread_chunk_size;
 		const auto splits_before = war_defines.front_spread_max_splits_per_day;
-		war_defines.front_spread_chunk_size = 1;
 		war_defines.front_spread_max_splits_per_day = 10;
 
 		CountryInstance* country = nullptr;
 		ArmyInstance* army = nullptr;
 		std::vector<ProvinceInstance*> line;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
-			if (!candidate.exists() || !candidate.has_army_organisation() || candidate.is_at_war()) {
+			if (!candidate.exists() || !candidate.has_army_command() || candidate.is_at_war()) {
 				continue;
 			}
 			line.clear();
@@ -4548,7 +4566,7 @@ namespace {
 				continue;
 			}
 			for (ArmyInstance& candidate_army : candidate.get_armies()) {
-				if (candidate_army.get_unit_count() >= 8 && !candidate_army.is_in_combat() && !candidate_army.is_moving()) {
+				if (count_division_units(candidate_army) >= 3 && !candidate_army.is_in_combat() && !candidate_army.is_moving()) {
 					country = &candidate;
 					army = &candidate_army;
 					break;
@@ -4558,16 +4576,12 @@ namespace {
 				break;
 			}
 		}
-		r.check(army != nullptr, "fronts: a civilised country with an army of eight regiments and three provinces exists");
+		r.check(army != nullptr, "fronts: a country with mechanic:command, an army of three divisions and three provinces exists");
 		if (army == nullptr) {
-			war_defines.front_spread_chunk_size = chunk_before;
 			war_defines.front_spread_max_splits_per_day = splits_before;
 			return;
 		}
 
-		// Whole divisions of the standard template, so that the split has divisions of a template to keep
-		im.queue_game_action<reform_army_to_template_argument_t>(army->unique_id, std::uint32_t(0), std::uint32_t(1));
-		im.force_tick_and_update();
 		std::size_t templated_before = 0;
 		for (DivisionInstance const& division : army->get_divisions()) {
 			templated_before += division.template_id == 1;
@@ -4623,7 +4637,14 @@ namespace {
 			"fronts: no more armies are split when every province has one");
 		r.check(war_manager.delete_front(*country, front_id), "fronts: a front can be deleted");
 
-		war_defines.front_spread_chunk_size = chunk_before;
+		// A country without mechanic:command has no fronts
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.has_army_command() && candidate.has_armies()) {
+				r.check(war_manager.create_front(im, candidate, nullptr) == 0, "fronts: a country without mechanic:command cannot make a front");
+				break;
+			}
+		}
+
 		war_defines.front_spread_max_splits_per_day = splits_before;
 	}
 

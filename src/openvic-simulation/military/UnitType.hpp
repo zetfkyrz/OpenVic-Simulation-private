@@ -220,6 +220,8 @@ namespace OpenVic {
 		IdentifierRegistry<RegimentType> IDENTIFIER_REGISTRY(regiment_type);
 		IdentifierRegistry<ShipType> IDENTIFIER_REGISTRY(ship_type);
 		string_map_t<memory::string> vic2_aliases;
+		// The ranks of the default template (ov_data/common/ov_units/default_template.txt): the ids of the regiment types of every rank, the first line first
+		memory::vector<memory::vector<memory::string>> PROPERTY(default_template_ranks);
 
 	public:
 		void reserve_all_unit_types(size_t size);
@@ -280,6 +282,8 @@ namespace OpenVic {
 		// Vic2 (the armies of the start) use them; resolve_vic2_regiment_type gives the type
 		bool load_vic2_aliases(std::string_view source, ast::NodeCPtr root);
 		[[nodiscard]] RegimentType const* resolve_vic2_regiment_type(std::string_view identifier) const;
+		// The default template of the divisions: ov_data/common/ov_units/default_template.txt (default_template = { rank = { <type> ... } ... })
+		bool load_default_template(std::string_view source, ast::NodeCPtr root);
 		[[nodiscard]] bool is_vic2_alias(std::string_view identifier) const {
 			return vic2_aliases.contains(identifier);
 		}

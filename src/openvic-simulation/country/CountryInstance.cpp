@@ -2654,13 +2654,17 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	move_level(navy_supply_level, navy_slider * navy_supply_ratio);
 }
 
+bool CountryInstance::has_army_command() const {
+	return has_unlock(UNLOCK_MECHANIC_COMMAND);
+}
+
 fixed_point_t CountryInstance::get_supply_reserve_capacity() const {
 	if (openvic_supply_defines == nullptr) {
 		return fixed_point_t::_0;
 	}
 	// TODO research: a stub, the days come from the technologies of the organisation of the army and of the deep strikes and assaults
 	fixed_point_t days = fixed_point_t::_0;
-	if (has_army_organisation()) {
+	if (has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
 		days += openvic_supply_defines->supply_unit_reserve_days_organisation;
 	}
 	if (has_deep_assault_technology()) {

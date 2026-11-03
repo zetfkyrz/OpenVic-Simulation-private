@@ -663,8 +663,36 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		const size_t regiments_a = side_a.regiment_count;
 		const size_t regiments_b = side_b.regiment_count;
 
+		// The statistics: the strength each country had before the day of the battle
+		const auto side_strength = [](BattleSide const& side, CountryInstance const& country) -> fixed_point_t {
+			fixed_point_t sum = fixed_point_t::_0;
+			for (ArmyInstance* army : side.armies) {
+				if (&army->get_country() == &country) {
+					for (RegimentInstance const& regiment : army->get_regiment_instances()) {
+						sum += regiment.get_strength();
+					}
+				}
+			}
+			return sum;
+		};
+		std::vector<std::pair<CountryInstance const*, fixed_point_t>> strength_before;
+		for (BattleSide const* side : { &side_a, &side_b }) {
+			for (ArmyInstance* army : side->armies) {
+				CountryInstance const* const country = &army->get_country();
+				if (std::none_of(strength_before.begin(), strength_before.end(), [country](auto const& entry) { return entry.first == country; })) {
+					strength_before.emplace_back(country, side_strength(*side, *country));
+					battle_stats[country].battle_days++;
+				}
+			}
+		}
+
 		apply_damage(side_b, power_a, wd);
 		apply_damage(side_a, power_b, wd);
+		for (auto const& [country, before] : strength_before) {
+			BattleSide const& side = std::any_of(side_a.armies.begin(), side_a.armies.end(), [country](ArmyInstance* army) { return &army->get_country() == country; })
+				? side_a : side_b;
+			battle_stats[country].strength_lost += before - side_strength(side, *country);
+		}
 		calculate_side(side_a, cache, wd);
 		calculate_side(side_b, cache, wd);
 
@@ -695,6 +723,16 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		BattleSide& loser = a_loses ? side_a : side_b;
 		BattleSide& winner = a_loses ? side_b : side_a;
 		const size_t loser_regiments = a_loses ? regiments_a : regiments_b;
+
+		for (BattleSide const* side : { &loser, &winner }) {
+			std::vector<CountryInstance const*> counted;
+			for (ArmyInstance* army : side->armies) {
+				if (std::find(counted.begin(), counted.end(), &army->get_country()) == counted.end()) {
+					counted.push_back(&army->get_country());
+					(side == &loser ? battle_stats[&army->get_country()].lost : battle_stats[&army->get_country()].won)++;
+				}
+			}
+		}
 
 		// Battle score for the winner's side
 		if (!loser.armies.empty() && !winner.armies.empty()) {
@@ -1227,8 +1265,8 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 		if (!country.get_auto_assign_leaders()) {
 			continue;
 		}
-		// Generals command the armies of the countries with the technology of the organisation of the army only
-		if (country.has_army_organisation()) {
+		// Generals command the armies of the countries with mechanic:command only
+		if (country.has_army_command()) {
 			assign_free(country.get_armies(), country.get_leaders<unit_branch_t::LAND>());
 		}
 		assign_free(country.get_navies(), country.get_leaders<unit_branch_t::NAVAL>());

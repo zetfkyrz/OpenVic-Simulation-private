@@ -35,7 +35,8 @@ namespace OpenVic {
 	[[nodiscard]] bool is_valid_unlock_key(std::string_view key);
 
 	// The keys of the mechanics that the technologies of the army open (kind "mechanic", docs/WAR_ASSUMPTIONS.md): a country without the key cannot do it
-	inline constexpr std::string_view UNLOCK_MECHANIC_DIVISION_TEMPLATES = "mechanic:division_templates"; // create, change and delete templates (the standard one is fixed)
+	inline constexpr std::string_view UNLOCK_MECHANIC_DIVISION_TEMPLATES = "mechanic:division_templates"; // create, change and delete templates (without it the default one is fixed)
+	inline constexpr std::string_view UNLOCK_MECHANIC_COMMAND = "mechanic:command"; // generals, field marshals, fronts and plans
 	inline constexpr std::string_view UNLOCK_MECHANIC_MOBILISATION = "mechanic:mobilisation"; // mobilise (demobilising is always possible)
 	inline constexpr std::string_view UNLOCK_MECHANIC_INSTANT_OCCUPATION = "mechanic:instant_occupation"; // the divisions take a province at once
 

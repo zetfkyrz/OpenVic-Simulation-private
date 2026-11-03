@@ -811,11 +811,9 @@ namespace OpenVic {
 		}
 		// TODO research: the technologies that change the supply coefficient of the armies away from the own land (SUPPLY_NEIGHBOUR_ONE_TECH:
 		// one held neighbour gives 100 percent; SUPPLY_FAR_TECH: more far away; "modern armies" opens the search through two provinces)
-		// The technology of the organisation of the army opens the divisions, the templates, the generals and the reserve of supplies of the
-		// regiments (a week); only the civilised countries can have it. Now it is a flag that the civilised countries have from the start.
-		[[nodiscard]] bool has_army_organisation() const {
-			return is_civilised();
-		}
+		// mechanic:command (the technology standardized_army, docs/WAR_ASSUMPTIONS.md, section 6): generals, field marshals, their groups and
+		// theatres, fronts and plans. Without it the divisions take orders by hand only.
+		[[nodiscard]] bool has_army_command() const;
 		// The technology of the deep strikes and assaults: better supply on the land of an enemy (one held neighbour gives 100 percent, a bonus
 		// to the supply far away), the supply through two provinces and one more week of the reserve of the regiments. Not in the game yet.
 		[[nodiscard]] bool has_deep_assault_technology() const {

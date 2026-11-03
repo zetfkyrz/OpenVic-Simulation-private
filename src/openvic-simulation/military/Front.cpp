@@ -127,7 +127,8 @@ Front const* WarManager::get_front_by_id(const std::uint32_t id) const {
 std::uint32_t WarManager::create_front(
 	InstanceManager& instance_manager, CountryInstance& country, CountryInstance const* const enemy
 ) {
-	if (!country.exists()) {
+	// Fronts belong to the countries with mechanic:command (the field marshals); the others give orders by hand
+	if (!country.exists() || !country.has_army_command()) {
 		return 0;
 	}
 
@@ -329,7 +330,7 @@ void WarManager::order_front_armies(InstanceManager& instance_manager, Front& fr
 void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front& front) {
 	CountryInstance& country = *front.country;
 	OpenVicWarDefines const& defines = get_war_defines();
-	if (!country.has_army_organisation() || front.provinces.empty() || defines.front_spread_max_splits_per_day <= 0) {
+	if (front.provinces.empty() || defines.front_spread_max_splits_per_day <= 0) {
 		return;
 	}
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
@@ -351,7 +352,7 @@ void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front
 			if (army->is_in_combat() || army->is_moving() || army->empty()) {
 				continue;
 			}
-			const size_t units = count_division_units(*army, defines.front_spread_chunk_size);
+			const size_t units = count_division_units(*army);
 			if (units > biggest_units) {
 				biggest = army;
 				biggest_units = units;
@@ -360,7 +361,7 @@ void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front
 		if (biggest == nullptr) {
 			break;
 		}
-		ArmyInstance* const split_army = split_division_unit(unit_manager, *biggest, defines.front_spread_chunk_size);
+		ArmyInstance* const split_army = split_division_unit(unit_manager, *biggest);
 		if (split_army == nullptr) {
 			break;
 		}
@@ -390,10 +391,15 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 			continue;
 		}
 
-		// Remove the generated fronts of enemies that are gone
-		std::erase_if(fronts, [&country](Front const& front) -> bool {
-			return front.country == &country && front.enemy != nullptr && front.group_id == 0 && !country.is_at_war_with(*front.enemy);
+		// Remove the generated fronts of enemies that are gone (all the fronts of a country without mechanic:command: its divisions get orders
+		// by hand, update_fronts)
+		const bool command = country.has_army_command();
+		std::erase_if(fronts, [&country, command](Front const& front) -> bool {
+			return front.country == &country && (!command || (front.enemy != nullptr && front.group_id == 0 && !country.is_at_war_with(*front.enemy)));
 		});
+		if (!command) {
+			continue;
+		}
 
 		std::vector<std::uint32_t> own_fronts; // ids, the fronts vector may reallocate
 		for (CountryInstance const& enemy : country.get_war_enemies()) {
@@ -470,5 +476,35 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		}
 		spread_front_divisions(instance_manager, front);
 		order_front_armies(instance_manager, front);
+	}
+
+	// The AI countries at war without mechanic:command have no fronts: the same minimal plan gives their divisions orders by hand, every division
+	// an army of its own (docs/WAR_ASSUMPTIONS.md, section 6). The line is the border with all the enemies, rebuilt every day
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.is_ai() || !country.is_at_war() || country.is_rebel_country() || country.has_army_command()) {
+			continue;
+		}
+		Front orders;
+		orders.country = &country;
+		orders.mode = Front::mode_t::ATTACK;
+		for (CountryInstance const& enemy : country.get_war_enemies()) {
+			for (ProvinceInstance* province : build_border_line(instance_manager.get_map_instance(), country, enemy)) {
+				if (std::find(orders.provinces.begin(), orders.provinces.end(), province) == orders.provinces.end()) {
+					orders.provinces.push_back(province);
+				}
+			}
+			// Hold the border when a war goes clearly badly
+			if (War* const war = find_war_between(country, enemy); war != nullptr) {
+				const bool is_attacker = war->is_attacker(country);
+				if (war->get_score(!is_attacker) - war->get_score(is_attacker) > 20) {
+					orders.mode = Front::mode_t::DEFEND;
+				}
+			}
+		}
+		for (ArmyInstance const& army : country.get_armies()) {
+			orders.army_ids.push_back(army.unique_id);
+		}
+		spread_front_divisions(instance_manager, orders);
+		order_front_armies(instance_manager, orders);
 	}
 }

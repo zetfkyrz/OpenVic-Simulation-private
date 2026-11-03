@@ -218,7 +218,7 @@ bool OpenVic::is_valid_company_layout(
 bool OpenVic::set_division_template_companies(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t template_id, DivisionCompanies const& companies
 ) {
-	if (!country.has_army_organisation()) {
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
 		return false;
 	}
 	DivisionTemplate* division_template = nullptr;

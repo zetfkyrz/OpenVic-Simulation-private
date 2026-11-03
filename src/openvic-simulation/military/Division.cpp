@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
@@ -36,6 +37,20 @@ DivisionGrid OpenVic::make_standard_division_grid(UnitTypeManager const& unit_ty
 		return nullptr;
 	};
 	DivisionGrid grid {};
+	// The file of the default template
+	std::span<const memory::vector<memory::string>> const ranks = unit_type_manager.get_default_template_ranks();
+	for (std::size_t rank = 0; rank < ranks.size() && rank < DIVISION_MAX_RANKS; ++rank) {
+		for (std::size_t row = 0; row < ranks[rank].size() && row < DIVISION_MAX_DEPTH; ++row) {
+			RegimentType const* const regiment_type = unit_type_manager.resolve_vic2_regiment_type(ranks[rank][row]);
+			const std::size_t kind = regiment_type != nullptr ? get_division_slot_kind(*regiment_type) : DIVISION_MAX_TYPES;
+			if (kind < DIVISION_MAX_TYPES) {
+				grid[DivisionTemplate::cell_index(rank, row)] = static_cast<std::uint8_t>(kind + 1);
+			}
+		}
+	}
+	if (std::any_of(grid.begin(), grid.end(), [](const std::uint8_t cell) -> bool { return cell != 0; })) {
+		return grid;
+	}
 	RegimentType const* const infantry = find_type("line_infantry", INFANTRY);
 	RegimentType const* const cavalry = find_type("cavalry", CAVALRY);
 	const auto cell_of = [](RegimentType const& regiment_type) -> std::uint8_t {
@@ -124,35 +139,6 @@ namespace {
 		});
 	}
 
-	// Puts every regiment of the army into a division: the free slots of the divisions of the templates are filled, the others wait in the
-	// reserve (out of the template)
-	void organise_army(UnitInstanceManager& unit_manager, ArmyInstance& army, CountryInstance const& country) {
-		for (RegimentInstance& regiment : army.get_regiment_instances()) {
-			if (regiment.get_division_id() != 0 && find_division(army, regiment.get_division_id()) == nullptr) {
-				regiment.set_division_id(0);
-			}
-		}
-		for (RegimentInstance& regiment : army.get_regiment_instances()) {
-			if (regiment.get_division_id() != 0) {
-				continue;
-			}
-			const std::size_t kind = get_division_slot_kind(regiment.get_regiment_type());
-			std::uint32_t target = 0;
-			for (DivisionInstance const& division : army.get_divisions()) {
-				if (division.template_id == 0) {
-					continue;
-				}
-				DivisionTemplate const* const division_template = country.find_division_template(division.template_id);
-				if (division_template != nullptr && kind < DIVISION_MAX_TYPES && count_kind(army, division.id, kind) < division_template->counts[kind]) {
-					target = division.id;
-					break;
-				}
-			}
-			regiment.set_division_id(target != 0 ? target : reserve_division_id(unit_manager, army));
-		}
-		remove_empty_divisions(army);
-	}
-
 	std::size_t count_regiments_in(ArmyInstance const& army, const std::uint32_t division_id) {
 		std::size_t count = 0;
 		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
@@ -168,94 +154,288 @@ namespace {
 		division_template.rebuild_counts();
 		return division_template;
 	}
+
+	// The cells of a grid line by line: the first line of every rank, then the second, ... (the order the cells are filled in)
+	memory::vector<std::size_t> cells_line_by_line(DivisionGrid const& cells) {
+		memory::vector<std::size_t> order;
+		for (std::size_t row = 0; row < DIVISION_MAX_DEPTH; ++row) {
+			for (std::size_t rank = 0; rank < DIVISION_MAX_RANKS; ++rank) {
+				if (cells[DivisionTemplate::cell_index(rank, row)] != 0) {
+					order.push_back(DivisionTemplate::cell_index(rank, row));
+				}
+			}
+		}
+		return order;
+	}
+
+	// The cell every regiment takes (the index of the cell, DIVISION_GRID_SIZE for none): a cell takes a regiment of its type, else one of the
+	// same category; the regiments in their order
+	memory::vector<std::size_t> match_cells(
+		UnitTypeManager const& unit_type_manager, DivisionGrid const& cells, std::span<RegimentType const* const> regiment_types
+	) {
+		memory::vector<std::size_t> taken_by(regiment_types.size(), DIVISION_GRID_SIZE);
+		std::array<bool, DIVISION_GRID_SIZE> filled {};
+		const memory::vector<std::size_t> order = cells_line_by_line(cells);
+		for (const bool same_category : { false, true }) {
+			for (const std::size_t cell : order) {
+				if (filled[cell]) {
+					continue;
+				}
+				RegimentType const* const cell_type = unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cells[cell] - 1));
+				if (cell_type == nullptr) {
+					continue;
+				}
+				for (std::size_t index = 0; index < regiment_types.size(); ++index) {
+					if (taken_by[index] != DIVISION_GRID_SIZE) {
+						continue;
+					}
+					RegimentType const& regiment_type = *regiment_types[index];
+					if (same_category ? regiment_type.unit_category == cell_type->unit_category : &regiment_type == cell_type) {
+						taken_by[index] = cell;
+						filled[cell] = true;
+						break;
+					}
+				}
+			}
+		}
+		return taken_by;
+	}
+
+	// The template a regiment of the country goes to when it fits no division of its army: the default one (the first template), nullptr if the
+	// country has none
+	DivisionTemplate const* default_template_of(CountryInstance const& country) {
+		return country.get_division_templates().empty() ? nullptr : &country.get_division_templates().front();
+	}
+
+	// Whether the regiment would take a free cell of the division (its regiments and the candidate matched to the template)
+	bool fits_division(
+		UnitTypeManager const& unit_type_manager, ArmyInstance const& army, DivisionInstance const& division, DivisionTemplate const& division_template,
+		RegimentInstance const& candidate
+	) {
+		memory::vector<RegimentType const*> types;
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() == division.id) {
+				types.push_back(&regiment.get_regiment_type());
+			}
+		}
+		types.push_back(&candidate.get_regiment_type());
+		return match_cells(unit_type_manager, division_template.cells, types).back() != DIVISION_GRID_SIZE;
+	}
+
+	// Lays the loose regiments out by the template (docs/WAR_ASSUMPTIONS.md, section 6): one new division after the other takes the regiments that
+	// fit its cells, as long as one does; the regiments that fit no cell of the template go to the new divisions one by one (behind their ranks)
+	void lay_out_by_template(
+		UnitInstanceManager& unit_manager, UnitTypeManager const& unit_type_manager, ArmyInstance& army, DivisionTemplate const& division_template,
+		memory::vector<RegimentInstance*> loose
+	) {
+		memory::vector<std::uint32_t> made;
+		while (!loose.empty()) {
+			memory::vector<RegimentType const*> types;
+			for (RegimentInstance const* regiment : loose) {
+				types.push_back(&regiment->get_regiment_type());
+			}
+			const memory::vector<std::size_t> taken_by = match_cells(unit_type_manager, division_template.cells, types);
+			if (std::all_of(taken_by.begin(), taken_by.end(), [](const std::size_t cell) -> bool { return cell == DIVISION_GRID_SIZE; })) {
+				break;
+			}
+			const std::uint32_t id = unit_manager.next_division_id++;
+			army.get_mutable_divisions().push_back({ id, division_template.id });
+			made.push_back(id);
+			memory::vector<RegimentInstance*> rest;
+			for (std::size_t index = 0; index < loose.size(); ++index) {
+				if (taken_by[index] != DIVISION_GRID_SIZE) {
+					loose[index]->set_division_id(id);
+				} else {
+					rest.push_back(loose[index]);
+				}
+			}
+			loose = std::move(rest);
+		}
+		if (loose.empty()) {
+			return;
+		}
+		if (made.empty()) {
+			// No new division: the divisions of the template the army has take them, else one division of the template is made for them
+			for (DivisionInstance const& division : army.get_divisions()) {
+				if (division.template_id == division_template.id) {
+					made.push_back(division.id);
+				}
+			}
+			if (made.empty()) {
+				made.push_back(unit_manager.next_division_id++);
+				army.get_mutable_divisions().push_back({ made.back(), division_template.id });
+			}
+		}
+		for (std::size_t index = 0; index < loose.size(); ++index) {
+			loose[index]->set_division_id(made[index % made.size()]);
+		}
+	}
+
+	// Puts every regiment of the army into a division: the free cells of the divisions of the templates are filled; the others wait in the
+	// reserve (out of the template) of a country with mechanic:division_templates, or make divisions of the default template (always on the first
+	// day: the regiments of the history)
+	void organise_army(
+		UnitInstanceManager& unit_manager, UnitTypeManager const& unit_type_manager, ArmyInstance& army, CountryInstance const& country,
+		const bool first_day
+	) {
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() != 0 && find_division(army, regiment.get_division_id()) == nullptr) {
+				regiment.set_division_id(0);
+			}
+		}
+		memory::vector<RegimentInstance*> loose;
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() != 0) {
+				continue;
+			}
+			std::uint32_t target = 0;
+			for (DivisionInstance const& division : army.get_divisions()) {
+				if (division.template_id == 0) {
+					continue;
+				}
+				DivisionTemplate const* const division_template = country.find_division_template(division.template_id);
+				if (division_template != nullptr && fits_division(unit_type_manager, army, division, *division_template, regiment)) {
+					target = division.id;
+					break;
+				}
+			}
+			if (target != 0) {
+				regiment.set_division_id(target);
+			} else {
+				loose.push_back(&regiment);
+			}
+		}
+		if (!loose.empty()) {
+			DivisionTemplate const* const division_template = default_template_of(country);
+			if (division_template == nullptr || (!first_day && country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES))) {
+				for (RegimentInstance* regiment : loose) {
+					regiment->set_division_id(reserve_division_id(unit_manager, army));
+				}
+			} else {
+				lay_out_by_template(unit_manager, unit_type_manager, army, *division_template, std::move(loose));
+			}
+		}
+		remove_empty_divisions(army);
+	}
+}
+
+DivisionLayout OpenVic::layout_division(
+	UnitTypeManager const& unit_type_manager, CountryInstance const& country, ArmyInstance const& army, DivisionInstance const& division,
+	const std::uint32_t extra_depth
+) {
+	DivisionLayout layout;
+	DivisionTemplate const* const division_template = division.template_id != 0 ? country.find_division_template(division.template_id) : nullptr;
+	memory::vector<std::uint32_t> indices;
+	memory::vector<RegimentType const*> types;
+	std::span<const std::reference_wrapper<const RegimentInstance>> const regiments = army.get_regiment_instances();
+	for (std::size_t index = 0; index < regiments.size(); ++index) {
+		RegimentInstance const& regiment = regiments[index];
+		if (regiment.get_division_id() == division.id) {
+			indices.push_back(static_cast<std::uint32_t>(index));
+			types.push_back(&regiment.get_regiment_type());
+		}
+	}
+	if (indices.empty()) {
+		return layout;
+	}
+	std::size_t template_ranks = 0, template_depth = 0;
+	memory::vector<std::size_t> taken_by(indices.size(), DIVISION_GRID_SIZE);
+	if (division_template != nullptr) {
+		taken_by = match_cells(unit_type_manager, division_template->cells, types);
+		for (std::size_t cell = 0; cell < DIVISION_GRID_SIZE; ++cell) {
+			if (division_template->cells[cell] != 0) {
+				template_ranks = std::max(template_ranks, cell / DIVISION_MAX_DEPTH + 1);
+				template_depth = std::max(template_depth, cell % DIVISION_MAX_DEPTH + 1);
+			}
+		}
+	}
+	// The regiments without a cell: behind the ranks of the template, or in ranks of extra_depth rows (a division out of the template)
+	const std::size_t rows_per_rank = std::max<std::size_t>(extra_depth, 1);
+	std::size_t extra = 0;
+	for (std::size_t index = 0; index < indices.size(); ++index) {
+		DivisionLayout::Entry entry;
+		entry.regiment = indices[index];
+		if (taken_by[index] != DIVISION_GRID_SIZE) {
+			entry.rank = static_cast<std::uint8_t>(taken_by[index] / DIVISION_MAX_DEPTH);
+			entry.row = static_cast<std::uint8_t>(taken_by[index] % DIVISION_MAX_DEPTH);
+		} else if (template_ranks > 0) {
+			entry.rank = static_cast<std::uint8_t>(extra % template_ranks);
+			entry.row = static_cast<std::uint8_t>(template_depth + extra / template_ranks);
+			extra++;
+		} else {
+			const std::size_t column = extra / rows_per_rank;
+			entry.rank = static_cast<std::uint8_t>(column % DIVISION_MAX_RANKS);
+			entry.row = static_cast<std::uint8_t>(extra % rows_per_rank + rows_per_rank * (column / DIVISION_MAX_RANKS));
+			extra++;
+		}
+		layout.entries.push_back(entry);
+	}
+	std::sort(layout.entries.begin(), layout.entries.end(), [](DivisionLayout::Entry const& a, DivisionLayout::Entry const& b) -> bool {
+		return a.rank != b.rank ? a.rank < b.rank : a.row != b.row ? a.row < b.row : a.regiment < b.regiment;
+	});
+	// The lines: the rows of a rank that have a regiment, in their order
+	std::uint8_t line = 0;
+	for (std::size_t index = 0; index < layout.entries.size(); ++index) {
+		DivisionLayout::Entry& entry = layout.entries[index];
+		if (index == 0 || entry.rank != layout.entries[index - 1].rank) {
+			layout.width++;
+			line = 0;
+		} else if (entry.row != layout.entries[index - 1].row) {
+			line++;
+		}
+		entry.line = line;
+	}
+	return layout;
 }
 
 void OpenVic::update_all_divisions(InstanceManager& instance_manager) {
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	UnitTypeManager const& unit_type_manager = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists()) {
 			continue;
 		}
 		update_army_groups(instance_manager, country);
-		if (country.has_army_organisation()) {
-			if (!country.are_division_templates_made()) {
-				country.set_division_templates_made(true);
-				// The standard division: four regiments of infantry (2 ranks of 2 rows) and two of cavalry (1 rank of 2 rows)
-				country.get_mutable_division_templates().push_back(make_template(
-					country.take_division_template_id(),
-					make_standard_division_grid(instance_manager.definition_manager.get_military_manager().get_unit_type_manager())
-				));
-			}
-			for (ArmyInstance& army : country.get_armies()) {
-				organise_army(unit_manager, army, country);
-			}
-		} else {
-			for (ArmyInstance& army : country.get_armies()) {
-				if (!army.get_divisions().empty()) {
-					army.get_mutable_divisions().clear();
-					for (RegimentInstance& regiment : army.get_regiment_instances()) {
-						regiment.set_division_id(0);
-					}
-				}
-				// Generals command only the armies of the countries with the technology (they are not deleted, only taken off)
-				if (army.get_leader() != nullptr) {
-					army.set_leader(nullptr);
-				}
+		const bool first_day = !country.are_division_templates_made();
+		if (first_day) {
+			country.set_division_templates_made(true);
+			// The default template (ov_data/common/ov_units/default_template.txt)
+			country.get_mutable_division_templates().push_back(
+				make_template(country.take_division_template_id(), make_standard_division_grid(unit_type_manager))
+			);
+		}
+		const bool command = country.has_army_command();
+		for (ArmyInstance& army : country.get_armies()) {
+			organise_army(unit_manager, unit_type_manager, army, country, first_day);
+			// Generals command only the armies of the countries with mechanic:command (they are not deleted, only taken off)
+			if (!command && army.get_leader() != nullptr) {
+				army.set_leader(nullptr);
 			}
 		}
 	}
 }
 
-std::size_t OpenVic::count_division_units(ArmyInstance const& army, const std::uint32_t chunk_size) {
+std::size_t OpenVic::count_division_units(ArmyInstance const& army) {
 	std::size_t units = 0;
-	std::size_t loose_regiments = 0;
 	for (DivisionInstance const& division : army.get_divisions()) {
-		std::size_t in_division = 0;
-		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-			if (regiment.get_division_id() == division.id) {
-				in_division++;
-			}
-		}
-		if (in_division == 0) {
-			continue;
-		}
-		if (division.template_id != 0) {
-			units++;
-		} else {
-			loose_regiments += in_division;
-		}
+		units += count_regiments_in(army, division.id) > 0;
 	}
-	// Regiments that are in no division yet (they are put in the reserve the next day) are loose too
+	// Regiments that are in no division yet (they get one the next day) are a unit each
 	for (RegimentInstance const& regiment : army.get_regiment_instances()) {
-		if (regiment.get_division_id() == 0 || find_division(army, regiment.get_division_id()) == nullptr) {
-			loose_regiments++;
-		}
+		units += regiment.get_division_id() == 0 || find_division(army, regiment.get_division_id()) == nullptr;
 	}
-	const std::size_t chunk = std::max<std::size_t>(chunk_size, 1);
-	return units + (loose_regiments + chunk - 1) / chunk;
+	return units;
 }
 
-ArmyInstance* OpenVic::split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army, const std::uint32_t chunk_size) {
-	if (count_division_units(army, chunk_size) < 2) {
+ArmyInstance* OpenVic::split_division(UnitInstanceManager& unit_manager, ArmyInstance& army, const std::uint32_t division_id) {
+	DivisionInstance const* const division = find_division(army, division_id);
+	if (division == nullptr) {
 		return nullptr;
 	}
-
-	// A division of a template goes as a whole, the last one first
-	DivisionInstance const* division_of_template = nullptr;
-	for (DivisionInstance const& division : army.get_divisions()) {
-		if (division.template_id != 0 && count_regiments_in(army, division.id) > 0) {
-			division_of_template = &division;
-		}
-	}
-	const DivisionInstance moved_division = division_of_template != nullptr ? *division_of_template : DivisionInstance {};
-
+	const DivisionInstance moved_division = *division;
 	std::vector<RegimentInstance*> moved;
 	for (RegimentInstance& regiment : army.get_regiment_instances()) {
-		if (division_of_template != nullptr) {
-			if (regiment.get_division_id() == moved_division.id) {
-				moved.push_back(&regiment);
-			}
-		} else if (moved.size() < std::max<std::size_t>(chunk_size, 1)) {
+		if (regiment.get_division_id() == moved_division.id) {
 			moved.push_back(&regiment);
 		}
 	}
@@ -273,23 +453,36 @@ ArmyInstance* OpenVic::split_division_unit(UnitInstanceManager& unit_manager, Ar
 			new_army->add_unit(*moved[i]);
 		}
 	}
-	if (division_of_template != nullptr) {
-		// The division keeps its id and its template in the new army
-		std::erase_if(army.get_mutable_divisions(), [&moved_division](DivisionInstance const& division) -> bool {
-			return division.id == moved_division.id;
-		});
-		new_army->get_mutable_divisions().push_back(moved_division);
-		for (RegimentInstance& regiment : new_army->get_regiment_instances()) {
-			regiment.set_division_id(moved_division.id);
-		}
+	// The division keeps its id and its template in the new army
+	std::erase_if(army.get_mutable_divisions(), [&moved_division](DivisionInstance const& other) -> bool {
+		return other.id == moved_division.id;
+	});
+	new_army->get_mutable_divisions().clear();
+	new_army->get_mutable_divisions().push_back(moved_division);
+	for (RegimentInstance& regiment : new_army->get_regiment_instances()) {
+		regiment.set_division_id(moved_division.id);
 	}
 	army.update_gamestate();
 	new_army->update_gamestate();
 	return new_army;
 }
 
+ArmyInstance* OpenVic::split_division_unit(UnitInstanceManager& unit_manager, ArmyInstance& army) {
+	if (count_division_units(army) < 2) {
+		return nullptr;
+	}
+	// The last division that has regiments goes as a whole
+	std::uint32_t last = 0;
+	for (DivisionInstance const& division : army.get_divisions()) {
+		if (count_regiments_in(army, division.id) > 0) {
+			last = division.id;
+		}
+	}
+	return last != 0 ? split_division(unit_manager, army, last) : nullptr;
+}
+
 bool OpenVic::create_division_template(InstanceManager& instance_manager, CountryInstance& country, DivisionGrid const& grid) {
-	if (!country.has_army_organisation() || !is_valid_division_grid(instance_manager, country, grid)
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES) || !is_valid_division_grid(instance_manager, country, grid)
 		|| country.get_division_templates().size() >= MAX_DIVISION_TEMPLATES) {
 		return false;
 	}
@@ -300,7 +493,7 @@ bool OpenVic::create_division_template(InstanceManager& instance_manager, Countr
 bool OpenVic::update_division_template(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t template_id, DivisionGrid const& grid
 ) {
-	if (!country.has_army_organisation() || !is_valid_division_grid(instance_manager, country, grid)) {
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES) || !is_valid_division_grid(instance_manager, country, grid)) {
 		return false;
 	}
 	DivisionTemplate* division_template = nullptr;
@@ -366,6 +559,9 @@ bool OpenVic::update_division_template(
 }
 
 bool OpenVic::delete_division_template(CountryInstance& country, const std::uint32_t template_id) {
+	if (!country.has_unlock(UNLOCK_MECHANIC_DIVISION_TEMPLATES)) {
+		return false;
+	}
 	memory::vector<DivisionTemplate>& templates = country.get_mutable_division_templates();
 	const auto it = std::find_if(templates.begin(), templates.end(), [template_id](DivisionTemplate const& candidate) -> bool {
 		return candidate.id == template_id;
@@ -389,7 +585,7 @@ bool OpenVic::reform_army_to_template(
 	InstanceManager& instance_manager, ArmyInstance& army, const std::uint32_t division_id, const std::uint32_t template_id
 ) {
 	CountryInstance& country = army.get_country();
-	if (!country.has_army_organisation() || army.is_in_combat()) {
+	if (army.is_in_combat()) {
 		return false;
 	}
 	DivisionTemplate const* const division_template = country.find_division_template(template_id);

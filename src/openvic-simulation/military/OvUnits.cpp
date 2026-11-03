@@ -67,6 +67,29 @@ bool UnitTypeManager::load_vic2_aliases(std::string_view source, ast::NodeCPtr r
 	return parsed;
 }
 
+bool UnitTypeManager::load_default_template(std::string_view source, ast::NodeCPtr root) {
+	default_template_ranks.clear();
+	const bool parsed = expect_dictionary_keys(
+		"default_template", ONE_EXACTLY, expect_dictionary_keys(
+			"rank", ONE_OR_MORE, [this](ast::NodeCPtr rank_node) -> bool {
+				memory::vector<memory::string> rank;
+				const bool ok = expect_list(expect_identifier_or_string([&rank](std::string_view identifier) -> bool {
+					rank.emplace_back(identifier);
+					return true;
+				}))(rank_node);
+				if (!rank.empty()) {
+					default_template_ranks.push_back(std::move(rank));
+				}
+				return ok;
+			}
+		)
+	)(root);
+	if (!parsed) {
+		spdlog::warn_s("The default template of the divisions {} is broken, what could be read is used", source);
+	}
+	return parsed;
+}
+
 RegimentType const* UnitTypeManager::resolve_vic2_regiment_type(std::string_view identifier) const {
 	if (const auto it = vic2_aliases.find(identifier); it != vic2_aliases.end()) {
 		if (RegimentType const* const target = regiment_types.get_item_by_identifier(it->second); target != nullptr) {
