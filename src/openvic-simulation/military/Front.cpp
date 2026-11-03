@@ -228,6 +228,46 @@ namespace {
 	}
 }
 
+namespace {
+	// Every piece of the border of the land the country controls with the land of a country of the sector, in the order of the provinces
+	memory::vector<FrontEdge> border_edges(WarManager& war_manager, MapInstance& map_instance, CountryInstance const& country, CountryInstance const& neighbour) {
+		memory::vector<FrontEdge> edges;
+		if (!neighbour.exists()) {
+			return edges;
+		}
+		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+			if (province.get_controller() != &country || province.province_definition.is_water()) {
+				continue;
+			}
+			for (ProvinceInstance* neighbour_province : get_land_neighbours(province, map_instance)) {
+				if (is_country_of_sector(war_manager, country, neighbour, neighbour_province->get_controller())) {
+					edges.push_back({ &province, neighbour_province });
+				}
+			}
+		}
+		return edges;
+	}
+
+	// The coast of the land the country controls next to the sea province, in the order of the provinces
+	memory::vector<FrontEdge> coast_edges(MapInstance& map_instance, CountryInstance const& country, ProvinceInstance const& sea) {
+		memory::vector<FrontEdge> edges;
+		ProvinceInstance& sea_instance = map_instance.get_province_instance_by_definition(sea.province_definition);
+		for (ProvinceDefinition::adjacency_t const& adjacency : sea.province_definition.get_adjacencies()) {
+			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::COASTAL || adjacency.get_to().is_water()) {
+				continue;
+			}
+			ProvinceInstance& land = map_instance.get_province_instance_by_definition(adjacency.get_to());
+			if (land.get_controller() == &country) {
+				edges.push_back({ &land, &sea_instance });
+			}
+		}
+		std::sort(edges.begin(), edges.end(), [](FrontEdge const& first, FrontEdge const& second) -> bool {
+			return first.own->index < second.own->index;
+		});
+		return edges;
+	}
+}
+
 std::uint32_t WarManager::create_border_front(
 	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, CountryInstance const& neighbour
 ) {
@@ -239,17 +279,7 @@ std::uint32_t WarManager::create_border_front(
 	front.country = &country;
 	front.enemy = &neighbour;
 	front.group_id = group_id;
-	// Every piece of the border of the land the country controls with the land of a country of the sector, in the order of the provinces
-	for (ProvinceInstance& province : map_instance.get_province_instances()) {
-		if (province.get_controller() != &country || province.province_definition.is_water()) {
-			continue;
-		}
-		for (ProvinceInstance* neighbour_province : get_land_neighbours(province, map_instance)) {
-			if (is_country_of_sector(*this, country, neighbour, neighbour_province->get_controller())) {
-				front.edges.push_back({ &province, neighbour_province });
-			}
-		}
-	}
+	front.edges = border_edges(*this, map_instance, country, neighbour);
 	if (front.edges.empty()) {
 		return 0;
 	}
@@ -273,21 +303,10 @@ std::uint32_t WarManager::create_coastal_front(
 	front.kind = Front::kind_t::COAST;
 	front.sea = &sea;
 	front.group_id = group_id;
-	for (ProvinceDefinition::adjacency_t const& adjacency : sea.province_definition.get_adjacencies()) {
-		if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::COASTAL || adjacency.get_to().is_water()) {
-			continue;
-		}
-		ProvinceInstance& land = map_instance.get_province_instance_by_definition(adjacency.get_to());
-		if (land.get_controller() == &country) {
-			front.edges.push_back({ &land, &map_instance.get_province_instance_by_definition(sea.province_definition) });
-		}
-	}
+	front.edges = coast_edges(map_instance, country, sea);
 	if (front.edges.empty()) {
 		return 0;
 	}
-	std::sort(front.edges.begin(), front.edges.end(), [](FrontEdge const& first, FrontEdge const& second) -> bool {
-		return first.own->index < second.own->index;
-	});
 	front.provinces = line_of_edges(map_instance, front.edges);
 	delete_group_lines(instance_manager, country, group_id);
 	front.id = next_front_id++;
@@ -552,6 +571,81 @@ memory::vector<ProvinceInstance*> WarManager::get_offensive_zone(InstanceManager
 		}
 	}
 	return zone;
+}
+
+void WarManager::rebuild_front_edges(InstanceManager& instance_manager, Front& front) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	memory::vector<FrontEdge> full;
+	if (front.kind == Front::kind_t::COAST) {
+		if (front.sea != nullptr) {
+			full = coast_edges(map_instance, *front.country, *front.sea);
+		}
+	} else if (front.enemy != nullptr) {
+		full = border_edges(*this, map_instance, *front.country, *front.enemy);
+	}
+	if (front.edited) {
+		// The pieces still on the border stay; the pieces of the provinces the line moved over are added: the ones taken from the other side and our
+		// neighbours of the ones the enemy took (the pieces the player took away do not come back)
+		std::vector<ProvinceInstance const*> touched;
+		for (FrontEdge const& edge : front.edges) {
+			if (edge.other->get_controller() == front.country) {
+				touched.push_back(edge.other);
+			}
+			if (edge.own->get_controller() != front.country) {
+				for (ProvinceInstance* next : get_land_neighbours(*edge.own, map_instance)) {
+					touched.push_back(next);
+				}
+			}
+		}
+		memory::vector<FrontEdge> kept;
+		for (FrontEdge const& edge : full) {
+			const bool was = std::find(front.edges.begin(), front.edges.end(), edge) != front.edges.end();
+			if (was || std::find(touched.begin(), touched.end(), edge.own) != touched.end()) {
+				kept.push_back(edge);
+			}
+		}
+		full = std::move(kept);
+	}
+	if (full == front.edges) {
+		return;
+	}
+	// A front whose border is gone stays empty: its divisions stand where they are
+	front.edges = std::move(full);
+	front.provinces = line_of_edges(map_instance, front.edges);
+}
+
+void WarManager::update_front_lines(InstanceManager& instance_manager) {
+	// The signature: the controller of every land province and the sides of every war (an event changed the border: the lines are made again)
+	std::uint64_t signature = 1469598103934665603ULL;
+	const auto mix = [&signature](const std::uint64_t value) {
+		signature = (signature ^ value) * 1099511628211ULL;
+	};
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		if (!province.province_definition.is_water()) {
+			CountryInstance const* const controller = province.get_controller();
+			mix(controller != nullptr ? static_cast<std::uint64_t>(type_safe::get(controller->index)) + 1 : 0);
+		}
+	}
+	for (War const& war : wars) {
+		mix(war.id);
+		for (CountryInstance const* const country : war.attackers) {
+			mix(static_cast<std::uint64_t>(type_safe::get(country->index)) + 1);
+		}
+		mix(0);
+		for (CountryInstance const* const country : war.defenders) {
+			mix(static_cast<std::uint64_t>(type_safe::get(country->index)) + 1);
+		}
+	}
+	if (signature == border_signature) {
+		return;
+	}
+	border_signature = signature;
+	// The fronts of the field marshals (the automatic fronts of the AI are made again by its plan)
+	for (Front& front : fronts) {
+		if (front.group_id != 0) {
+			rebuild_front_edges(instance_manager, front);
+		}
+	}
 }
 
 Front const* WarManager::find_front_of_group(CountryInstance const& country, const std::uint32_t group_id) const {
@@ -869,6 +963,7 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 	});
 
 	update_plan_lines(instance_manager);
+	update_front_lines(instance_manager);
 	for (Front& front : fronts) {
 		if (!is_front_commanded(front)) {
 			continue;

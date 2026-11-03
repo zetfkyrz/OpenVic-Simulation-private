@@ -255,11 +255,19 @@ namespace OpenVic {
 		std::uint32_t next_front_id = 1;
 		memory::vector<PlanLine> plan_lines;
 		std::uint32_t next_plan_line_id = 1;
+		// What the lines of the fronts of the field marshals depend on (the controllers of the land, the sides of the wars), seen the last time they were
+		// made (docs/WAR_ASSUMPTIONS.md, section 6, P3). Not a state of the game: a load replays the days from the start and gets the same
+		std::uint64_t border_signature = 0;
 		// Countries whose fronts and army assignments are managed automatically
 		std::unordered_set<CountryInstance const*> auto_plan_countries;
 
 		Front* find_front(std::uint32_t id);
 		PlanLine* find_plan_line(std::uint32_t id);
+		// The lines of the fronts of the field marshals follow the border (P3): made again when a province changes its controller or a war its sides
+		void update_front_lines(InstanceManager& instance_manager);
+		// The pieces of the line of the front as the border is now (an edited front keeps its pieces that are still on the border and gets the pieces of the
+		// provinces taken from the other side and of our neighbours of the ones the enemy took)
+		void rebuild_front_edges(InstanceManager& instance_manager, Front& front);
 		// The lines of the fronts and of the plans lose what does not exist any more (fronts of groups that are gone, provinces taken from a line)
 		void update_plan_lines(InstanceManager& instance_manager);
 		void update_fronts(InstanceManager& instance_manager);
@@ -281,7 +289,6 @@ namespace OpenVic {
 		void update_blockades(InstanceManager& instance_manager);
 		void update_leaders(InstanceManager& instance_manager);
 
-		void end_war(InstanceManager& instance_manager, std::uint32_t war_id);
 		void transfer_states(InstanceManager& instance_manager, War const& war, bool winners_are_attackers);
 
 	public:
@@ -386,6 +393,8 @@ namespace OpenVic {
 		);
 
 		War* find_war_between(CountryInstance const& first, CountryInstance const& second);
+		// The war ends without a peace treaty (the countries are at peace again; the tests, the end of a country)
+		void end_war(InstanceManager& instance_manager, std::uint32_t war_id);
 
 		std::span<const Front> get_fronts() const {
 			return fronts;

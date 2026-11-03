@@ -60,7 +60,9 @@ namespace OpenVic {
 		// 40: the lines of the field marshals (docs/WAR_ASSUMPTIONS.md, section 6, P2): a front is the pieces of the border (or of the coast) with the
 		//     countries of its sector, the lines of the plans (offensive, defence, naval invasion), the modes of the execution (aggression, integrity);
 		//     the old plan of one front (set_army_group_plan) and toggle_front_province are gone
-		inline constexpr int SIMULATION_VERSION = 40;
+		// 41: the fronts of the field marshals follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): made again when a province changes its controller
+		//     or a war its sides, the allies of the enemy in the war are in the sector, an edited front keeps its pieces, a front without a border stays empty
+		inline constexpr int SIMULATION_VERSION = 41;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

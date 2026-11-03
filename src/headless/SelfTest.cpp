@@ -4975,6 +4975,121 @@ namespace {
 	}
 
 	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
+	// ---- the fronts follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): a taken province moves the line, a war brings the allies of the
+	// enemy into the sector, an edited front keeps its pieces, a front without a border stays empty
+
+	void test_front_dynamics(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		// A country with mechanic:command that is at peace, two neighbours of it that are at peace (the second one becomes the ally of the first)
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		CountryInstance* ally = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			std::vector<CountryInstance*> found;
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate && !other->is_at_war()
+						&& !other->is_rebel_country() && !other->has_alliance_with(candidate) && std::find(found.begin(), found.end(), other) == found.end()) {
+						found.push_back(other);
+					}
+				}
+			}
+			if (found.size() >= 2) {
+				country = &candidate;
+				neighbour = found[0];
+				ally = found[1];
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO front dynamics: no country with two neighbours at peace, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		im.force_tick_and_update();
+		Front const* front = war_manager.get_front_by_id(front_id);
+		r.check(front != nullptr && !front->edges.empty(), "front dynamics: the front of the marshal is there");
+		if (front == nullptr || front->edges.empty()) {
+			return;
+		}
+		const memory::vector<FrontEdge> before = front->edges;
+		const auto only_country = [&](Front const& checked, CountryInstance const* other_country) -> bool {
+			for (FrontEdge const& edge : checked.edges) {
+				if (edge.other->get_controller() != other_country || edge.own->get_controller() != country) {
+					return false;
+				}
+			}
+			return true;
+		};
+		r.check(only_country(*front, neighbour), "front dynamics: at peace the front runs along the neighbour only");
+
+		// A province of the neighbour is taken: the line moves to its far side
+		ProvinceInstance* const taken = before.front().other;
+		CountryInstance* const taken_from = taken->get_controller();
+		taken->set_controller(country);
+		im.force_tick_and_update();
+		front = war_manager.get_front_by_id(front_id);
+		bool moved = true;
+		bool from_taken = false;
+		for (FrontEdge const& edge : front->edges) {
+			moved &= edge.other != taken;
+			from_taken |= edge.own == taken;
+		}
+		bool taken_has_border = false;
+		for (ProvinceDefinition::adjacency_t const& adjacency : taken->province_definition.get_adjacencies()) {
+			taken_has_border |= adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
+				&& map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller() == neighbour;
+		}
+		r.check(moved && (from_taken || !taken_has_border), "front dynamics: a taken province is no longer across the line, its border with the neighbour is on it");
+		taken->set_controller(taken_from);
+		im.force_tick_and_update();
+		r.check(war_manager.get_front_by_id(front_id)->edges == before, "front dynamics: the province given back puts the line back as it was");
+
+		// A war: the ally of the neighbour joins him, his border becomes part of the sector
+		ally->set_alliance_with(*neighbour, true);
+		neighbour->set_alliance_with(*ally, true);
+		const bool declared = war_manager.declare_war(im, *country, *neighbour);
+		im.force_tick_and_update();
+		front = war_manager.get_front_by_id(front_id);
+		bool has_ally = false;
+		for (FrontEdge const& edge : front->edges) {
+			has_ally |= edge.other->get_controller() == ally;
+		}
+		r.check(declared && country->is_at_war_with(*ally) && has_ally, "front dynamics: at war the allies of the enemy in the war are in the sector (their border is on the line)");
+
+		// An edited front keeps its pieces: one piece taken away stays away when the border changes
+		const FrontEdge piece = front->edges.back();
+		war_manager.toggle_front_edge(im, *country, front_id, *piece.own, *piece.other);
+		ProvinceInstance* const second_taken = war_manager.get_front_by_id(front_id)->edges.front().other;
+		CountryInstance* const second_from = second_taken->get_controller();
+		second_taken->set_controller(country);
+		im.force_tick_and_update();
+		front = war_manager.get_front_by_id(front_id);
+		r.check(front->edited && std::find(front->edges.begin(), front->edges.end(), piece) == front->edges.end(),
+			"front dynamics: an edited front does not get back the piece the player took away");
+		second_taken->set_controller(second_from);
+
+		// The war is over and the neighbour gone from the border: an empty front stays (its divisions stand)
+		if (War* const war = war_manager.find_war_between(*country, *neighbour); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		ally->set_alliance_with(*neighbour, false);
+		neighbour->set_alliance_with(*ally, false);
+		im.force_tick_and_update();
+		front = war_manager.get_front_by_id(front_id);
+		r.check(front != nullptr && only_country(*front, neighbour), "front dynamics: after the war the front runs along the neighbour only again");
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -5509,6 +5624,7 @@ namespace {
 		test_live_divisions(r, *im);
 		test_live_battle(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
+		test_front_dynamics(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing
