@@ -1374,7 +1374,7 @@ bool GameActionManager::VariantVisitor::operator() (toggle_front_edge_argument_t
 bool GameActionManager::VariantVisitor::operator() (create_plan_line_argument_t const& argument) const {
 	const auto [country_index, group_id, type, province_index] = argument;
 	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
-	if (OV_unlikely(province == nullptr || type > static_cast<std::uint32_t>(PlanLine::type_t::NAVAL))) {
+	if (OV_unlikely(province == nullptr || type > static_cast<std::uint32_t>(PlanLine::type_t::BREAKTHROUGH))) {
 		spdlog::error_s("GAME_ACTION_CREATE_PLAN_LINE called with invalid type or province index: {} {}", type, province_index);
 		return false;
 	}

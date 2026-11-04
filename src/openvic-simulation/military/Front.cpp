@@ -394,9 +394,9 @@ bool WarManager::delete_front(CountryInstance const& country, const std::uint32_
 		return false;
 	}
 	fronts.erase(it);
-	// The offensives from the front are gone with it
+	// The offensives and the breakthroughs from the front are gone with it
 	std::erase_if(plan_lines, [front_id](PlanLine const& line) -> bool {
-		return line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front_id;
+		return (line.type == PlanLine::type_t::OFFENSIVE || line.type == PlanLine::type_t::BREAKTHROUGH) && line.front_id == front_id;
 	});
 	return true;
 }
@@ -431,6 +431,8 @@ namespace {
 			return province.get_controller() != &country;
 		case PlanLine::type_t::DEFENCE:
 			return province.get_controller() == &country;
+		case PlanLine::type_t::BREAKTHROUGH:
+			return province.get_controller() != &country;
 		case PlanLine::type_t::NAVAL:
 			return province.get_controller() != &country && province.province_definition.is_coastal();
 		}
@@ -458,7 +460,7 @@ std::uint32_t WarManager::create_plan_line(
 		if (!fits_plan_line(type, country, province)) {
 			return 0;
 		}
-		if (type == PlanLine::type_t::OFFENSIVE) {
+		if (type == PlanLine::type_t::OFFENSIVE || type == PlanLine::type_t::BREAKTHROUGH) {
 			// From the front of the marshal that is nearest to the target (the nearest province of its line; ties: the earlier front)
 			double best = std::numeric_limits<double>::max();
 			for (Front const& front : fronts) {
@@ -479,11 +481,12 @@ std::uint32_t WarManager::create_plan_line(
 		}
 		line.provinces.push_back(&province);
 	}
-	// A field marshal has one order: a new offensive takes the place of the earlier one (the front stays, the offensive goes from it); a line of
-	// defence or a naval invasion takes the place of everything (the front, the offensive, the line)
-	if (type == PlanLine::type_t::OFFENSIVE) {
-		std::erase_if(plan_lines, [&country, group_id](PlanLine const& other) -> bool {
-			return other.country == &country && other.group_id == group_id;
+	// A field marshal has one order: a new offensive (a breakthrough) takes the place of the earlier one (the front stays, they go from it); a line of
+	// defence or a naval invasion takes the place of everything (the front, the offensive, the breakthrough, the line)
+	if (type == PlanLine::type_t::OFFENSIVE || type == PlanLine::type_t::BREAKTHROUGH) {
+		std::erase_if(plan_lines, [&country, group_id, type](PlanLine const& other) -> bool {
+			return other.country == &country && other.group_id == group_id && (other.type == type || (other.type != PlanLine::type_t::OFFENSIVE
+				&& other.type != PlanLine::type_t::BREAKTHROUGH));
 		});
 	} else {
 		delete_group_lines(instance_manager, country, group_id);
@@ -500,8 +503,8 @@ bool WarManager::toggle_plan_line_province(
 	if (line == nullptr || line->country != &country) {
 		return false;
 	}
-	if (line->type == PlanLine::type_t::DEFENCE) {
-		// The chain: an end province is taken away, a province outside the line joins the nearer end over our land
+	if (line->type == PlanLine::type_t::DEFENCE || line->type == PlanLine::type_t::BREAKTHROUGH) {
+		// The chain: an end province is taken away, a province outside the line joins the nearer end (over our land, or the land of the others)
 		const auto at = std::find(line->provinces.begin(), line->provinces.end(), &province);
 		if (at != line->provinces.end()) {
 			if (line->provinces.size() == 1 || (at != line->provinces.begin() && at != line->provinces.end() - 1)) {
@@ -543,8 +546,13 @@ bool WarManager::extend_plan_line(
 	InstanceManager& instance_manager, CountryInstance const& country, const std::uint32_t line_id, const bool at_end, ProvinceInstance& province
 ) {
 	PlanLine* const line = find_plan_line(line_id);
-	if (line == nullptr || line->country != &country || line->type != PlanLine::type_t::DEFENCE || line->provinces.empty()
-		|| province.get_controller() != &country || province.province_definition.is_water()) {
+	if (line == nullptr || line->country != &country || line->provinces.empty() || province.province_definition.is_water()
+		|| (line->type != PlanLine::type_t::DEFENCE && line->type != PlanLine::type_t::BREAKTHROUGH)) {
+		return false;
+	}
+	// A line of defence over our land, a breakthrough over the land of the others
+	const bool own_land = line->type == PlanLine::type_t::DEFENCE;
+	if ((province.get_controller() == &country) != own_land) {
 		return false;
 	}
 	memory::vector<ProvinceInstance*>& chain = line->provinces;
@@ -562,14 +570,15 @@ bool WarManager::extend_plan_line(
 	}
 	// The shortest way over our land from the end to the province, not over the line itself (the order of the neighbours: the same in every run).
 	// No way from that end (the line would have to go back over itself): from the other end
-	if (!extend_chain(instance_manager, country, chain, at_end, province)) {
-		return extend_chain(instance_manager, country, chain, !at_end, province);
+	if (!extend_chain(instance_manager, country, chain, at_end, province, own_land)) {
+		return extend_chain(instance_manager, country, chain, !at_end, province, own_land);
 	}
 	return true;
 }
 
 bool WarManager::extend_chain(
-	InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, const bool at_end, ProvinceInstance& province
+	InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, const bool at_end, ProvinceInstance& province,
+	const bool own_land
 ) const {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	ProvinceInstance* const start = at_end ? chain.back() : chain.front();
@@ -589,7 +598,7 @@ bool WarManager::extend_chain(
 		}
 		for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
 			const std::size_t index = type_safe::get(neighbour->index);
-			if (steps[index] >= 0 || neighbour->get_controller() != &country || std::find(chain.begin(), chain.end(), neighbour) != chain.end()) {
+			if (steps[index] >= 0 || (neighbour->get_controller() == &country) != own_land || std::find(chain.begin(), chain.end(), neighbour) != chain.end()) {
 				continue;
 			}
 			steps[index] = next_steps;
@@ -800,7 +809,7 @@ void WarManager::update_plan_lines(InstanceManager& instance_manager) {
 		if (!line.country->exists() || line.country->find_army_group(line.group_id) == nullptr) {
 			return true;
 		}
-		if (line.type == PlanLine::type_t::OFFENSIVE) {
+		if (line.type == PlanLine::type_t::OFFENSIVE || line.type == PlanLine::type_t::BREAKTHROUGH) {
 			Front const* const front = get_front_by_id(line.front_id);
 			return front == nullptr || front->group_id != line.group_id;
 		}
@@ -1106,8 +1115,19 @@ void WarManager::join_group_armies(Front& front) {
 		}
 		return true;
 	});
+	// The divisions of a breakthrough of the marshal go their own way
+	std::vector<unique_id_t> breaking;
+	for (PlanLine const& line : plan_lines) {
+		if (line.type == PlanLine::type_t::BREAKTHROUGH && line.country == &country && line.group_id == front.group_id) {
+			breaking.insert(breaking.end(), line.army_ids.begin(), line.army_ids.end());
+		}
+	}
+	std::erase_if(front.army_ids, [&breaking](const unique_id_t army_id) -> bool {
+		return std::find(breaking.begin(), breaking.end(), army_id) != breaking.end();
+	});
 	for (ArmyInstance& army : country.get_armies()) {
-		if (army.get_army_group_id() != front.group_id || army.get_transport_navy() != nullptr || army.empty()) {
+		if (army.get_army_group_id() != front.group_id || army.get_transport_navy() != nullptr || army.empty()
+			|| std::find(breaking.begin(), breaking.end(), army.unique_id) != breaking.end()) {
 			continue;
 		}
 		if (std::find(front.army_ids.begin(), front.army_ids.end(), army.unique_id) != front.army_ids.end()) {
@@ -1410,6 +1430,120 @@ void WarManager::execute_offensive(
 	}
 }
 
+void WarManager::execute_breakthrough(InstanceManager& instance_manager, PlanLine& line, const bool executed) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	OpenVicWarDefines const& defines = get_war_defines();
+	CountryInstance& country = *line.country;
+	Front const* const front = get_front_by_id(line.front_id);
+	if (front == nullptr || line.provinces.empty()) {
+		return;
+	}
+	// The divisions: the ones kept (still in the group), topped up with the strongest of the group by their attack (ties: the lower id)
+	std::erase_if(line.army_ids, [&](const unique_id_t army_id) -> bool {
+		UnitInstanceGroup const* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		return group == nullptr || group->branch != unit_branch_t::LAND || group->empty()
+			|| static_cast<ArmyInstance const*>(group)->get_army_group_id() != line.group_id;
+	});
+	std::vector<std::pair<fixed_point_t, ArmyInstance*>> candidates;
+	std::size_t divisions = 0;
+	for (ArmyInstance& army : country.get_armies()) {
+		if (army.get_army_group_id() != line.group_id || army.get_transport_navy() != nullptr || army.empty()) {
+			continue;
+		}
+		divisions += army.get_divisions().size();
+		// (a division on its way to the line may go: not one moving by a manual order, not one in a battle)
+		if (std::find(line.army_ids.begin(), line.army_ids.end(), army.unique_id) != line.army_ids.end() || army.is_manual_order() || army.is_in_combat()
+			|| army.get_divisions().empty()) {
+			continue;
+		}
+		candidates.emplace_back(get_live_division_stats(instance_manager, army, army.get_divisions().front()).attack, &army);
+	}
+	std::stable_sort(candidates.begin(), candidates.end(), [](auto const& first, auto const& second) -> bool {
+		return first.first != second.first ? first.first > second.first : first.second->unique_id < second.second->unique_id;
+	});
+	// The share counts the divisions (an army not split yet goes whole when its divisions fit)
+	const std::size_t wanted = std::max<std::size_t>(1, static_cast<std::size_t>(defines.plan_breakthrough_share.of(fixed_point_t(static_cast<std::int32_t>(divisions))).ceil<std::int32_t>()));
+	std::size_t taken = 0;
+	for (const unique_id_t army_id : line.army_ids) {
+		UnitInstanceGroup const* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		taken += static_cast<ArmyInstance const*>(group)->get_divisions().size();
+	}
+	for (auto const& [attack, army] : candidates) {
+		if (taken >= wanted) {
+			break;
+		}
+		if (taken > 0 && taken + army->get_divisions().size() > wanted) {
+			continue;
+		}
+		taken += army->get_divisions().size();
+		line.army_ids.push_back(army->unique_id);
+		for (Front& other : fronts) {
+			std::erase(other.army_ids, army->unique_id);
+		}
+		// It leaves the way to its place on the line: to the start of the breakthrough
+		if (army->is_moving()) {
+			army->clear_path();
+		}
+	}
+	// The next province of the way the enemy holds; none: the divisions stand at its end
+	ProvinceInstance* next = nullptr;
+	std::size_t next_index = 0;
+	for (std::size_t index = 0; index < line.provinces.size(); ++index) {
+		if (line.provinces[index]->get_controller() != &country) {
+			next = line.provinces[index];
+			next_index = index;
+			break;
+		}
+	}
+	std::vector<ArmyInstance*> free;
+	for (const unique_id_t army_id : line.army_ids) {
+		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		if (group != nullptr && !group->is_moving() && !group->is_in_combat()) {
+			free.push_back(static_cast<ArmyInstance*>(group));
+		}
+	}
+	// Where the divisions wait for the next step: the province of the way before it, or (the first step) the province of the front next to it
+	ProvinceInstance* gather = nullptr;
+	if (next == nullptr) {
+		gather = line.provinces.back();
+	} else if (next_index > 0) {
+		gather = line.provinces[next_index - 1];
+	} else {
+		for (FrontEdge const& edge : front->edges) {
+			if (edge.other == next) {
+				gather = edge.own;
+				break;
+			}
+		}
+	}
+	const auto next_to = [&](ProvinceInstance const& at, ProvinceInstance const& target) -> bool {
+		for (ProvinceDefinition::adjacency_t const& adjacency : at.province_definition.get_adjacencies()) {
+			if (&adjacency.get_to() == &target.province_definition && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND) {
+				return true;
+			}
+		}
+		return false;
+	};
+	std::vector<ArmyInstance const*> attackers;
+	for (ArmyInstance* army : free) {
+		if (executed && next != nullptr && next_to(army->get_location(), *next) && country.is_at_war_with(*next->get_controller())) {
+			attackers.push_back(army);
+		} else if (gather != nullptr && &army->get_location() != gather) {
+			unit_manager.order_move(*army, *gather, map_instance);
+		}
+	}
+	// The step: all the divisions next to it, at the threshold of the aggressive mode (no minimum, no flanks)
+	if (!attackers.empty()) {
+		const BattleEstimate estimate = estimate_battle(instance_manager, attackers, *next);
+		if (offensive_attacks(3, estimate, defines)) {
+			for (ArmyInstance const* army : attackers) {
+				unit_manager.order_move(*const_cast<ArmyInstance*>(army), *next, map_instance);
+			}
+		}
+	}
+}
+
 void WarManager::update_fronts(InstanceManager& instance_manager) {
 	std::erase_if(fronts, [](Front const& front) -> bool {
 		return !front.country->exists();
@@ -1417,6 +1551,13 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 
 	update_plan_lines(instance_manager);
 	update_front_lines(instance_manager);
+	// The breakthroughs take their divisions first (the fronts get the others)
+	for (PlanLine& line : plan_lines) {
+		if (line.type == PlanLine::type_t::BREAKTHROUGH && line.country->exists()) {
+			ArmyGroup const* const group = line.country->find_army_group(line.group_id);
+			execute_breakthrough(instance_manager, line, group != nullptr && group->plan_active);
+		}
+	}
 	for (Front& front : fronts) {
 		if (!is_front_commanded(front)) {
 			continue;
@@ -1455,7 +1596,8 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 	// The line of defence and the naval invasion of a field marshal (his order when he has no front): his divisions go to the provinces of the line
 	// and hold them (P9), to the port of the landing (P10)
 	for (PlanLine const& line : plan_lines) {
-		if (line.type == PlanLine::type_t::OFFENSIVE || !line.country->exists() || line.country->find_army_group(line.group_id) == nullptr) {
+		if (line.type == PlanLine::type_t::OFFENSIVE || line.type == PlanLine::type_t::BREAKTHROUGH || !line.country->exists()
+			|| line.country->find_army_group(line.group_id) == nullptr) {
 			continue;
 		}
 		Front orders;

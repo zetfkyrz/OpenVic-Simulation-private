@@ -123,18 +123,22 @@ namespace OpenVic {
 	};
 
 	// A line of the plan of a field marshal (docs/WAR_ASSUMPTIONS.md, section 6): an offensive (the enemy provinces to take, from a front of the
-	// marshal), a line of defence (provinces of the country to hold and dig in) or a naval invasion (a port of the country and the coast to land on)
+	// marshal), a line of defence (provinces of the country to hold and dig in), a naval invasion (a port of the country and the coast to land on) or a
+	// breakthrough (a way of neighbouring provinces into the enemy land, from a front, for the strongest divisions)
 	struct PlanLine {
-		enum struct type_t : std::uint32_t { OFFENSIVE = 0, DEFENCE = 1, NAVAL = 2 };
+		enum struct type_t : std::uint32_t { OFFENSIVE = 0, DEFENCE = 1, NAVAL = 2, BREAKTHROUGH = 3 };
 
 		std::uint32_t id = 0;
 		CountryInstance* country = nullptr;
 		std::uint32_t group_id = 0;
 		type_t type = type_t::OFFENSIVE;
-		std::uint32_t front_id = 0; // OFFENSIVE: the front it starts from
+		std::uint32_t front_id = 0; // OFFENSIVE, BREAKTHROUGH: the front it starts from
 		ProvinceInstance* port = nullptr; // NAVAL: where the divisions embark
-		// OFFENSIVE: the targets (the line of the offensive is their far border), DEFENCE: the provinces to hold, NAVAL: the coast to land on
+		// OFFENSIVE: the targets (the line of the offensive is their far border), DEFENCE: the provinces to hold (a chain of neighbours), NAVAL: the coast to
+		// land on, BREAKTHROUGH: the way (a chain of neighbours from the front)
 		memory::vector<ProvinceInstance*> provinces;
+		// BREAKTHROUGH: the divisions that go along the way (kept from day to day; the ones gone are replaced by the strongest free ones)
+		memory::vector<unique_id_t> army_ids;
 	};
 
 	// A land battle in a province (docs/WAR_ASSUMPTIONS.md, section 6), kept from day to day: which side attacks, the counter of the breakthrough rule
@@ -281,6 +285,9 @@ namespace OpenVic {
 		// The executor of the offensives from the front (P5): the targets of the zone next to the line, best first (R, nearer to the line of the plan);
 		// for each the free divisions next to it (the minimum to hold stays) attack when offensive_attacks says so. The line of the plan is not passed:
 		// the zone holds the targets and the land between
+		// The breakthrough (P7): its divisions gather at the start of the way; while the plan is executed they take its next province when the chance of
+		// the victory reaches the aggressive threshold, and stay at its end
+		void execute_breakthrough(InstanceManager& instance_manager, PlanLine& line, bool executed);
 		void execute_offensive(
 			InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
 			std::uint32_t aggression
@@ -462,7 +469,8 @@ namespace OpenVic {
 		bool extend_plan_line(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t line_id, bool at_end, ProvinceInstance& province);
 		// The shortest way over our land (not over the chain) from an end of the chain to the province is added to it; false if there is none
 		bool extend_chain(
-			InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, bool at_end, ProvinceInstance& province
+			InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, bool at_end, ProvinceInstance& province,
+			bool own_land
 		) const;
 		// The fronts and the lines of the plan of the field marshal are deleted (the armies stop where they are)
 		bool delete_group_lines(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t group_id);

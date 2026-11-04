@@ -5484,6 +5484,102 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the breakthrough (P7, docs/WAR_ASSUMPTIONS.md, section 6): a chain into the enemy land from the front, the strongest share of the divisions,
+	// they gather at its start and go along it while the plan is executed; it lives next to the offensive
+
+	void test_breakthrough(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			for (ArmyInstance& army : candidate.get_armies()) {
+				if (army.get_transport_navy() != nullptr || army.is_moving() || army.get_location().get_controller() != &candidate || army.get_divisions().size() < 2) {
+					continue;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : army.get_location().province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate)) {
+						neighbour = other;
+					}
+				}
+				if (neighbour != nullptr) {
+					break;
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO breakthrough: no country with an army next to a neighbour at peace, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t max_attached = get_marshal_max_attached(im, *country);
+		for (ArmyInstance& army : country->get_armies()) {
+			if (army.get_transport_navy() == nullptr) {
+				set_army_group(*country, army, group_id, max_attached);
+			}
+		}
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		Front const* const front = war_manager.get_front_by_id(front_id);
+		if (front == nullptr || front->edges.empty()) {
+			fmt::println("TEST INFO breakthrough: no front, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		ProvinceInstance* const first = front->edges.front().other;
+		r.check(war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::BREAKTHROUGH, *front->provinces.front()) == 0,
+			"breakthrough: its way goes over the land of the others");
+		const std::uint32_t offensive_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *first);
+		const std::uint32_t line_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::BREAKTHROUGH, *first);
+		r.check(line_id != 0 && war_manager.get_plan_line_by_id(offensive_id) != nullptr, "breakthrough: it lives next to the offensive of the front (one order)");
+		// The way two provinces deep: a gap is filled over the land of the others
+		ProvinceInstance* deep = nullptr;
+		for (ProvinceDefinition::adjacency_t const& adjacency : first->province_definition.get_adjacencies()) {
+			ProvinceInstance& step = map_instance.get_province_instance_by_definition(adjacency.get_to());
+			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || step.get_controller() == country || step.province_definition.is_water()) {
+				continue;
+			}
+			for (ProvinceDefinition::adjacency_t const& second : step.province_definition.get_adjacencies()) {
+				ProvinceInstance& far = map_instance.get_province_instance_by_definition(second.get_to());
+				if (deep == nullptr && second.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && &far != first && far.get_controller() != country
+					&& !far.province_definition.is_water() && !first->province_definition.is_adjacent_to(far.province_definition)) {
+					deep = &far;
+				}
+			}
+		}
+		if (deep != nullptr) {
+			r.check(war_manager.extend_plan_line(im, *country, line_id, true, *deep) && war_manager.get_plan_line_by_id(line_id)->provinces.size() == 3,
+				"breakthrough: the way to a far province is a chain of neighbours");
+		}
+		// (the first day splits the armies along the front, the second gives the breakthrough its divisions)
+		im.force_tick_and_update();
+		im.force_tick_and_update();
+		PlanLine const* const line = war_manager.get_plan_line_by_id(line_id);
+		std::size_t divisions = 0;
+		for (ArmyInstance const& army : country->get_armies()) {
+			divisions += army.get_army_group_id() == group_id ? army.get_divisions().size() : 0;
+		}
+		bool off_front = line != nullptr && !line->army_ids.empty();
+		Front const* const after = war_manager.get_front_by_id(front_id);
+		for (const unique_id_t army_id : line != nullptr ? line->army_ids : memory::vector<unique_id_t> {}) {
+			off_front &= std::find(after->army_ids.begin(), after->army_ids.end(), army_id) == after->army_ids.end();
+		}
+		r.check(off_front && line->army_ids.size() <= divisions, "breakthrough: it takes divisions of the marshal, they are not on the front",
+			fmt::format("{} of {} divisions", line != nullptr ? line->army_ids.size() : 0, divisions));
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -6023,6 +6119,7 @@ namespace {
 		test_offensive_modes(r, *im);
 		test_offensive_execution(r, *im); // ticks days, a war of its own
 		test_planning(r, *im);
+		test_breakthrough(r, *im); // ticks a day
 		game.end();
 
 		// ---- the defines hash does not change while playing

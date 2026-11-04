@@ -316,6 +316,9 @@ namespace OpenVic {
 	RATE(PLAN_WIN_BALANCED, plan_win_balanced, Rate(65, 100), 0, 1) \
 	RATE(PLAN_WIN_AGGRESSIVE, plan_win_aggressive, Rate(50, 100), 0, 1) \
 	INT(PLAN_MIN_HOLD, plan_min_hold, 1, 0, 100) \
+	/* The breakthrough (P7): this share of the divisions of the field marshal (the strongest by their attack, at least one) goes along its way of */ \
+	/* provinces into the enemy land with the threshold of the aggressive mode, without the minimum to hold */ \
+	RATE(PLAN_BREAKTHROUGH_SHARE, plan_breakthrough_share, Rate(1, 3), 0, 1) \
 	/* The bonus of the planning of a field marshal (P6): while he has an order and does not execute it the bonus grows by PLANNING_GAIN_PER_DAY a */ \
 	/* day (times 1 + the modifier planning_speed_mult) up to PLANNING_MAX (plus the modifier planning_max_add); while he executes it falls by */ \
 	/* PLANNING_DECAY_PER_DAY a day. It multiplies the attack and the breakthrough of his divisions in a battle (1 + the bonus), not of a division */ \

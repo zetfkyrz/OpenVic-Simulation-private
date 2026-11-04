@@ -71,7 +71,9 @@ namespace OpenVic {
 		// 45: the chance of the victory of a battle in its estimate (BATTLE_WIN_STEEPNESS), the modes of the offensive by it (80 %, 65 %, 50 %)
 		// 46: the bonus of the planning of the field marshals (P6): it grows while an order waits, falls while it is executed, multiplies the attack and the
 		//     breakthrough; the modifiers planning_max_add and planning_speed_mult; a manual order takes an army off every front and off the bonus
-		inline constexpr int SIMULATION_VERSION = 46;
+		// 47: the breakthrough of the field marshals (P7): a way of neighbouring provinces into the enemy land for the strongest third of the divisions, at the
+		//     aggressive threshold; a new offensive no longer deletes the other lines of the front
+		inline constexpr int SIMULATION_VERSION = 47;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
