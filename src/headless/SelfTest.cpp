@@ -5918,6 +5918,63 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the field marshals of the AI countries (P11, docs/WAR_ASSUMPTIONS.md, section 6): off by default; on, an AI country at war makes a group, a
+	// front and an offensive against the enemy it borders and executes it
+
+	void test_ai_marshals(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		OpenVicWarDefines& defines = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		r.check(defines.plan_ai_enabled == 0, "ai marshals: off by default (the AI plans as before)");
+		CountryInstance* country = nullptr;
+		CountryInstance* enemy = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || !candidate.is_ai() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war()
+				|| !candidate.get_army_groups().empty() || !candidate.has_armies()) {
+				continue;
+			}
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (enemy == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate) && war_manager.declare_war(im, candidate, *other)) {
+						enemy = other;
+					}
+				}
+			}
+			if (enemy != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO ai marshals: no AI country with command and a neighbour to make war on, not checked");
+			return;
+		}
+		defines.plan_ai_enabled = 1;
+		for (int day = 0; day < 12; ++day) {
+			im.force_tick_and_update();
+		}
+		defines.plan_ai_enabled = 0;
+		Front const* const front = !country->get_army_groups().empty() ? war_manager.find_front_of_group(*country, country->get_army_groups().front().id) : nullptr;
+		bool offensive = false;
+		for (PlanLine const& line : war_manager.get_plan_lines()) {
+			offensive |= line.country == country && line.type == PlanLine::type_t::OFFENSIVE;
+		}
+		r.check(!country->get_army_groups().empty() && front != nullptr && front->enemy == enemy && offensive,
+			"ai marshals: on, an AI country at war makes a group, a front against its enemy and an offensive", fmt::format("{} groups", country->get_army_groups().size()));
+		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		std::vector<std::uint32_t> group_ids;
+		for (ArmyGroup const& group : country->get_army_groups()) {
+			group_ids.push_back(group.id);
+		}
+		for (const std::uint32_t group_id : group_ids) {
+			delete_army_group(im, *country, group_id);
+		}
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -6461,6 +6518,7 @@ namespace {
 		test_encirclement(r, *im); // ticks days, a war of its own
 		test_fallback(r, *im); // ticks days, a war of its own
 		test_naval_invasion(r, *im); // ticks days, a war of its own
+		test_ai_marshals(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

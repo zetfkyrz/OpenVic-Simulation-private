@@ -79,7 +79,8 @@ namespace OpenVic {
 		//     go back (FALLBACK_ORG_THRESHOLD, FALLBACK_RETURN_ORG)
 		// 50: the naval invasion of the field marshals (P10): the divisions gather in the port, after NAVAL_PLAN_PREP_DAYS of the preparation they board the
 		//     fleets there, sail to the sea of the target and land with less of the penalty (NAVAL_PLAN_PENALTY_REDUCTION)
-		inline constexpr int SIMULATION_VERSION = 50;
+		// 51: the plans of the field marshals for the AI countries (P11), behind ov_war.PLAN_AI_ENABLED (0: off, the AI as before)
+		inline constexpr int SIMULATION_VERSION = 51;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

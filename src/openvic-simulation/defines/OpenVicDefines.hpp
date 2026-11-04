@@ -345,6 +345,9 @@ namespace OpenVic {
 	/* the fleets in the port, the fleets sail to the sea next to the target and land them. The organisation the landing takes is times */ \
 	/* (1 - the bonus of the planning x NAVAL_PLAN_PENALTY_REDUCTION) (a landing by hand: the whole of it) */ \
 	INT(NAVAL_PLAN_PREP_DAYS, naval_plan_prep_days, 10, 0, 365) \
+	/* The AI countries with mechanic:command use the field marshals (P11): 1 makes them, a group, a front and an offensive for every enemy */ \
+	/* they border; 0 (the default) keeps their earlier plan (docs/PENDING_PLANS.md) */ \
+	INT(PLAN_AI_ENABLED, plan_ai_enabled, 0, 0, 1) \
 	FIXED(NAVAL_PLAN_PENALTY_REDUCTION, naval_plan_penalty_reduction, fixed_point_t(2), 0, 100) \
 	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \

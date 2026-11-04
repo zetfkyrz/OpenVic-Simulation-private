@@ -6,12 +6,14 @@
 
 #include "War.hpp"
 
+#include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/military/ArmyGroup.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/military/Division.hpp"
+#include "openvic-simulation/military/MilitaryManager.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -1007,17 +1009,114 @@ void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front
 	}
 }
 
+void WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryInstance& country) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
+	// The enemies it borders, in the order of the countries
+	std::vector<CountryInstance const*> enemies;
+	for (CountryInstance const& enemy : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&enemy != &country && country.is_at_war_with(enemy) && !get_border_part(instance_manager, country, enemy, nullptr, nullptr).empty()) {
+			enemies.push_back(&enemy);
+		}
+	}
+	// A group for every enemy: the one whose front is against him, else a new one (with a free general as its marshal)
+	std::vector<std::uint32_t> group_ids;
+	for (CountryInstance const* const enemy : enemies) {
+		std::uint32_t group_id = 0;
+		for (Front const& front : fronts) {
+			if (front.country == &country && front.group_id != 0 && front.enemy == enemy) {
+				group_id = front.group_id;
+			}
+		}
+		if (group_id == 0) {
+			if (!create_army_group(country, palette_size)) {
+				break;
+			}
+			group_id = country.get_army_groups().back().id;
+			for (LeaderInstance const& leader : country.get_leaders<unit_branch_t::LAND>()) {
+				if (!leader.is_marshal() && leader.get_can_be_used() && leader.get_unit_instance_group() == nullptr
+					&& set_army_group_marshal(instance_manager, country, group_id, leader.unique_id)) {
+					break;
+				}
+			}
+			const std::uint32_t front_id = create_border_front(instance_manager, country, group_id, *enemy);
+			Front const* const front = get_front_by_id(front_id);
+			if (front != nullptr) {
+				// The offensive: the strip of the enemy land along the front and the provinces next to it
+				const memory::vector<FrontEdge> edges = front->edges;
+				std::uint32_t offensive_id = 0;
+				for (FrontEdge const& edge : edges) {
+					if (offensive_id == 0) {
+						offensive_id = create_plan_line(instance_manager, country, group_id, PlanLine::type_t::OFFENSIVE, *edge.other);
+					} else {
+						toggle_plan_line_province(instance_manager, country, offensive_id, *edge.other);
+					}
+				}
+				if (PlanLine const* const line = get_plan_line_by_id(offensive_id); line != nullptr) {
+					const memory::vector<ProvinceInstance*> strip = line->provinces;
+					for (ProvinceInstance* province : strip) {
+						for (ProvinceInstance* deeper : get_land_neighbours(*province, map_instance)) {
+							PlanLine const* const now = get_plan_line_by_id(offensive_id);
+							if (deeper->get_controller() == enemy && std::find(now->provinces.begin(), now->provinces.end(), deeper) == now->provinces.end()) {
+								toggle_plan_line_province(instance_manager, country, offensive_id, *deeper);
+							}
+						}
+					}
+				}
+			}
+		}
+		group_ids.push_back(group_id);
+	}
+	// The groups of the enemies that are gone (peace) go
+	std::vector<std::uint32_t> gone;
+	for (ArmyGroup const& group : country.get_army_groups()) {
+		if (std::find(group_ids.begin(), group_ids.end(), group.id) == group_ids.end()) {
+			gone.push_back(group.id);
+		}
+	}
+	for (const std::uint32_t group_id : gone) {
+		delete_army_group(instance_manager, country, group_id);
+	}
+	if (group_ids.empty()) {
+		return;
+	}
+	// The armies of the generals without a group are shared among the groups in turn; every group executes its plan
+	const std::uint32_t max_attached = get_marshal_max_attached(instance_manager, country);
+	std::size_t next = 0;
+	for (ArmyInstance& army : country.get_armies()) {
+		if (army.get_army_group_id() == 0 && army.get_parent_army_id() == 0 && army.get_transport_navy() == nullptr && !army.empty()) {
+			set_army_group(country, army, group_ids[next++ % group_ids.size()], max_attached);
+		}
+	}
+	for (const std::uint32_t group_id : group_ids) {
+		ArmyGroup const* const group = country.find_army_group(group_id);
+		if (group != nullptr && !group->plan_active) {
+			set_army_group_plan_active(instance_manager, country, group_id, true);
+		}
+	}
+}
+
 void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 	// Fronts are refreshed every 10 days
 	if (instance_manager.get_today().get_day() % 10 != 0) {
 		return;
 	}
 
+	// The field marshals of the AI countries (P11): only with PLAN_AI_ENABLED, their earlier plan otherwise
+	if (get_war_defines().plan_ai_enabled != 0) {
+		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && country.is_ai() && country.is_at_war() && !country.is_rebel_country() && country.has_army_command()) {
+				update_ai_marshals(instance_manager, country);
+			}
+		}
+	}
+
 	// Countries with the plan switched on, and every AI country that is at war (a minimal war AI: the same plan)
 	std::vector<CountryInstance*> planning_countries;
 	for (CountryInstance& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+		const bool marshals = get_war_defines().plan_ai_enabled != 0 && candidate.has_army_command();
 		if (auto_plan_countries.contains(&candidate)
-			|| (candidate.is_ai() && candidate.is_at_war() && !candidate.is_rebel_country())) {
+			|| (candidate.is_ai() && candidate.is_at_war() && !candidate.is_rebel_country() && !marshals)) {
 			planning_countries.push_back(&candidate);
 		}
 	}
