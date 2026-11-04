@@ -464,6 +464,33 @@ bool OpenVic::set_army_group_marshal(
 	return true;
 }
 
+fixed_point_t OpenVic::get_planning_max(InstanceManager const& instance_manager, CountryInstance const& country) {
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	fixed_point_t value = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.planning_max.of(fixed_point_t::_1);
+	if (cache.get_planning_max_add() != nullptr) {
+		value += country.get_modifier_effect_value(*cache.get_planning_max_add());
+	}
+	return std::max(value, fixed_point_t::_0);
+}
+
+fixed_point_t OpenVic::get_planning_gain(InstanceManager const& instance_manager, CountryInstance const& country) {
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	const fixed_point_t gain = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.planning_gain_per_day.of(fixed_point_t::_1);
+	fixed_point_t speed = fixed_point_t::_1;
+	if (cache.get_planning_speed_mult() != nullptr) {
+		speed += country.get_modifier_effect_value(*cache.get_planning_speed_mult());
+	}
+	return std::max(gain * speed, fixed_point_t::_0);
+}
+
+fixed_point_t OpenVic::get_army_planning(ArmyInstance const& army) {
+	if (army.get_army_group_id() == 0 || army.is_manual_order()) {
+		return fixed_point_t::_0;
+	}
+	ArmyGroup const* const group = army.get_country().find_army_group(army.get_army_group_id());
+	return group != nullptr ? group->planning : fixed_point_t::_0;
+}
+
 void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInstance& country) {
 	memory::vector<ArmyGroup>& groups = country.get_mutable_army_groups();
 	if (!country.has_army_command()) {
@@ -527,6 +554,24 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 			if (army.get_army_group_id() == group.id && army.get_parent_army_id() == 0 && ++attached > max_attached) {
 				army.set_army_group_id(0);
 			}
+		}
+	}
+	// The bonus of the planning: it grows while the marshal has an order and does not execute it, falls while he executes it, is gone without an order
+	WarManager const& war_manager = instance_manager.get_war_manager();
+	const fixed_point_t planning_max = get_planning_max(instance_manager, country);
+	const fixed_point_t planning_gain = get_planning_gain(instance_manager, country);
+	const fixed_point_t planning_decay = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.planning_decay_per_day.of(fixed_point_t::_1);
+	for (ArmyGroup& group : groups) {
+		bool has_order = war_manager.find_front_of_group(country, group.id) != nullptr;
+		for (PlanLine const& line : war_manager.get_plan_lines()) {
+			has_order |= line.country == &country && line.group_id == group.id;
+		}
+		if (!has_order || group.marshal_id == 0) {
+			group.planning = fixed_point_t::_0;
+		} else if (group.plan_active) {
+			group.planning = std::max(group.planning - planning_decay, fixed_point_t::_0);
+		} else {
+			group.planning = std::min(group.planning + planning_gain, planning_max);
 		}
 	}
 	// A division follows the army of its general (into a group, out of it); without that army it is an army of its own

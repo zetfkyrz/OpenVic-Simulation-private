@@ -63,6 +63,10 @@ namespace OpenVic {
 		[[nodiscard]] fixed_point_t effective_defence(OpenVicWarDefines const& defines, DivisionStats const& defender, fixed_point_t terrain_multiplier = fixed_point_t::_1);
 		// R: the breakthrough of the attacker over the effective defence of the defender (a defence of 0 gives a very big R)
 		[[nodiscard]] fixed_point_t breakthrough_ratio(fixed_point_t attacker_breakthrough, fixed_point_t defender_protection);
+		// The chance of the victory of the attackers, 0..1 (docs/WAR_ASSUMPTIONS.md, section 6): q = the days they last / the days until the defence leaves,
+		// q^steepness / (q^steepness + 1) (q at most 100; 1 when the defence leaves at once). The battle has no dice: the chance stands for what the estimate
+		// does not know (the reserves that come, the days after the first one). In fixed point: the same on every machine
+		[[nodiscard]] fixed_point_t win_chance(fixed_point_t attacker_days, fixed_point_t defence_days, std::int32_t steepness);
 		[[nodiscard]] fixed_point_t breakthrough_ratio(
 			OpenVicWarDefines const& defines, DivisionStats const& attacker, DivisionStats const& defender, fixed_point_t terrain_multiplier = fixed_point_t::_1
 		);

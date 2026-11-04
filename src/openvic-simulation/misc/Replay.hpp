@@ -68,7 +68,10 @@ namespace OpenVic {
 		//     next to it, the integrity of the front), a line of defence is a chain of neighbouring provinces (extend_plan_line)
 		// 44: the executor of the offensives of the field marshals (P5): the targets next to the line, best first, attacked by the free divisions next to
 		//     them by the estimate of the battle and the mode (careful R >= 2 with the victory, balanced R >= 1.5, aggressive always), the minimum holds
-		inline constexpr int SIMULATION_VERSION = 44;
+		// 45: the chance of the victory of a battle in its estimate (BATTLE_WIN_STEEPNESS), the modes of the offensive by it (80 %, 65 %, 50 %)
+		// 46: the bonus of the planning of the field marshals (P6): it grows while an order waits, falls while it is executed, multiplies the attack and the
+		//     breakthrough; the modifiers planning_max_add and planning_speed_mult; a manual order takes an army off every front and off the bonus
+		inline constexpr int SIMULATION_VERSION = 46;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

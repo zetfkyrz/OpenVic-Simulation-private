@@ -57,6 +57,8 @@ namespace OpenVic {
 		// How the divisions hold the line of a front: 0 firm (they keep their places, a changed line may get holes), 1 medium, 2 loose (they move more
 		// to keep the line even)
 		std::uint32_t integrity = 1;
+		// The bonus of the planning (P6, docs/WAR_ASSUMPTIONS.md, section 6): 0..PLANNING_MAX (with the modifier planning_max_add)
+		fixed_point_t planning;
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 	};
 
@@ -124,6 +126,11 @@ namespace OpenVic {
 		InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, unique_id_t leader_id
 	);
 
+	// The most the bonus of the planning of the country reaches (PLANNING_MAX plus the modifier planning_max_add) and how fast it grows a day
+	[[nodiscard]] fixed_point_t get_planning_max(InstanceManager const& instance_manager, CountryInstance const& country);
+	[[nodiscard]] fixed_point_t get_planning_gain(InstanceManager const& instance_manager, CountryInstance const& country);
+	// The bonus of the planning the army has in a battle: the one of its group, 0 out of a group or while it moves by a manual order
+	[[nodiscard]] fixed_point_t get_army_planning(ArmyInstance const& army);
 	// Every day: the countries without the technology have no groups and no marshals; the groups lose what does not exist any more
 	void update_army_groups(InstanceManager& instance_manager, CountryInstance& country);
 }

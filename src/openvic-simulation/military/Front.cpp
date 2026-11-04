@@ -1106,7 +1106,7 @@ void WarManager::join_group_armies(Front& front) {
 		}
 		return true;
 	});
-	for (ArmyInstance const& army : country.get_armies()) {
+	for (ArmyInstance& army : country.get_armies()) {
 		if (army.get_army_group_id() != front.group_id || army.get_transport_navy() != nullptr || army.empty()) {
 			continue;
 		}
@@ -1116,6 +1116,7 @@ void WarManager::join_group_armies(Front& front) {
 		if (army.is_moving()) {
 			continue;
 		}
+		army.set_manual_order(false);
 		for (Front& other : fronts) {
 			if (&other != &front) {
 				std::erase(other.army_ids, army.unique_id);
@@ -1275,13 +1276,8 @@ bool OpenVic::offensive_attacks(const std::uint32_t aggression, BattleEstimate c
 	if (!estimate.valid) {
 		return false;
 	}
-	if (aggression >= 3) {
-		return true;
-	}
-	if (aggression <= 1) {
-		return estimate.ratio >= defines.plan_r_careful && estimate.attacker_wins;
-	}
-	return estimate.ratio >= defines.plan_r_balanced;
+	Rate const& needed = aggression <= 1 ? defines.plan_win_careful : aggression == 2 ? defines.plan_win_balanced : defines.plan_win_aggressive;
+	return estimate.win_chance >= needed.of(fixed_point_t::_1);
 }
 
 void WarManager::execute_offensive(
@@ -1371,7 +1367,7 @@ void WarManager::execute_offensive(
 		}
 		return estimate_battle(instance_manager, attacking, target);
 	};
-	// The order of the targets: R (capped) and nearer to the line of the plan first; ties: the order of the pieces
+	// The order of the targets: the chance of the victory and nearer to the line of the plan first; ties: the order of the pieces
 	struct scored_t {
 		ProvinceInstance* target;
 		fixed_point_t score;
@@ -1385,7 +1381,7 @@ void WarManager::execute_offensive(
 		}
 		const auto found = steps.find(target);
 		const std::int32_t to_line = found != steps.end() ? found->second : static_cast<std::int32_t>(zone.size());
-		scored.push_back({ target, std::min(estimate.ratio, defines.plan_score_r_cap) + defines.plan_target_weight / (1 + to_line) });
+		scored.push_back({ target, estimate.win_chance * defines.plan_score_chance_weight + defines.plan_target_weight / (1 + to_line) });
 	}
 	std::stable_sort(scored.begin(), scored.end(), [](scored_t const& first, scored_t const& second) -> bool {
 		return first.score > second.score;

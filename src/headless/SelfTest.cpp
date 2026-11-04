@@ -5259,21 +5259,25 @@ namespace {
 
 	void test_offensive_modes(Results& r, InstanceManager& im) {
 		OpenVicWarDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().war;
-		const auto estimate = [](fixed_point_t ratio, bool wins) -> BattleEstimate {
+		const auto estimate = [](fixed_point_t chance) -> BattleEstimate {
 			BattleEstimate result;
 			result.valid = true;
-			result.ratio = ratio;
-			result.attacker_wins = wins;
+			result.win_chance = chance;
 			return result;
 		};
-		const fixed_point_t r_low = fixed_point_t(6) / 5;
-		const fixed_point_t r_mid = fixed_point_t(7) / 4;
-		const fixed_point_t r_high = fixed_point_t(11) / 5;
-		r.check(!offensive_attacks(1, estimate(r_mid, true), defines) && offensive_attacks(1, estimate(r_high, true), defines) && !offensive_attacks(1, estimate(r_high, false), defines),
-			"offensive: the careful mode attacks at R >= 2 with the victory only");
-		r.check(!offensive_attacks(2, estimate(r_low, true), defines) && offensive_attacks(2, estimate(r_mid, false), defines), "offensive: the balanced mode attacks at R >= 1.5");
-		r.check(offensive_attacks(3, estimate(r_low, false), defines) && offensive_attacks(3, estimate(fixed_point_t::_0, false), defines), "offensive: the aggressive mode always attacks");
+		const fixed_point_t c45 = fixed_point_t(45) / 100, c55 = fixed_point_t(55) / 100, c70 = fixed_point_t(70) / 100, c85 = fixed_point_t(85) / 100;
+		r.check(!offensive_attacks(1, estimate(c70), defines) && offensive_attacks(1, estimate(c85), defines), "offensive: the careful mode attacks at a chance of 80 % and more");
+		r.check(!offensive_attacks(2, estimate(c55), defines) && offensive_attacks(2, estimate(c70), defines), "offensive: the balanced mode attacks at 65 % and more");
+		r.check(!offensive_attacks(3, estimate(c45), defines) && offensive_attacks(3, estimate(c55), defines), "offensive: the aggressive mode attacks at 50 % and more");
 		r.check(!offensive_attacks(3, BattleEstimate {}, defines), "offensive: no attackers, no attack");
+		// The chance: 50 % when both sides last as long, 65 % at 1.23 times, 80 % at 1.59 times (the steepness 3), 1 when the defence leaves at once
+		const auto chance = [&](fixed_point_t q) -> double {
+			return static_cast<double>(battle_formulas::win_chance(q * 10, fixed_point_t(10), defines.battle_win_steepness));
+		};
+		r.check(std::abs(chance(fixed_point_t::_1) - 0.5) < 0.001 && std::abs(chance(fixed_point_t(123) / 100) - 0.65) < 0.01
+				&& std::abs(chance(fixed_point_t(159) / 100) - 0.80) < 0.01 && battle_formulas::win_chance(fixed_point_t(5), fixed_point_t::_0, 3) == fixed_point_t::_1,
+			"offensive: the chance of the victory is 50 % at equal days, 65 % at 1.23 times, 80 % at 1.59 times",
+			fmt::format("{:.3f} {:.3f} {:.3f}", chance(fixed_point_t::_1), chance(fixed_point_t(123) / 100), chance(fixed_point_t(159) / 100)));
 	}
 
 	void test_offensive_execution(Results& r, InstanceManager& im) {
@@ -5393,6 +5397,90 @@ namespace {
 			war_manager.end_war(im, war->id);
 		}
 		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
+	// ---- the bonus of the planning (P6, docs/WAR_ASSUMPTIONS.md, section 6): it grows while the order waits, falls while it is executed, is gone without
+	// an order; a division moving by a manual order has none; the modifiers exist
+
+	void test_planning(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		ModifierEffectCache const& cache = im.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+		r.check(cache.get_planning_max_add() != nullptr && cache.get_planning_speed_mult() != nullptr, "planning: the modifiers planning_max_add and planning_speed_mult exist");
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || !candidate.get_army_groups().empty() || candidate.get_armies().empty()) {
+				continue;
+			}
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate) {
+						neighbour = other;
+					}
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO planning: no country with a neighbour, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		bool has_marshal = false;
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(im, *country, group_id, leader.unique_id)) {
+				has_marshal = true;
+				break;
+			}
+		}
+		if (!has_marshal) {
+			fmt::println("TEST INFO planning: no free general for a field marshal, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		const auto planning = [&]() -> fixed_point_t {
+			return country->find_army_group(group_id)->planning;
+		};
+		const fixed_point_t max = get_planning_max(im, *country);
+		const fixed_point_t gain = get_planning_gain(im, *country);
+		update_army_groups(im, *country);
+		r.check(planning() == fixed_point_t::_0, "planning: no order, no bonus");
+		war_manager.create_border_front(im, *country, group_id, *neighbour);
+		for (int day = 0; day < 5; ++day) {
+			update_army_groups(im, *country);
+		}
+		r.check(planning() == gain * 5, "planning: the bonus grows by the gain a day while the order waits", fmt::format("{} after 5 days, the gain {}", planning(), gain));
+		for (int day = 0; day < 60; ++day) {
+			update_army_groups(im, *country);
+		}
+		r.check(planning() == max && max >= fixed_point_t(3) / 10, "planning: the bonus stops at its maximum (30 % and the modifier)", fmt::format("{} of {}", planning(), max));
+		// An army of the group has it, not while it moves by a manual order
+		ArmyInstance& army = country->get_armies()[0].get();
+		const std::uint32_t group_before = army.get_army_group_id();
+		set_army_group(*country, army, group_id, get_marshal_max_attached(im, *country));
+		r.check(get_army_planning(army) == max, "planning: the divisions of the marshal have the bonus in a battle");
+		army.set_manual_order(true);
+		r.check(get_army_planning(army) == fixed_point_t::_0, "planning: a division moving by a manual order has no bonus");
+		army.set_manual_order(false);
+		set_army_group(*country, army, group_before, get_marshal_max_attached(im, *country));
+		// Executed: it falls
+		set_army_group_plan_active(im, *country, group_id, true);
+		for (int day = 0; day < 5; ++day) {
+			update_army_groups(im, *country);
+		}
+		const fixed_point_t decay = im.definition_manager.get_define_manager().get_openvic_defines().war.planning_decay_per_day.of(fixed_point_t::_1);
+		r.check(planning() == max - decay * 5, "planning: the bonus falls by the decay a day while the plan is executed", fmt::format("{}", planning()));
+		war_manager.delete_group_lines(im, *country, group_id);
+		update_army_groups(im, *country);
+		r.check(planning() == fixed_point_t::_0, "planning: the order deleted, the bonus is gone");
 		delete_army_group(im, *country, group_id);
 	}
 
@@ -5934,6 +6022,7 @@ namespace {
 		test_order_moves(r, *im); // ticks days
 		test_offensive_modes(r, *im);
 		test_offensive_execution(r, *im); // ticks days, a war of its own
+		test_planning(r, *im);
 		game.end();
 
 		// ---- the defines hash does not change while playing

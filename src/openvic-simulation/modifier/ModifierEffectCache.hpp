@@ -71,6 +71,9 @@ namespace OpenVic {
 		ModifierEffect const* PROPERTY(max_rows, nullptr);
 		ModifierEffect const* PROPERTY(max_company_slots, nullptr);
 		ModifierEffect const* PROPERTY(attached_generals_add, nullptr);
+		/* The bonus of the planning of the field marshals (military/ArmyGroup.hpp) */
+		ModifierEffect const* PROPERTY(planning_max_add, nullptr);
+		ModifierEffect const* PROPERTY(planning_speed_mult, nullptr);
 		ModifierEffect const* PROPERTY(density_reduction, nullptr);
 		ModifierEffect const* PROPERTY(row_weight_shift, nullptr);
 		ModifierEffect const* PROPERTY(occupation_speed_pct, nullptr);

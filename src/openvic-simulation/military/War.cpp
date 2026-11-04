@@ -612,8 +612,8 @@ namespace {
 	const fixed_point_t terrain_defence = fixed_point_t::_1 + wd.terrain_defence_per_point.of(terrain != nullptr ? terrain->get_defence_bonus() : fixed_point_t::_0);
 	const fixed_point_t attacker_terrain = conditions.get_terrain(terrain_id) * conditions.night * conditions.weather;
 
-	// What every division of the front is worth today: the parts of its types with their buffs, its general, its supply
-	// TODO P6: the bonus of the planning multiplies the attack and the breakthrough
+	// What every division of the front is worth today: the parts of its types with their buffs, its general, its supply, the bonus of the planning of its
+	// field marshal (P6)
 	const auto evaluate = [&](BattleSideUnits& side, const bool attacking, std::vector<std::pair<RegimentType const*, std::uint32_t>> const& enemy_types,
 		const std::uint32_t enemy_regiments) {
 		for (BattleUnit& unit : side.units) {
@@ -631,8 +631,9 @@ namespace {
 				defence += part.defence * (fixed_point_t::_1 + buff.defense_mult);
 				breakthrough += part.breakthrough * (fixed_point_t::_1 + buff.breakthrough_mult);
 			}
-			unit.attack = attack * leader_attack * supply;
-			unit.breakthrough = breakthrough * leader_attack * supply;
+			const fixed_point_t planning = fixed_point_t::_1 + get_army_planning(*unit.army);
+			unit.attack = attack * leader_attack * supply * planning;
+			unit.breakthrough = breakthrough * leader_attack * supply * planning;
 			if (attacking) {
 				unit.protection = unit.breakthrough;
 				// Over a river: the army came from a province whose border with this one runs along a river
@@ -847,6 +848,7 @@ BattleEstimate WarManager::estimate_battle(
 		estimate.ratio = fixed_point_t(1000);
 		estimate.breakthrough_days = 0;
 		estimate.attacker_wins = true;
+		estimate.win_chance = fixed_point_t::_1;
 		return estimate;
 	}
 	OpenVicWarDefines const& wd = get_war_defines();
@@ -878,6 +880,7 @@ BattleEstimate WarManager::estimate_battle(
 	const fixed_point_t defence_ends = estimate.breakthrough_days > 0
 		? std::min(estimate.defender_days, fixed_point_t(static_cast<std::int32_t>(estimate.breakthrough_days))) : estimate.defender_days;
 	estimate.attacker_wins = defence_ends < estimate.attacker_days;
+	estimate.win_chance = battle_formulas::win_chance(estimate.attacker_days, defence_ends, wd.battle_win_steepness);
 	return estimate;
 }
 

@@ -82,6 +82,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			if (army.get_parent_army_id() != 0) {
 				hasher.add(army.get_parent_army_id());
 			}
+			if (army.is_manual_order()) {
+				hasher.add(0x6d616e75ULL);
+			}
 			hasher.add(army.get_supply_leader_bonus());
 			for (DivisionInstance const& division : army.get_divisions()) {
 				hasher.add(static_cast<std::uint64_t>(division.id));
@@ -117,6 +120,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army_group.plan_active ? 1 : 0);
 			hasher.add(static_cast<std::uint64_t>(army_group.aggression));
 			hasher.add(static_cast<std::uint64_t>(army_group.integrity));
+			hasher.add(army_group.planning);
 			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
 		}
 		for (Theatre const& theatre : country.get_theatres()) {

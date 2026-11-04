@@ -63,6 +63,18 @@ fixed_point_t battle_formulas::effective_defence(OpenVicWarDefines const& define
 	return defender_protection(defines, defender.defence, defender.fortification, terrain_multiplier);
 }
 
+fixed_point_t battle_formulas::win_chance(const fixed_point_t attacker_days, const fixed_point_t defence_days, const std::int32_t steepness) {
+	if (defence_days <= fixed_point_t::_0) {
+		return fixed_point_t::_1;
+	}
+	const fixed_point_t q = std::min(attacker_days / defence_days, fixed_point_t(100));
+	fixed_point_t power = fixed_point_t::_1;
+	for (std::int32_t step = 0; step < steepness; ++step) {
+		power *= q;
+	}
+	return power / (power + fixed_point_t::_1);
+}
+
 fixed_point_t battle_formulas::breakthrough_ratio(const fixed_point_t attacker_breakthrough, const fixed_point_t defender_protection) {
 	if (defender_protection <= fixed_point_t::_0) {
 		return attacker_breakthrough > fixed_point_t::_0 ? fixed_point_t(1000) : fixed_point_t::_0;

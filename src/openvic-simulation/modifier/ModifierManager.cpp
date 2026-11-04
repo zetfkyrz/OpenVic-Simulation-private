@@ -208,6 +208,13 @@ bool ModifierManager::setup_modifier_effects() {
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.attached_generals_add, "attached_generals_add", FORMAT_x1_0DP_POS, "ATTACHED_GENERALS_TECH"
 	);
+	// The bonus of the planning of the field marshals: adds to ov_war.PLANNING_MAX, makes it grow faster (military/ArmyGroup.hpp)
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.planning_max_add, "planning_max_add", FORMAT_x100_1DP_PC_POS, "PLANNING_MAX_TECH"
+	);
+	ret &= register_technology_modifier_effect(
+		modifier_effect_cache.planning_speed_mult, "planning_speed_mult", FORMAT_x100_1DP_PC_POS, "PLANNING_SPEED_TECH"
+	);
 	ret &= register_technology_modifier_effect(
 		modifier_effect_cache.density_reduction, "density_reduction", FORMAT_x100_1DP_PC_POS, "DENSITY_REDUCTION_TECH"
 	);

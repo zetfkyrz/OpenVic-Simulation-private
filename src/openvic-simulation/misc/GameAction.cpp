@@ -369,6 +369,23 @@ namespace {
 	}
 }
 
+namespace {
+	void take_off_fronts(InstanceManager& instance_manager, UnitInstanceGroup& group) {
+		std::vector<std::uint32_t> front_ids;
+		for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
+			if (front.country == &group.get_country()) {
+				front_ids.push_back(front.id);
+			}
+		}
+		for (const std::uint32_t front_id : front_ids) {
+			instance_manager.get_war_manager().set_front_army(instance_manager, group.get_country(), front_id, group.unique_id, false);
+		}
+		if (group.branch == unit_branch_t::LAND && static_cast<ArmyInstance&>(group).get_army_group_id() != 0) {
+			static_cast<ArmyInstance&>(group).set_manual_order(true);
+		}
+	}
+}
+
 bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& argument) const {
 	const auto [unique_id, province_index] = argument;
 
@@ -384,15 +401,9 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 		return false;
 	}
 
-	// A manual order takes the army off its front so that the front does not send it back
-	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
-		if (front.country == &group->get_country()) {
-			instance_manager.get_war_manager().set_front_army(
-				instance_manager, group->get_country(), front.id, unique_id, false
-			);
-			break;
-		}
-	}
+	// A manual order takes the army off its fronts so that they do not send it back; an army of a field marshal is off his order (and without the bonus of
+	// the planning) until it joins it again
+	take_off_fronts(instance_manager, *group);
 
 	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance());
 }
@@ -412,15 +423,9 @@ bool GameActionManager::VariantVisitor::operator() (queue_army_move_argument_t c
 		return false;
 	}
 
-	// An order given by hand takes the army off its front
-	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
-		if (front.country == &group->get_country()) {
-			instance_manager.get_war_manager().set_front_army(
-				instance_manager, group->get_country(), front.id, unique_id, false
-			);
-			break;
-		}
-	}
+	// A manual order takes the army off its fronts so that they do not send it back; an army of a field marshal is off his order (and without the bonus of
+	// the planning) until it joins it again
+	take_off_fronts(instance_manager, *group);
 
 	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance(), true);
 }

@@ -305,14 +305,25 @@ namespace OpenVic {
 	INT(FRONT_GROUP_SPLITS_PER_DAY, front_group_splits_per_day, 64, 0, 1000) \
 	/* A line of defence is a chain of neighbouring provinces: a gap is filled by the shortest way over our land, at most this many provinces */ \
 	INT(PLAN_LINE_MAX_STEPS, plan_line_max_steps, 40, 1, 500) \
+	/* The chance of the victory of a battle (the estimate): q = the days the attackers last / the days until the defence leaves (its organisation or */ \
+	/* the rule of R), the chance = q^BATTLE_WIN_STEEPNESS / (q^BATTLE_WIN_STEEPNESS + 1): 50 % at q = 1; with 3: 65 % at q = 1.23, 80 % at q = 1.59 */ \
+	INT(BATTLE_WIN_STEEPNESS, battle_win_steepness, 3, 1, 8) \
 	/* The executor of an offensive (P5): a target next to the line is attacked by the free divisions next to it (the support from several */ \
-	/* provinces) when the estimate of the battle gives R of PLAN_R_CAREFUL and the victory (the careful mode), R of PLAN_R_BALANCED (the */ \
-	/* balanced mode) or always (the aggressive mode). PLAN_MIN_HOLD divisions stay in every province of the front (not in the aggressive mode). */ \
-	/* The order of the targets: R (at most PLAN_SCORE_R_CAP) plus PLAN_TARGET_WEIGHT / (1 + the steps from the target to the line of the plan) */ \
-	FIXED(PLAN_R_CAREFUL, plan_r_careful, fixed_point_t(2), 0, 1000) \
-	FIXED(PLAN_R_BALANCED, plan_r_balanced, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 1000) \
+	/* provinces) when the chance of the victory is at least PLAN_WIN_CAREFUL (the careful mode), PLAN_WIN_BALANCED (the balanced one) or */ \
+	/* PLAN_WIN_AGGRESSIVE (the aggressive one). PLAN_MIN_HOLD divisions stay in every province of the front (not in the aggressive mode). */ \
+	/* The order of the targets: the chance times PLAN_SCORE_CHANCE_WEIGHT plus PLAN_TARGET_WEIGHT / (1 + the steps to the line of the plan) */ \
+	RATE(PLAN_WIN_CAREFUL, plan_win_careful, Rate(80, 100), 0, 1) \
+	RATE(PLAN_WIN_BALANCED, plan_win_balanced, Rate(65, 100), 0, 1) \
+	RATE(PLAN_WIN_AGGRESSIVE, plan_win_aggressive, Rate(50, 100), 0, 1) \
 	INT(PLAN_MIN_HOLD, plan_min_hold, 1, 0, 100) \
-	FIXED(PLAN_SCORE_R_CAP, plan_score_r_cap, fixed_point_t(10), 0, 1000) \
+	/* The bonus of the planning of a field marshal (P6): while he has an order and does not execute it the bonus grows by PLANNING_GAIN_PER_DAY a */ \
+	/* day (times 1 + the modifier planning_speed_mult) up to PLANNING_MAX (plus the modifier planning_max_add); while he executes it falls by */ \
+	/* PLANNING_DECAY_PER_DAY a day. It multiplies the attack and the breakthrough of his divisions in a battle (1 + the bonus), not of a division */ \
+	/* that moves by a manual order */ \
+	RATE(PLANNING_GAIN_PER_DAY, planning_gain_per_day, Rate(1, 100), 0, 1) \
+	RATE(PLANNING_MAX, planning_max, Rate(30, 100), 0, 10) \
+	RATE(PLANNING_DECAY_PER_DAY, planning_decay_per_day, Rate(2, 100), 0, 1) \
+	FIXED(PLAN_SCORE_CHANCE_WEIGHT, plan_score_chance_weight, fixed_point_t(10), 0, 1000) \
 	FIXED(PLAN_TARGET_WEIGHT, plan_target_weight, fixed_point_t(2), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \

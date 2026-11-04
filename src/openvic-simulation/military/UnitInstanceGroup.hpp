@@ -173,6 +173,8 @@ namespace OpenVic {
 		// A division split from the army of a general of a group (spread along the line of the order of the field marshal) stays his: the unique id of
 		// that army, 0 for the army of a general itself (docs/WAR_ASSUMPTIONS.md, section 6). The limit of the marshal counts only the armies with 0
 		unique_id_t PROPERTY_RW(parent_army_id, 0);
+		// The army of a group moves by a manual order (it is off the order of the marshal, without the bonus of the planning, until it joins it again)
+		bool PROPERTY_RW_CUSTOM_NAME(manual_order, is_manual_order, set_manual_order, false);
 		// The bonus of the general of the army and the field marshal of its group to its supply, worked out every day
 		fixed_point_t PROPERTY_RW(supply_leader_bonus, fixed_point_t::_0);
 

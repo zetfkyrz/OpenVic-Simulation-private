@@ -176,10 +176,12 @@ namespace OpenVic {
 		fixed_point_t attacker_days, defender_days; // the days until the first division of the front has no organisation left (1000: never)
 		std::uint32_t breakthrough_days = 0; // the breakthrough rule makes the defence retreat after these days (1 or BREAK_WEEK_DAYS), 0: not by R
 		bool attacker_wins = false; // the defence leaves first (by R or by the organisation)
+		// The chance of the victory of the attackers, 0..1 (battle_formulas::win_chance; 1 when nobody defends, 0 without attackers)
+		fixed_point_t win_chance;
 	};
 
-	// Does the executor of an offensive attack with the estimate (P5, docs/WAR_ASSUMPTIONS.md, section 6): aggression 1 (careful) at R >= PLAN_R_CAREFUL
-	// with the victory, 2 (balanced) at R >= PLAN_R_BALANCED, 3 (aggressive) always; never without attackers
+	// Does the executor of an offensive attack with the estimate (P5, docs/WAR_ASSUMPTIONS.md, section 6): the chance of the victory at least PLAN_WIN_CAREFUL
+	// (aggression 1, careful: 80 %), PLAN_WIN_BALANCED (2: 65 %), PLAN_WIN_AGGRESSIVE (3: 50 %); never without attackers
 	[[nodiscard]] bool offensive_attacks(std::uint32_t aggression, BattleEstimate const& estimate, OpenVicWarDefines const& defines);
 
 	// What the land battles of a country came to since the start of the game (the dumps and the comparison of the battle models; not in the state hash)
