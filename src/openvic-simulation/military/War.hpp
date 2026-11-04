@@ -268,6 +268,8 @@ namespace OpenVic {
 		// What the lines of the fronts of the field marshals depend on (the controllers of the land, the sides of the wars), seen the last time they were
 		// made (docs/WAR_ASSUMPTIONS.md, section 6, P3). Not a state of the game: a load replays the days from the start and gets the same
 		std::uint64_t border_signature = 0;
+		// The provinces reached from the sources of the supply, by the country at war (the last update of the encirclements; made again every day)
+		std::unordered_map<CountryInstance const*, std::vector<std::uint8_t>> supply_reach;
 		// Countries whose fronts and army assignments are managed automatically
 		std::unordered_set<CountryInstance const*> auto_plan_countries;
 
@@ -288,6 +290,8 @@ namespace OpenVic {
 		// The breakthrough (P7): its divisions gather at the start of the way; while the plan is executed they take its next province when the chance of
 		// the victory reaches the aggressive threshold, and stay at its end
 		void execute_breakthrough(InstanceManager& instance_manager, PlanLine& line, bool executed);
+		// A division of a field marshal that is cut off goes to the nearest province reached from a source of the supply (P8)
+		void break_out_encircled(InstanceManager& instance_manager, ArmyInstance& army);
 		void execute_offensive(
 			InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
 			std::uint32_t aggression
@@ -308,6 +312,9 @@ namespace OpenVic {
 		War* find_war(std::uint32_t id);
 
 		void update_combat(InstanceManager& instance_manager);
+		// The encirclements (P8, docs/WAR_ASSUMPTIONS.md, section 6): for every country at war the land reached from its sources of the supply over the land
+		// of its friends; its armies elsewhere are cut off. In the same tick as the sieges (an instant occupation closes a pocket at once)
+		void update_encirclements(InstanceManager& instance_manager);
 		void update_sieges(InstanceManager& instance_manager);
 		void update_scores(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
@@ -349,6 +356,8 @@ namespace OpenVic {
 			return it != battle_stats.end() ? it->second : BattleStats {};
 		}
 
+		// Is the province reached from a source of the supply of the country (the last update of the encirclements; true for a country at peace)
+		[[nodiscard]] bool is_supply_reached(CountryInstance const& country, ProvinceInstance const& province) const;
 		bool is_blockaded(ProvinceInstance const& port) const {
 			return blockaded_ports.contains(&port);
 		}

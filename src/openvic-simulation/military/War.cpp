@@ -1,5 +1,7 @@
 #include "War.hpp"
 
+#include "openvic-simulation/military/SupplyTerritory.hpp"
+
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
@@ -1341,14 +1343,130 @@ void WarManager::update_scores(InstanceManager& instance_manager) {
 	}
 }
 
+bool WarManager::is_supply_reached(CountryInstance const& country, ProvinceInstance const& province) const {
+	const auto it = supply_reach.find(&country);
+	if (it == supply_reach.end()) {
+		return true;
+	}
+	const std::size_t index = type_safe::get(province.index);
+	return index < it->second.size() && it->second[index] != 0;
+}
+
+void WarManager::update_encirclements(InstanceManager& instance_manager) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	CountryInstanceManager const& countries = instance_manager.get_country_instance_manager();
+	const std::size_t count = map_instance.get_province_instances().size();
+	supply_reach.clear();
+	std::deque<ProvinceInstance const*> queue;
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.has_armies()) {
+			continue;
+		}
+		if (!country.is_at_war()) {
+			for (ArmyInstance& army : country.get_armies()) {
+				army.set_encircled(false);
+				army.set_encircled_days(0);
+			}
+			continue;
+		}
+		const SupplyFriends friends = SupplyFriends::build(country, countries, *this);
+		std::vector<std::uint8_t>& reach = supply_reach[&country];
+		reach.assign(count, 0);
+		queue.clear();
+		// The sources: the capital (held by a friend) and the ports with a naval base the country holds that no enemy blockades
+		const auto add_source = [&](ProvinceInstance const& province) {
+			const std::size_t index = type_safe::get(province.index);
+			if (reach[index] == 0) {
+				reach[index] = 1;
+				queue.push_back(&province);
+			}
+		};
+		if (country.get_capital() != nullptr && is_supply_held(*country.get_capital(), friends)) {
+			add_source(*country.get_capital());
+		}
+		for (ProvinceInstance* province : country.get_owned_provinces()) {
+			if (province->get_controller() != &country || !province->province_definition.has_port() || is_blockaded(*province)) {
+				continue;
+			}
+			for (BuildingInstance const& building : province->get_buildings()) {
+				if (building.building_type.get_identifier() == "naval_base" && type_safe::get(building.get_level()) > 0) {
+					add_source(*province);
+					break;
+				}
+			}
+		}
+		// A country without any source (its capital and its ports are lost) is not cut off as a whole: its armies keep what they have
+		if (queue.empty()) {
+			supply_reach.erase(&country);
+			for (ArmyInstance& army : country.get_armies()) {
+				army.set_encircled(false);
+			}
+			continue;
+		}
+		// Over land and over the straits (Constantinople and Anatolia, Denmark and Scania...)
+		const auto connects = [](ProvinceDefinition::adjacency_t const& adjacency) -> bool {
+			return !adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
+				|| adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT);
+		};
+		while (!queue.empty()) {
+			ProvinceInstance const* const current = queue.front();
+			queue.pop_front();
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				if (!connects(adjacency)) {
+					continue;
+				}
+				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				const std::size_t index = type_safe::get(next.index);
+				if (reach[index] == 0 && is_supply_held(next, friends)) {
+					reach[index] = 1;
+					queue.push_back(&next);
+				}
+			}
+		}
+		// An army is reached in its province, or next to it (it stands on the land of the enemy at the edge of ours: the last step leads to it)
+		for (ArmyInstance& army : country.get_armies()) {
+			ProvinceInstance const& at = army.get_location();
+			bool reached = army.get_transport_navy() != nullptr || at.province_definition.is_water() || reach[type_safe::get(at.index)] != 0;
+			if (!reached && !is_supply_held(at, friends)) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : at.province_definition.get_adjacencies()) {
+					if (connects(adjacency) && reach[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)] != 0) {
+						reached = true;
+						break;
+					}
+				}
+			}
+			army.set_encircled(!reached);
+			if (reached) {
+				army.set_encircled_days(0);
+			}
+		}
+	}
+}
+
 void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& wd = get_war_defines();
 	const fixed_point_t organisation_recovery = wd.organisation_recovery.fixed();
 	const fixed_point_t strength_recovery = wd.strength_recovery.fixed();
+	std::vector<ArmyInstance*> surrendered;
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
 		for (ArmyInstance& army : province.get_armies()) {
 			if (fought_today.contains(army.unique_id)) {
+				continue;
+			}
+			// Cut off: no new men, the organisation falls; without organisation for ENCIRCLED_SURRENDER_DAYS days the army gives itself up
+			if (army.is_encircled()) {
+				fixed_point_t organisation = fixed_point_t::_0;
+				for (RegimentInstance& regiment : army.get_regiment_instances()) {
+					regiment.take_damage(std::min(regiment.get_organisation(), wd.encircled_org_loss_per_day.of(regiment.get_max_organisation())), fixed_point_t::_0);
+					organisation += regiment.get_organisation();
+				}
+				if (organisation <= fixed_point_t::_0) {
+					army.set_encircled_days(army.get_encircled_days() + 1);
+					if (army.get_encircled_days() >= static_cast<std::uint32_t>(wd.encircled_surrender_days)) {
+						surrendered.push_back(&army);
+					}
+				}
 				continue;
 			}
 
@@ -1370,6 +1488,10 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 				);
 			}
 		}
+	}
+	for (ArmyInstance* army : surrendered) {
+		instance_manager.get_notification_log().add(instance_manager.get_today(), &army->get_country(), "army_surrendered", army->get_name());
+		instance_manager.get_unit_instance_manager().destroy_group(*army);
 	}
 }
 
@@ -1790,6 +1912,7 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_blockades(instance_manager);
 
 	update_sieges(instance_manager);
+	update_encirclements(instance_manager);
 	update_scores(instance_manager);
 	update_army_recovery(instance_manager);
 	update_attrition(instance_manager);

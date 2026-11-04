@@ -175,6 +175,9 @@ namespace OpenVic {
 		unique_id_t PROPERTY_RW(parent_army_id, 0);
 		// The army of a group moves by a manual order (it is off the order of the marshal, without the bonus of the planning, until it joins it again)
 		bool PROPERTY_RW_CUSTOM_NAME(manual_order, is_manual_order, set_manual_order, false);
+		// The army is cut off from every source of the supply (P8, WarManager::update_encirclements) and how many days it has had no organisation in it
+		bool PROPERTY_RW_CUSTOM_NAME(encircled, is_encircled, set_encircled, false);
+		std::uint32_t PROPERTY_RW(encircled_days, 0);
 		// The bonus of the general of the army and the field marshal of its group to its supply, worked out every day
 		fixed_point_t PROPERTY_RW(supply_leader_bonus, fixed_point_t::_0);
 

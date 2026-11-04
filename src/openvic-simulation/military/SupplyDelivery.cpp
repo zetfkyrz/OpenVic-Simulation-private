@@ -210,7 +210,8 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 					std::clamp(share * third_factor, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
 				);
 				army.set_supply_send_multiplier(result.send_multiplier);
-				army.set_supply_delivery(result.delivery);
+				// Cut off from every source of the supply (P8): nothing arrives
+				army.set_supply_delivery(army.is_encircled() ? fixed_point_t::_0 : result.delivery);
 			}
 		}
 

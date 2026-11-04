@@ -1160,9 +1160,9 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 		if (group == nullptr || group->branch != unit_branch_t::LAND || &group->get_country() != &country || group->empty()) {
 			continue;
 		}
-		// A division that stands on the land of an enemy (it won the battle there) stays to take it
+		// A division that stands on the land of an enemy (it won the battle there) stays to take it; one that is cut off breaks out by itself
 		CountryInstance const* const here = group->get_location().get_controller();
-		if (!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) {
+		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || static_cast<ArmyInstance*>(group)->is_encircled()) {
 			continue;
 		}
 		armies.push_back(static_cast<ArmyInstance*>(group));
@@ -1392,8 +1392,41 @@ void WarManager::execute_offensive(
 		ProvinceInstance* target;
 		fixed_point_t score;
 	};
+	// The flank a target opens (the share of its land neighbours the enemy holds) and whether it closes a pocket (an enemy province next to it with no
+	// other way to the land of its side)
+	const auto enemy_held = [&](ProvinceInstance const& province) -> bool {
+		CountryInstance const* const controller = province.get_controller();
+		return controller != nullptr && controller != &country && country.is_at_war_with(*controller);
+	};
+	const auto flank_of = [&](ProvinceInstance const& target) -> fixed_point_t {
+		std::int32_t land = 0, enemy = 0;
+		for (ProvinceInstance* neighbour : get_land_neighbours(target, map_instance)) {
+			land++;
+			enemy += enemy_held(*neighbour) && !in(zone, neighbour);
+		}
+		return land > 0 ? fixed_point_t(enemy) / land : fixed_point_t::_0;
+	};
+	const auto closes_pocket = [&](ProvinceInstance const& target) -> bool {
+		for (ProvinceInstance* neighbour : get_land_neighbours(target, map_instance)) {
+			if (!enemy_held(*neighbour) || neighbour->get_armies().empty()) {
+				continue;
+			}
+			std::int32_t ways = 0;
+			for (ProvinceInstance* further : get_land_neighbours(*neighbour, map_instance)) {
+				ways += further != &target && enemy_held(*further);
+			}
+			if (ways == 0) {
+				return true;
+			}
+		}
+		return false;
+	};
 	std::vector<scored_t> scored;
 	for (ProvinceInstance* target : candidates) {
+		// The careful and the balanced mode do not open a wide flank
+		if (aggression <= 2 && flank_of(*target) > defines.flank_exposure_max.of(fixed_point_t::_1)) {
+			continue;
+		}
 		std::vector<std::int32_t> left = standing;
 		const BattleEstimate estimate = estimate_with(*target, attackers_of(target, left));
 		if (!estimate.valid) {
@@ -1401,7 +1434,10 @@ void WarManager::execute_offensive(
 		}
 		const auto found = steps.find(target);
 		const std::int32_t to_line = found != steps.end() ? found->second : static_cast<std::int32_t>(zone.size());
-		scored.push_back({ target, estimate.win_chance * defines.plan_score_chance_weight + defines.plan_target_weight / (1 + to_line) });
+		scored.push_back({
+			target, estimate.win_chance * defines.plan_score_chance_weight + defines.plan_target_weight / (1 + to_line)
+				+ (closes_pocket(*target) ? defines.plan_pocket_weight : fixed_point_t::_0)
+		});
 	}
 	std::stable_sort(scored.begin(), scored.end(), [](scored_t const& first, scored_t const& second) -> bool {
 		return first.score > second.score;
@@ -1544,6 +1580,36 @@ void WarManager::execute_breakthrough(InstanceManager& instance_manager, PlanLin
 	}
 }
 
+void WarManager::break_out_encircled(InstanceManager& instance_manager, ArmyInstance& army) {
+	if (army.is_moving() || army.is_in_combat() || army.empty()) {
+		return;
+	}
+	// The nearest province (in steps over land) reached from a source of the supply; ties: the order of the neighbours
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	CountryInstance const& country = army.get_country();
+	std::unordered_map<ProvinceInstance const*, ProvinceInstance*> seen;
+	std::deque<ProvinceInstance*> queue;
+	seen.emplace(&army.get_location(), nullptr);
+	queue.push_back(&army.get_location());
+	ProvinceInstance* found = nullptr;
+	while (!queue.empty() && found == nullptr && seen.size() < 200) {
+		ProvinceInstance* const current = queue.front();
+		queue.pop_front();
+		for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+			if (seen.emplace(neighbour, current).second) {
+				if (is_supply_reached(country, *neighbour)) {
+					found = neighbour;
+					break;
+				}
+				queue.push_back(neighbour);
+			}
+		}
+	}
+	if (found != nullptr) {
+		instance_manager.get_unit_instance_manager().order_move(army, *found, map_instance);
+	}
+}
+
 void WarManager::update_fronts(InstanceManager& instance_manager) {
 	std::erase_if(fronts, [](Front const& front) -> bool {
 		return !front.country->exists();
@@ -1551,6 +1617,17 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 
 	update_plan_lines(instance_manager);
 	update_front_lines(instance_manager);
+	// The divisions of the field marshals that are cut off try to break out to the land reached from the supply (P8)
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_army_groups().empty() || !country.is_at_war()) {
+			continue;
+		}
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.get_army_group_id() != 0 && army.is_encircled()) {
+				break_out_encircled(instance_manager, army);
+			}
+		}
+	}
 	// The breakthroughs take their divisions first (the fronts get the others)
 	for (PlanLine& line : plan_lines) {
 		if (line.type == PlanLine::type_t::BREAKTHROUGH && line.country->exists()) {

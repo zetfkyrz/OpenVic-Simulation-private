@@ -1818,6 +1818,24 @@ static void run_front_dump(InstanceManager& instance_manager) {
 			"FRONT_HELD day={} {}_holds_of_{}={} {}_holds_of_{}={}", day, side_a->get_identifier(), side_b->get_identifier(), count_held(*side_b, *side_a),
 			side_b->get_identifier(), side_a->get_identifier(), count_held(*side_a, *side_b)
 		);
+		// The encirclements (P8): the armies cut off from the supply, their divisions and the days without organisation
+		for (CountryInstance* const side : { side_a, side_b }) {
+			std::size_t cut_off = 0, divisions = 0;
+			std::uint32_t longest = 0;
+			std::string where;
+			for (ArmyInstance const& army : side->get_armies()) {
+				if (army.is_encircled()) {
+					cut_off++;
+					divisions += army.get_divisions().size();
+					longest = std::max(longest, army.get_encircled_days());
+					where += fmt::format("{}{}", where.empty() ? "" : ",", army.get_location().get_identifier());
+				}
+			}
+			fmt::println(
+				"ENCIRCLEMENT day={} country={} armies={} divisions={} days_without_organisation={} provinces={}", day, side->get_identifier(), cut_off, divisions,
+				longest, where.empty() ? "-" : where
+			);
+		}
 	};
 	print_state(0);
 	for (std::size_t day = 1; day <= days; ++day) {

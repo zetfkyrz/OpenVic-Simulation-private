@@ -3039,9 +3039,11 @@ namespace {
 					raider->set_supply_priority(supply_priority_t::MAXIMUM);
 					raider->set_location(*target);
 					play(im, 1);
-					r.check(raider->get_supply_ratio() > standard_ratio && raider->get_supply_send_multiplier() > fixed_point_t::_1,
-						"supply on enemy land: the maximum priority sends more and what arrives is more",
-						fmt::format("{} -> {} (sent x{})", standard_ratio, raider->get_supply_ratio(), raider->get_supply_send_multiplier()));
+					// (an army this far on the land of the enemy is cut off from the supply, P8: the priority sends more, nothing arrives)
+					r.check(raider->get_supply_send_multiplier() > fixed_point_t::_1
+							&& (raider->is_encircled() ? raider->get_supply_ratio() == fixed_point_t::_0 : raider->get_supply_ratio() > standard_ratio),
+						"supply on enemy land: the maximum priority sends more (what arrives is more, nothing when the army is cut off)",
+						fmt::format("{} -> {} (sent x{}, cut off {})", standard_ratio, raider->get_supply_ratio(), raider->get_supply_send_multiplier(), raider->is_encircled()));
 					r.check(raider->get_supply_ratio() <= fixed_point_t::_1, "supply on enemy land: what arrives never exceeds the need");
 					(void)open_defines;
 				}
@@ -5580,6 +5582,116 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the encirclements (P8, docs/WAR_ASSUMPTIONS.md, section 6): an army deep in the land of its enemy is cut off, gets no supply, loses its
+	// organisation and gives itself up; at peace nobody is cut off
+
+	void test_encirclement(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		OpenVicWarDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		// Two neighbours at peace; an army of the second one and a province of the first one whose land neighbours are all its own (deep in its land)
+		CountryInstance* country = nullptr;
+		CountryInstance* enemy = nullptr;
+		ProvinceInstance* deep = nullptr;
+		const auto interior = [&](CountryInstance const& owner, ProvinceInstance const& province) -> bool {
+			if (province.get_controller() != &owner || province.province_definition.is_water() || &province == owner.get_capital() || !province.get_armies().empty()) {
+				return false;
+			}
+			std::int32_t land = 0;
+			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !next.province_definition.is_water()) {
+					land++;
+					if (next.get_controller() != &owner) {
+						return false;
+					}
+					for (ProvinceDefinition::adjacency_t const& second : next.province_definition.get_adjacencies()) {
+						ProvinceInstance const& far = map_instance.get_province_instance_by_definition(second.get_to());
+						if (second.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !far.province_definition.is_water() && far.get_controller() != &owner) {
+							return false;
+						}
+					}
+				}
+			}
+			return land >= 2;
+		};
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.is_at_war()) {
+				continue;
+			}
+			ProvinceInstance* found_deep = nullptr;
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				if (interior(candidate, *province)) {
+					found_deep = province;
+					break;
+				}
+			}
+			if (found_deep == nullptr) {
+				continue;
+			}
+			// A neighbour with an army that can declare the war (no truce)
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (enemy == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate) && other->has_armies()
+						&& war_manager.declare_war(im, *other, candidate)) {
+						enemy = other;
+					}
+				}
+			}
+			if (enemy != nullptr) {
+				country = &candidate;
+				deep = found_deep;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO encirclement: no country with a province deep in its land and a neighbour that can make war on it, not checked");
+			return;
+		}
+		ArmyInstance* army = nullptr;
+		for (ArmyInstance& candidate : enemy->get_armies()) {
+			if (candidate.get_transport_navy() == nullptr && !candidate.is_in_combat()) {
+				army = &candidate;
+				break;
+			}
+		}
+		if (army == nullptr) {
+			fmt::println("TEST INFO encirclement: no army, not checked");
+			return;
+		}
+		const unique_id_t army_id = army->unique_id;
+		army->clear_path();
+		army->set_location(*deep);
+		im.force_tick_and_update();
+		army = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id));
+		r.check(army != nullptr && army->is_encircled(), "encirclement: an army deep in the land of its enemy is cut off from the supply");
+		if (army != nullptr) {
+			im.force_tick_and_update();
+			r.check(army->get_supply_delivery() == fixed_point_t::_0, "encirclement: nothing of the supply arrives to it");
+			// Without organisation it gives itself up after ENCIRCLED_SURRENDER_DAYS days
+			for (RegimentInstance& regiment : army->get_regiment_instances()) {
+				regiment.take_damage(regiment.get_organisation(), fixed_point_t::_0);
+			}
+			bool gone = false;
+			for (std::int32_t day = 0; day <= defines.encircled_surrender_days + 1 && !gone; ++day) {
+				im.force_tick_and_update();
+				gone = im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id) == nullptr;
+			}
+			r.check(gone, "encirclement: without organisation the army cut off gives itself up");
+		}
+		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		im.force_tick_and_update();
+		bool none_cut_off = true;
+		for (ArmyInstance const& other : enemy->get_armies()) {
+			none_cut_off &= !other.is_encircled() || enemy->is_at_war();
+		}
+		r.check(none_cut_off, "encirclement: at peace nobody is cut off");
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -6120,6 +6232,7 @@ namespace {
 		test_offensive_execution(r, *im); // ticks days, a war of its own
 		test_planning(r, *im);
 		test_breakthrough(r, *im); // ticks a day
+		test_encirclement(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

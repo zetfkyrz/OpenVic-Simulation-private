@@ -73,7 +73,9 @@ namespace OpenVic {
 		//     breakthrough; the modifiers planning_max_add and planning_speed_mult; a manual order takes an army off every front and off the bonus
 		// 47: the breakthrough of the field marshals (P7): a way of neighbouring provinces into the enemy land for the strongest third of the divisions, at the
 		//     aggressive threshold; a new offensive no longer deletes the other lines of the front
-		inline constexpr int SIMULATION_VERSION = 47;
+		// 48: the encirclements (P8): the land reached from the capital and the ports with a naval base over the land of the friends, the armies cut off get
+		//     no supply and no new men, lose organisation and give themselves up; the executor keeps the flank and closes the pockets
+		inline constexpr int SIMULATION_VERSION = 48;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

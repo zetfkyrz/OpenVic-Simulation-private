@@ -328,6 +328,15 @@ namespace OpenVic {
 	RATE(PLANNING_DECAY_PER_DAY, planning_decay_per_day, Rate(2, 100), 0, 1) \
 	FIXED(PLAN_SCORE_CHANCE_WEIGHT, plan_score_chance_weight, fixed_point_t(10), 0, 1000) \
 	FIXED(PLAN_TARGET_WEIGHT, plan_target_weight, fixed_point_t(2), 0, 1000) \
+	/* The encirclements (P8): an army of a country at war is cut off when no way over the land of the country and its friends leads to it from */ \
+	/* a source of the supply (the capital, a port with a naval base that the country holds and no enemy blockades). It gets no supply and no */ \
+	/* new men, loses ENCIRCLED_ORG_LOSS_PER_DAY of its organisation a day, and gives itself up after ENCIRCLED_SURRENDER_DAYS days without it */ \
+	RATE(ENCIRCLED_ORG_LOSS_PER_DAY, encircled_org_loss_per_day, Rate(5, 100), 0, 1) \
+	INT(ENCIRCLED_SURRENDER_DAYS, encircled_surrender_days, 7, 1, 365) \
+	/* The executor in the careful and the balanced mode does not take a target whose land neighbours are held by the enemy for more than this */ \
+	/* share (the flank it would open); a target that closes a pocket (an enemy province next to it has no other way to its land) gets this more */ \
+	RATE(FLANK_EXPOSURE_MAX, flank_exposure_max, Rate(60, 100), 0, 1) \
+	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
 	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \
