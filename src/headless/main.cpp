@@ -1717,10 +1717,24 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				}
 			}
 		}
+		// The line of the offensive two provinces deep: the land of the enemy next to the strip as well
+		if (PlanLine const* const line = war_manager.get_plan_line_by_id(offensive_id); line != nullptr) {
+			const memory::vector<ProvinceInstance*> strip = line->provinces;
+			for (ProvinceInstance* province : strip) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					ProvinceInstance& deeper = instance_manager.get_map_instance().get_province_instance_by_definition(adjacency.get_to());
+					PlanLine const* const now = war_manager.get_plan_line_by_id(offensive_id);
+					if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && deeper.get_controller() == side_b
+						&& std::find(now->provinces.begin(), now->provinces.end(), &deeper) == now->provinces.end()) {
+						war_manager.toggle_plan_line_province(instance_manager, *side_a, offensive_id, deeper);
+					}
+				}
+			}
+		}
 		const bool started = set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, true);
 		fmt::println(
-			"FRONT_GROUP setup group={} marshal={} front={} offensive={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0, front_id,
-			offensive_id, started
+			"FRONT_GROUP setup group={} marshal={} front={} offensive={} targets={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0,
+			front_id, offensive_id, war_manager.get_plan_line_by_id(offensive_id) != nullptr ? war_manager.get_plan_line_by_id(offensive_id)->provinces.size() : 0, started
 		);
 	}
 	const std::size_t stop_day = std::getenv("OV_FRONT_STOP") != nullptr ? static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_STOP")))) : 0;

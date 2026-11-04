@@ -5254,6 +5254,148 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the executor of an offensive (P5, docs/WAR_ASSUMPTIONS.md, section 6): the thresholds of the modes; a war with a plan takes no land beyond its
+	// zone, the divisions do not attack while the plan is not executed
+
+	void test_offensive_modes(Results& r, InstanceManager& im) {
+		OpenVicWarDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		const auto estimate = [](fixed_point_t ratio, bool wins) -> BattleEstimate {
+			BattleEstimate result;
+			result.valid = true;
+			result.ratio = ratio;
+			result.attacker_wins = wins;
+			return result;
+		};
+		const fixed_point_t r_low = fixed_point_t(6) / 5;
+		const fixed_point_t r_mid = fixed_point_t(7) / 4;
+		const fixed_point_t r_high = fixed_point_t(11) / 5;
+		r.check(!offensive_attacks(1, estimate(r_mid, true), defines) && offensive_attacks(1, estimate(r_high, true), defines) && !offensive_attacks(1, estimate(r_high, false), defines),
+			"offensive: the careful mode attacks at R >= 2 with the victory only");
+		r.check(!offensive_attacks(2, estimate(r_low, true), defines) && offensive_attacks(2, estimate(r_mid, false), defines), "offensive: the balanced mode attacks at R >= 1.5");
+		r.check(offensive_attacks(3, estimate(r_low, false), defines) && offensive_attacks(3, estimate(fixed_point_t::_0, false), defines), "offensive: the aggressive mode always attacks");
+		r.check(!offensive_attacks(3, BattleEstimate {}, defines), "offensive: no attackers, no attack");
+	}
+
+	void test_offensive_execution(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		// A country with mechanic:command at peace with an army next to a neighbour at peace
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			for (ArmyInstance& army : candidate.get_armies()) {
+				if (army.get_transport_navy() != nullptr || army.is_moving() || army.get_location().get_controller() != &candidate || army.get_divisions().size() < 2) {
+					continue;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : army.get_location().province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate)) {
+						neighbour = other;
+					}
+				}
+				if (neighbour != nullptr) {
+					break;
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO offensive execution: no country with an army next to a neighbour at peace, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t max_attached = get_marshal_max_attached(im, *country);
+		for (ArmyInstance& army : country->get_armies()) {
+			if (army.get_transport_navy() == nullptr) {
+				set_army_group(*country, army, group_id, max_attached);
+			}
+		}
+		const bool declared = war_manager.declare_war(im, *country, *neighbour);
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		Front const* front = war_manager.get_front_by_id(front_id);
+		if (!declared || front == nullptr || front->edges.empty()) {
+			fmt::println("TEST INFO offensive execution: no war or no front, not checked");
+			return;
+		}
+		ProvinceInstance* const target = front->edges.front().other;
+		const std::uint32_t offensive_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *target);
+		const memory::vector<ProvinceInstance*> zone = war_manager.get_offensive_zone(im, *war_manager.get_plan_line_by_id(offensive_id));
+		std::vector<ProvinceInstance const*> ours_before;
+		for (ProvinceInstance const& province : map_instance.get_province_instances()) {
+			if (province.get_controller() == country) {
+				ours_before.push_back(&province);
+			}
+		}
+		const auto gained_outside_zone = [&]() -> std::size_t {
+			std::size_t outside = 0;
+			for (ProvinceInstance const& province : map_instance.get_province_instances()) {
+				if (province.get_controller() == country && std::find(ours_before.begin(), ours_before.end(), &province) == ours_before.end()
+					&& std::find(zone.begin(), zone.end(), &province) == zone.end()) {
+					outside++;
+				}
+			}
+			return outside;
+		};
+		// Not executed: the divisions stand on the line, nothing is taken
+		for (int day = 0; day < 15; ++day) {
+			im.force_tick_and_update();
+		}
+		r.check(target->get_controller() != country, "offensive: while the plan is not executed nothing of the zone is attacked");
+		// Executed, aggressive: the target is taken, nothing beyond the zone (the execution needs a field marshal)
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(im, *country, group_id, leader.unique_id)) {
+				break;
+			}
+		}
+		if (!set_army_group_plan_active(im, *country, group_id, true)) {
+			fmt::println("TEST INFO offensive execution: no field marshal for the execution, not checked");
+			war_manager.delete_group_lines(im, *country, group_id);
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		set_army_group_modes(*country, group_id, 3, 1);
+		bool attacked = false;
+		for (int day = 0; day < 45 && target->get_controller() != country; ++day) {
+			im.force_tick_and_update();
+			for (ArmyInstance const& army : country->get_armies()) {
+				attacked |= army.get_army_group_id() == group_id && (&army.get_location() == target
+					|| (army.is_moving() && &static_cast<ProvinceInstance const&>(army.get_path().back()) == target));
+			}
+		}
+		std::size_t next_to_target = 0;
+		front = war_manager.get_front_by_id(front_id);
+		if (front != nullptr) {
+			for (ArmyInstance const& army : country->get_armies()) {
+				for (FrontEdge const& edge : front->edges) {
+					if (army.get_army_group_id() == group_id && edge.other == target && edge.own == &army.get_location()) {
+						next_to_target++;
+						break;
+					}
+				}
+			}
+		}
+		r.check(attacked, "offensive: the executed plan sends divisions into its target",
+			fmt::format("at war {} front {} armies {} next to the target {} mode {} country {} target controller {}", country->is_at_war_with(*neighbour), front != nullptr,
+				front != nullptr ? front->army_ids.size() : 0, next_to_target, front != nullptr ? static_cast<int>(front->mode) : -1, country->get_identifier(),
+				target->get_controller() != nullptr ? target->get_controller()->get_identifier() : "none"));
+		r.check(gained_outside_zone() == 0, "offensive: no land beyond the zone of the plan is taken", fmt::format("{} provinces", gained_outside_zone()));
+		fmt::println("TEST INFO offensive execution: target taken {}", target->get_controller() == country);
+		if (War* const war = war_manager.find_war_between(*country, *neighbour); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -5790,6 +5932,8 @@ namespace {
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own
 		test_order_moves(r, *im); // ticks days
+		test_offensive_modes(r, *im);
+		test_offensive_execution(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

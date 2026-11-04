@@ -178,6 +178,10 @@ namespace OpenVic {
 		bool attacker_wins = false; // the defence leaves first (by R or by the organisation)
 	};
 
+	// Does the executor of an offensive attack with the estimate (P5, docs/WAR_ASSUMPTIONS.md, section 6): aggression 1 (careful) at R >= PLAN_R_CAREFUL
+	// with the victory, 2 (balanced) at R >= PLAN_R_BALANCED, 3 (aggressive) always; never without attackers
+	[[nodiscard]] bool offensive_attacks(std::uint32_t aggression, BattleEstimate const& estimate, OpenVicWarDefines const& defines);
+
 	// What the land battles of a country came to since the start of the game (the dumps and the comparison of the battle models; not in the state hash)
 	struct BattleStats {
 		std::uint32_t battle_days = 0; // days a division (or a regiment of the earlier model) of the country fought, one per province and day
@@ -272,6 +276,13 @@ namespace OpenVic {
 		// them for every province by its weight (FRONT_MIN_WEIGHT plus the enemy divisions next to it), the ones without a place to the nearest province
 		// that lacks divisions; integrity 0 never moves a placed division, 1 when its province has FRONT_REBALANCE_THRESHOLD more than its share, 2 at one
 		void distribute_divisions(InstanceManager& instance_manager, Front& front, std::uint32_t integrity);
+		// The executor of the offensives from the front (P5): the targets of the zone next to the line, best first (R, nearer to the line of the plan);
+		// for each the free divisions next to it (the minimum to hold stays) attack when offensive_attacks says so. The line of the plan is not passed:
+		// the zone holds the targets and the land between
+		void execute_offensive(
+			InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
+			std::uint32_t aggression
+		);
 		// The pieces of the line of the front as the border is now (an edited front keeps its pieces that are still on the border and gets the pieces of the
 		// provinces taken from the other side and of our neighbours of the ones the enemy took)
 		void rebuild_front_edges(InstanceManager& instance_manager, Front& front);

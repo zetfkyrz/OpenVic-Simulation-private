@@ -305,6 +305,15 @@ namespace OpenVic {
 	INT(FRONT_GROUP_SPLITS_PER_DAY, front_group_splits_per_day, 64, 0, 1000) \
 	/* A line of defence is a chain of neighbouring provinces: a gap is filled by the shortest way over our land, at most this many provinces */ \
 	INT(PLAN_LINE_MAX_STEPS, plan_line_max_steps, 40, 1, 500) \
+	/* The executor of an offensive (P5): a target next to the line is attacked by the free divisions next to it (the support from several */ \
+	/* provinces) when the estimate of the battle gives R of PLAN_R_CAREFUL and the victory (the careful mode), R of PLAN_R_BALANCED (the */ \
+	/* balanced mode) or always (the aggressive mode). PLAN_MIN_HOLD divisions stay in every province of the front (not in the aggressive mode). */ \
+	/* The order of the targets: R (at most PLAN_SCORE_R_CAP) plus PLAN_TARGET_WEIGHT / (1 + the steps from the target to the line of the plan) */ \
+	FIXED(PLAN_R_CAREFUL, plan_r_careful, fixed_point_t(2), 0, 1000) \
+	FIXED(PLAN_R_BALANCED, plan_r_balanced, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 1000) \
+	INT(PLAN_MIN_HOLD, plan_min_hold, 1, 0, 100) \
+	FIXED(PLAN_SCORE_R_CAP, plan_score_r_cap, fixed_point_t(10), 0, 1000) \
+	FIXED(PLAN_TARGET_WEIGHT, plan_target_weight, fixed_point_t(2), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
 	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \

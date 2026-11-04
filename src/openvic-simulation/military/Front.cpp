@@ -1,6 +1,7 @@
 // Fronts, the lines of the plans and the automatic war plan, part of WarManager
 #include <algorithm>
 #include <deque>
+#include <unordered_map>
 #include <limits>
 
 #include "War.hpp"
@@ -1135,9 +1136,15 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 	std::vector<ArmyInstance*> armies;
 	for (const unique_id_t army_id : front.army_ids) {
 		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
-		if (group != nullptr && group->branch == unit_branch_t::LAND && &group->get_country() == &country && !group->empty()) {
-			armies.push_back(static_cast<ArmyInstance*>(group));
+		if (group == nullptr || group->branch != unit_branch_t::LAND || &group->get_country() != &country || group->empty()) {
+			continue;
 		}
+		// A division that stands on the land of an enemy (it won the battle there) stays to take it
+		CountryInstance const* const here = group->get_location().get_controller();
+		if (!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) {
+			continue;
+		}
+		armies.push_back(static_cast<ArmyInstance*>(group));
 	}
 	// Every army that stands is split into divisions of their own
 	std::int32_t splits = 0;
@@ -1264,6 +1271,149 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 	}
 }
 
+bool OpenVic::offensive_attacks(const std::uint32_t aggression, BattleEstimate const& estimate, OpenVicWarDefines const& defines) {
+	if (!estimate.valid) {
+		return false;
+	}
+	if (aggression >= 3) {
+		return true;
+	}
+	if (aggression <= 1) {
+		return estimate.ratio >= defines.plan_r_careful && estimate.attacker_wins;
+	}
+	return estimate.ratio >= defines.plan_r_balanced;
+}
+
+void WarManager::execute_offensive(
+	InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
+	const std::uint32_t aggression
+) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	OpenVicWarDefines const& defines = get_war_defines();
+	CountryInstance& country = *front.country;
+	const auto in = [](std::span<ProvinceInstance* const> list, ProvinceInstance const* province) -> bool {
+		return std::find(list.begin(), list.end(), province) != list.end();
+	};
+	// The divisions that stand on the line, free (not moving, not fighting), and how many stand in every province of the line
+	std::vector<ArmyInstance*> free;
+	std::vector<std::int32_t> standing(front.provinces.size(), 0);
+	for (const unique_id_t army_id : front.army_ids) {
+		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		if (group == nullptr || group->branch != unit_branch_t::LAND || group->empty() || group->is_moving() || group->is_in_combat()) {
+			continue;
+		}
+		ArmyInstance* const army = static_cast<ArmyInstance*>(group);
+		const auto at = std::find(front.provinces.begin(), front.provinces.end(), &army->get_location());
+		if (at != front.provinces.end()) {
+			free.push_back(army);
+			standing[static_cast<std::size_t>(at - front.provinces.begin())]++;
+		}
+	}
+	if (free.empty()) {
+		return;
+	}
+	// The targets next to the line: the land of the zone across its pieces that an enemy holds (in the order of the pieces)
+	std::vector<ProvinceInstance*> candidates;
+	for (FrontEdge const& edge : front.edges) {
+		CountryInstance const* const controller = edge.other->get_controller();
+		if (controller != nullptr && controller != &country && country.is_at_war_with(*controller) && in(zone, edge.other) && !in(candidates, edge.other)) {
+			candidates.push_back(edge.other);
+		}
+	}
+	if (candidates.empty()) {
+		return;
+	}
+	// The steps from every province of the zone to the line of the plan (its targets), over the zone
+	std::unordered_map<ProvinceInstance const*, std::int32_t> steps;
+	std::deque<ProvinceInstance*> queue;
+	for (ProvinceInstance* target : targets) {
+		if (in(zone, target) && steps.emplace(target, 0).second) {
+			queue.push_back(target);
+		}
+	}
+	while (!queue.empty()) {
+		ProvinceInstance* const current = queue.front();
+		queue.pop_front();
+		for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+			if (in(zone, neighbour) && !steps.contains(neighbour)) {
+				steps.emplace(neighbour, steps[current] + 1);
+				queue.push_back(neighbour);
+			}
+		}
+	}
+	const std::int32_t min_hold = aggression >= 3 ? 0 : defines.plan_min_hold;
+	std::vector<bool> used(free.size(), false);
+	// The free divisions next to the target that may go (the minimum stays in every province of the line)
+	const auto attackers_of = [&](ProvinceInstance const* target, std::vector<std::int32_t>& left) -> std::vector<std::size_t> {
+		std::vector<std::size_t> chosen;
+		for (std::size_t index = 0; index < free.size(); ++index) {
+			if (used[index]) {
+				continue;
+			}
+			ProvinceInstance const* const at = &free[index]->get_location();
+			bool next_to = false;
+			for (FrontEdge const& edge : front.edges) {
+				next_to |= edge.own == at && edge.other == target;
+			}
+			const std::size_t place = static_cast<std::size_t>(std::find(front.provinces.begin(), front.provinces.end(), at) - front.provinces.begin());
+			if (next_to && left[place] > min_hold) {
+				left[place]--;
+				chosen.push_back(index);
+			}
+		}
+		return chosen;
+	};
+	const auto estimate_with = [&](ProvinceInstance const& target, std::vector<std::size_t> const& chosen) -> BattleEstimate {
+		std::vector<ArmyInstance const*> attacking;
+		for (const std::size_t index : chosen) {
+			attacking.push_back(free[index]);
+		}
+		return estimate_battle(instance_manager, attacking, target);
+	};
+	// The order of the targets: R (capped) and nearer to the line of the plan first; ties: the order of the pieces
+	struct scored_t {
+		ProvinceInstance* target;
+		fixed_point_t score;
+	};
+	std::vector<scored_t> scored;
+	for (ProvinceInstance* target : candidates) {
+		std::vector<std::int32_t> left = standing;
+		const BattleEstimate estimate = estimate_with(*target, attackers_of(target, left));
+		if (!estimate.valid) {
+			continue;
+		}
+		const auto found = steps.find(target);
+		const std::int32_t to_line = found != steps.end() ? found->second : static_cast<std::int32_t>(zone.size());
+		scored.push_back({ target, std::min(estimate.ratio, defines.plan_score_r_cap) + defines.plan_target_weight / (1 + to_line) });
+	}
+	std::stable_sort(scored.begin(), scored.end(), [](scored_t const& first, scored_t const& second) -> bool {
+		return first.score > second.score;
+	});
+	// Each target in turn with the divisions that are still free
+	for (scored_t const& entry : scored) {
+		std::vector<std::int32_t> left = standing;
+		std::vector<std::size_t> chosen = attackers_of(entry.target, left);
+		if (chosen.empty()) {
+			continue;
+		}
+		const BattleEstimate estimate = estimate_with(*entry.target, chosen);
+		if (!offensive_attacks(aggression, estimate, defines)) {
+			continue;
+		}
+		// Nobody defends: one division takes the province, the others stay free
+		if (estimate.breakthrough_days == 0 && estimate.ratio >= fixed_point_t(1000)) {
+			chosen.resize(1);
+		}
+		for (const std::size_t index : chosen) {
+			used[index] = true;
+			const std::size_t place = static_cast<std::size_t>(std::find(front.provinces.begin(), front.provinces.end(), &free[index]->get_location()) - front.provinces.begin());
+			standing[place]--;
+			unit_manager.order_move(*free[index], *entry.target, map_instance);
+		}
+	}
+}
+
 void WarManager::update_fronts(InstanceManager& instance_manager) {
 	std::erase_if(fronts, [](Front const& front) -> bool {
 		return !front.country->exists();
@@ -1282,9 +1432,10 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		}
 		join_group_armies(front);
 		// A front of a field marshal holds its line; while the plan is executed it attacks only into the zones of his offensives from it (the executor
-		// of the plan is P5 of docs/WAR_ASSUMPTIONS.md, section 6)
+		// of the plan, P5 of docs/WAR_ASSUMPTIONS.md, section 6)
 		ArmyGroup const* const group = front.country->find_army_group(front.group_id);
 		memory::vector<ProvinceInstance*> zone;
+		memory::vector<ProvinceInstance*> targets;
 		if (group != nullptr && group->plan_active) {
 			for (PlanLine const& line : plan_lines) {
 				if (line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front.id) {
@@ -1293,14 +1444,15 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 							zone.push_back(province);
 						}
 					}
+					targets.insert(targets.end(), line.provinces.begin(), line.provinces.end());
 				}
 			}
 		}
 		front.mode = zone.empty() ? Front::mode_t::DEFEND : Front::mode_t::ATTACK;
-		// The divisions stand along the line; while an offensive is executed the ones next to its zone attack (the executor is P5)
+		// The divisions stand along the line; while an offensive is executed the free ones next to its targets attack
 		distribute_divisions(instance_manager, front, group != nullptr ? group->integrity : 1);
 		if (front.mode == Front::mode_t::ATTACK) {
-			order_front_armies(instance_manager, front, zone, true);
+			execute_offensive(instance_manager, front, zone, targets, group->aggression);
 		}
 	}
 
