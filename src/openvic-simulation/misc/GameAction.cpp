@@ -1332,6 +1332,19 @@ bool GameActionManager::VariantVisitor::operator() (create_border_front_argument
 	return instance_manager.get_war_manager().create_border_front(instance_manager, country, group_id, neighbour) != 0;
 }
 
+bool GameActionManager::VariantVisitor::operator() (create_border_front_part_argument_t const& argument) const {
+	const auto [country_index, group_id, neighbour_index, from_index, to_index] = argument;
+	ProvinceInstance* const from = instance_manager.get_map_instance().get_province_instance_by_index(from_index);
+	ProvinceInstance* const to = instance_manager.get_map_instance().get_province_instance_by_index(to_index);
+	if (OV_unlikely(from == nullptr || to == nullptr)) {
+		spdlog::error_s("GAME_ACTION_CREATE_BORDER_FRONT_PART called with invalid province indices: {} {}", from_index, to_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().create_border_front(
+		instance_manager, war_action_country(instance_manager, country_index), group_id, war_action_country(instance_manager, neighbour_index), from, to
+	) != 0;
+}
+
 bool GameActionManager::VariantVisitor::operator() (create_coastal_front_argument_t const& argument) const {
 	const auto [country_index, group_id, sea_index] = argument;
 	ProvinceInstance* const sea = instance_manager.get_map_instance().get_province_instance_by_index(sea_index);
@@ -1375,6 +1388,16 @@ bool GameActionManager::VariantVisitor::operator() (toggle_plan_line_province_ar
 	return instance_manager.get_war_manager().toggle_plan_line_province(
 		instance_manager, war_action_country(instance_manager, country_index), line_id, *province
 	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (extend_plan_line_argument_t const& argument) const {
+	const auto [country_index, line_id, at_end, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_EXTEND_PLAN_LINE called with invalid province index: {}", province_index);
+		return false;
+	}
+	return instance_manager.get_war_manager().extend_plan_line(instance_manager, war_action_country(instance_manager, country_index), line_id, at_end, *province);
 }
 
 bool GameActionManager::VariantVisitor::operator() (delete_plan_line_argument_t const& argument) const {

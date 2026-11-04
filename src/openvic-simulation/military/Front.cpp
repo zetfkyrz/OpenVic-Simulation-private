@@ -268,8 +268,44 @@ namespace {
 	}
 }
 
+memory::vector<FrontEdge> WarManager::get_border_part(
+	InstanceManager& instance_manager, CountryInstance const& country, CountryInstance const& neighbour, ProvinceInstance const* from, ProvinceInstance const* to
+) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	memory::vector<FrontEdge> edges = border_edges(*this, map_instance, country, neighbour);
+	if (from == nullptr || to == nullptr || edges.empty()) {
+		return edges;
+	}
+	// Our provinces in order along the border; a province of the other side stands for the first of ours next to it
+	const memory::vector<ProvinceInstance*> line = line_of_edges(map_instance, edges);
+	const auto place = [&](ProvinceInstance const* province) -> std::size_t {
+		for (FrontEdge const& edge : edges) {
+			if (edge.other == province) {
+				province = edge.own;
+				break;
+			}
+		}
+		const auto it = std::find(line.begin(), line.end(), province);
+		return it != line.end() ? static_cast<std::size_t>(it - line.begin()) : line.size();
+	};
+	std::size_t first = place(from);
+	std::size_t last = place(to);
+	if (first == line.size() || last == line.size()) {
+		return {};
+	}
+	if (first > last) {
+		std::swap(first, last);
+	}
+	std::erase_if(edges, [&](FrontEdge const& edge) -> bool {
+		const std::size_t at = static_cast<std::size_t>(std::find(line.begin(), line.end(), edge.own) - line.begin());
+		return at < first || at > last;
+	});
+	return edges;
+}
+
 std::uint32_t WarManager::create_border_front(
-	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, CountryInstance const& neighbour
+	InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, CountryInstance const& neighbour,
+	ProvinceInstance const* from, ProvinceInstance const* to
 ) {
 	if (!can_hold_front(country, group_id) || &neighbour == &country || !neighbour.exists()) {
 		return 0;
@@ -279,7 +315,9 @@ std::uint32_t WarManager::create_border_front(
 	front.country = &country;
 	front.enemy = &neighbour;
 	front.group_id = group_id;
-	front.edges = border_edges(*this, map_instance, country, neighbour);
+	front.edges = get_border_part(instance_manager, country, neighbour, from, to);
+	// A part of the border is drawn by the player: the front keeps its pieces (as an edited one)
+	front.edited = from != nullptr && to != nullptr;
 	if (front.edges.empty()) {
 		return 0;
 	}
@@ -461,6 +499,30 @@ bool WarManager::toggle_plan_line_province(
 	if (line == nullptr || line->country != &country) {
 		return false;
 	}
+	if (line->type == PlanLine::type_t::DEFENCE) {
+		// The chain: an end province is taken away, a province outside the line joins the nearer end over our land
+		const auto at = std::find(line->provinces.begin(), line->provinces.end(), &province);
+		if (at != line->provinces.end()) {
+			if (line->provinces.size() == 1 || (at != line->provinces.begin() && at != line->provinces.end() - 1)) {
+				return false;
+			}
+			line->provinces.erase(at);
+			return true;
+		}
+		const std::size_t before = line->provinces.size();
+		memory::vector<ProvinceInstance*> const kept = line->provinces;
+		if (!extend_plan_line(instance_manager, country, line_id, true, province)) {
+			return extend_plan_line(instance_manager, country, line_id, false, province);
+		}
+		// The other end may be nearer
+		const std::size_t by_end = line->provinces.size() - before;
+		line->provinces = kept;
+		if (extend_plan_line(instance_manager, country, line_id, false, province) && line->provinces.size() - before <= by_end) {
+			return true;
+		}
+		line->provinces = kept;
+		return extend_plan_line(instance_manager, country, line_id, true, province);
+	}
 	const auto it = std::find(line->provinces.begin(), line->provinces.end(), &province);
 	if (it != line->provinces.end()) {
 		if (line->provinces.size() == 1 && line->type != PlanLine::type_t::NAVAL) {
@@ -473,6 +535,80 @@ bool WarManager::toggle_plan_line_province(
 		return false;
 	}
 	line->provinces.push_back(&province);
+	return true;
+}
+
+bool WarManager::extend_plan_line(
+	InstanceManager& instance_manager, CountryInstance const& country, const std::uint32_t line_id, const bool at_end, ProvinceInstance& province
+) {
+	PlanLine* const line = find_plan_line(line_id);
+	if (line == nullptr || line->country != &country || line->type != PlanLine::type_t::DEFENCE || line->provinces.empty()
+		|| province.get_controller() != &country || province.province_definition.is_water()) {
+		return false;
+	}
+	memory::vector<ProvinceInstance*>& chain = line->provinces;
+	const auto at = std::find(chain.begin(), chain.end(), &province);
+	if (at != chain.end()) {
+		// The line is cut at the province: from the other end to it
+		const std::size_t index = static_cast<std::size_t>(at - chain.begin());
+		const std::size_t size_before = chain.size();
+		if (at_end) {
+			chain.resize(index + 1);
+		} else {
+			chain.erase(chain.begin(), chain.begin() + static_cast<std::ptrdiff_t>(index));
+		}
+		return chain.size() != size_before;
+	}
+	// The shortest way over our land from the end to the province, not over the line itself (the order of the neighbours: the same in every run).
+	// No way from that end (the line would have to go back over itself): from the other end
+	if (!extend_chain(instance_manager, country, chain, at_end, province)) {
+		return extend_chain(instance_manager, country, chain, !at_end, province);
+	}
+	return true;
+}
+
+bool WarManager::extend_chain(
+	InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, const bool at_end, ProvinceInstance& province
+) const {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	ProvinceInstance* const start = at_end ? chain.back() : chain.front();
+	const std::size_t count = map_instance.get_province_instances().size();
+	std::vector<ProvinceInstance*> came_from(count, nullptr);
+	std::vector<std::int32_t> steps(count, -1);
+	std::deque<ProvinceInstance*> queue;
+	steps[type_safe::get(start->index)] = 0;
+	queue.push_back(start);
+	const std::int32_t max_steps = get_war_defines().plan_line_max_steps;
+	while (!queue.empty() && steps[type_safe::get(province.index)] < 0) {
+		ProvinceInstance* const current = queue.front();
+		queue.pop_front();
+		const std::int32_t next_steps = steps[type_safe::get(current->index)] + 1;
+		if (next_steps > max_steps) {
+			continue;
+		}
+		for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+			const std::size_t index = type_safe::get(neighbour->index);
+			if (steps[index] >= 0 || neighbour->get_controller() != &country || std::find(chain.begin(), chain.end(), neighbour) != chain.end()) {
+				continue;
+			}
+			steps[index] = next_steps;
+			came_from[index] = current;
+			queue.push_back(neighbour);
+		}
+	}
+	if (steps[type_safe::get(province.index)] < 0) {
+		return false;
+	}
+	memory::vector<ProvinceInstance*> way;
+	for (ProvinceInstance* current = &province; current != start;) {
+		way.push_back(current);
+		current = came_from[type_safe::get(current->index)];
+	}
+	if (at_end) {
+		chain.insert(chain.end(), way.rbegin(), way.rend());
+	} else {
+		chain.insert(chain.begin(), way.begin(), way.end());
+	}
 	return true;
 }
 
@@ -687,8 +823,8 @@ bool WarManager::is_front_commanded(Front const& front) const {
 	if (front.group_id == 0) {
 		return true;
 	}
-	ArmyGroup const* const group = front.country->find_army_group(front.group_id);
-	return group != nullptr && group->plan_active;
+	// The divisions of a field marshal go to his front and hold it at once; the execution of the plan only lets them attack
+	return front.country->find_army_group(front.group_id) != nullptr;
 }
 
 void WarManager::stop_front_armies(InstanceManager& instance_manager, const std::uint32_t front_id) {
@@ -957,6 +1093,177 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 	}
 }
 
+void WarManager::join_group_armies(Front& front) {
+	// The armies (and the divisions) of the field marshal are on his order: the ones of the group join it, the others leave it. An army that moves
+	// and is not on the order (a manual order) joins when it stops
+	CountryInstance& country = *front.country;
+	std::erase_if(front.army_ids, [&country, &front](const unique_id_t army_id) -> bool {
+		for (ArmyInstance const& army : country.get_armies()) {
+			if (army.unique_id == army_id) {
+				return army.get_army_group_id() != front.group_id;
+			}
+		}
+		return true;
+	});
+	for (ArmyInstance const& army : country.get_armies()) {
+		if (army.get_army_group_id() != front.group_id || army.get_transport_navy() != nullptr || army.empty()) {
+			continue;
+		}
+		if (std::find(front.army_ids.begin(), front.army_ids.end(), army.unique_id) != front.army_ids.end()) {
+			continue;
+		}
+		if (army.is_moving()) {
+			continue;
+		}
+		for (Front& other : fronts) {
+			if (&other != &front) {
+				std::erase(other.army_ids, army.unique_id);
+			}
+		}
+		front.army_ids.push_back(army.unique_id);
+	}
+}
+
+void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& front, const std::uint32_t integrity) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	OpenVicWarDefines const& defines = get_war_defines();
+	CountryInstance& country = *front.country;
+	if (front.provinces.empty()) {
+		return;
+	}
+	std::vector<ArmyInstance*> armies;
+	for (const unique_id_t army_id : front.army_ids) {
+		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
+		if (group != nullptr && group->branch == unit_branch_t::LAND && &group->get_country() == &country && !group->empty()) {
+			armies.push_back(static_cast<ArmyInstance*>(group));
+		}
+	}
+	// Every army that stands is split into divisions of their own
+	std::int32_t splits = 0;
+	for (std::size_t index = 0; index < armies.size() && splits < defines.front_group_splits_per_day; ++index) {
+		while (splits < defines.front_group_splits_per_day && !armies[index]->is_moving() && !armies[index]->is_in_combat()
+			&& count_division_units(*armies[index]) >= 2) {
+			ArmyInstance* const split_army = split_division_unit(unit_manager, *armies[index]);
+			if (split_army == nullptr) {
+				break;
+			}
+			splits++;
+			front.army_ids.push_back(split_army->unique_id);
+			armies.push_back(split_army);
+		}
+	}
+	const std::size_t province_count = front.provinces.size();
+	const auto place_of = [&](ProvinceInstance const* province) -> std::size_t {
+		const auto it = std::find(front.provinces.begin(), front.provinces.end(), province);
+		return static_cast<std::size_t>(it - front.provinces.begin());
+	};
+	// The weights: the minimum and the enemy divisions next to the province (across the pieces of the line, or all its land neighbours for a line
+	// without pieces)
+	std::vector<std::int64_t> weights(province_count, defines.front_min_weight);
+	std::vector<ProvinceInstance const*> seen;
+	for (std::size_t index = 0; index < province_count; ++index) {
+		seen.clear();
+		const auto threat_of = [&](ProvinceInstance const& other) {
+			if (std::find(seen.begin(), seen.end(), &other) != seen.end()) {
+				return;
+			}
+			seen.push_back(&other);
+			for (ArmyInstance const& enemy : other.get_armies()) {
+				if (country.is_at_war_with(enemy.get_country())) {
+					weights[index] += static_cast<std::int64_t>(enemy.get_divisions().size());
+				}
+			}
+		};
+		if (!front.edges.empty()) {
+			for (FrontEdge const& edge : front.edges) {
+				if (edge.own == front.provinces[index]) {
+					threat_of(*edge.other);
+				}
+			}
+		} else {
+			for (ProvinceInstance* other : get_land_neighbours(*front.provinces[index], map_instance)) {
+				threat_of(*other);
+			}
+		}
+	}
+	// The shares (the largest remainders; ties: the earlier province of the line)
+	std::int64_t total_weight = 0;
+	for (const std::int64_t weight : weights) {
+		total_weight += weight;
+	}
+	const std::int64_t divisions = static_cast<std::int64_t>(armies.size());
+	std::vector<std::int64_t> shares(province_count, 0);
+	std::vector<std::pair<std::int64_t, std::size_t>> remainders;
+	std::int64_t given = 0;
+	for (std::size_t index = 0; index < province_count; ++index) {
+		shares[index] = divisions * weights[index] / total_weight;
+		given += shares[index];
+		remainders.emplace_back(divisions * weights[index] % total_weight, index);
+	}
+	std::stable_sort(remainders.begin(), remainders.end(), [](auto const& first, auto const& second) -> bool {
+		return first.first > second.first;
+	});
+	for (std::size_t index = 0; given < divisions && index < remainders.size(); ++index, ++given) {
+		shares[remainders[index].second]++;
+	}
+	// Where the divisions are (or go)
+	std::vector<std::int64_t> placed(province_count, 0);
+	std::vector<std::size_t> place(armies.size(), province_count);
+	for (std::size_t index = 0; index < armies.size(); ++index) {
+		ArmyInstance const& army = *armies[index];
+		ProvinceInstance const* const at = army.is_moving() ? &static_cast<ProvinceInstance const&>(army.get_path().back()) : &army.get_location();
+		place[index] = place_of(at);
+		if (place[index] < province_count) {
+			placed[place[index]]++;
+		}
+	}
+	// The divisions without a place that stand, and the ones over the share where the integrity lets them move
+	const std::int64_t threshold = integrity == 0 ? std::numeric_limits<std::int64_t>::max() : integrity == 1 ? defines.front_rebalance_threshold : 1;
+	std::vector<std::size_t> free_divisions;
+	for (std::size_t index = 0; index < armies.size(); ++index) {
+		if (place[index] == province_count && !armies[index]->is_moving() && !armies[index]->is_in_combat()) {
+			free_divisions.push_back(index);
+		}
+	}
+	for (std::size_t province = 0; province < province_count; ++province) {
+		if (placed[province] - shares[province] < threshold) {
+			continue;
+		}
+		// The last ones of the line go first (the order of the armies: the same in every run)
+		for (std::size_t index = armies.size(); index-- > 0 && placed[province] > shares[province];) {
+			if (place[index] == province && !armies[index]->is_moving() && !armies[index]->is_in_combat()) {
+				placed[province]--;
+				place[index] = province_count;
+				free_divisions.push_back(index);
+			}
+		}
+	}
+	// Each to the nearest province that lacks divisions (ties: the earlier one of the line)
+	for (const std::size_t index : free_divisions) {
+		ArmyInstance& army = *armies[index];
+		std::size_t best = province_count;
+		double best_distance = std::numeric_limits<double>::max();
+		for (std::size_t province = 0; province < province_count; ++province) {
+			if (placed[province] >= shares[province]) {
+				continue;
+			}
+			const double distance = centre_distance_squared(army.get_location(), *front.provinces[province]);
+			if (distance < best_distance) {
+				best_distance = distance;
+				best = province;
+			}
+		}
+		if (best == province_count) {
+			break;
+		}
+		placed[best]++;
+		if (front.provinces[best] != &army.get_location()) {
+			unit_manager.order_move(army, *front.provinces[best], map_instance);
+		}
+	}
+}
+
 void WarManager::update_fronts(InstanceManager& instance_manager) {
 	std::erase_if(fronts, [](Front const& front) -> bool {
 		return !front.country->exists();
@@ -973,21 +1280,56 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 			order_front_armies(instance_manager, front);
 			continue;
 		}
-		// A front of a field marshal attacks only into the zones of his offensives from it and holds the line without one (the executor of the plan
-		// is P5 of docs/WAR_ASSUMPTIONS.md, section 6)
+		join_group_armies(front);
+		// A front of a field marshal holds its line; while the plan is executed it attacks only into the zones of his offensives from it (the executor
+		// of the plan is P5 of docs/WAR_ASSUMPTIONS.md, section 6)
+		ArmyGroup const* const group = front.country->find_army_group(front.group_id);
 		memory::vector<ProvinceInstance*> zone;
-		for (PlanLine const& line : plan_lines) {
-			if (line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front.id) {
-				for (ProvinceInstance* province : get_offensive_zone(instance_manager, line)) {
-					if (std::find(zone.begin(), zone.end(), province) == zone.end()) {
-						zone.push_back(province);
+		if (group != nullptr && group->plan_active) {
+			for (PlanLine const& line : plan_lines) {
+				if (line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front.id) {
+					for (ProvinceInstance* province : get_offensive_zone(instance_manager, line)) {
+						if (std::find(zone.begin(), zone.end(), province) == zone.end()) {
+							zone.push_back(province);
+						}
 					}
 				}
 			}
 		}
 		front.mode = zone.empty() ? Front::mode_t::DEFEND : Front::mode_t::ATTACK;
-		spread_front_divisions(instance_manager, front, zone, true);
-		order_front_armies(instance_manager, front, zone, true);
+		// The divisions stand along the line; while an offensive is executed the ones next to its zone attack (the executor is P5)
+		distribute_divisions(instance_manager, front, group != nullptr ? group->integrity : 1);
+		if (front.mode == Front::mode_t::ATTACK) {
+			order_front_armies(instance_manager, front, zone, true);
+		}
+	}
+
+	// The line of defence and the naval invasion of a field marshal (his order when he has no front): his divisions go to the provinces of the line
+	// and hold them (P9), to the port of the landing (P10)
+	for (PlanLine const& line : plan_lines) {
+		if (line.type == PlanLine::type_t::OFFENSIVE || !line.country->exists() || line.country->find_army_group(line.group_id) == nullptr) {
+			continue;
+		}
+		Front orders;
+		orders.country = line.country;
+		orders.group_id = line.group_id;
+		orders.mode = Front::mode_t::DEFEND;
+		if (line.type == PlanLine::type_t::DEFENCE) {
+			for (ProvinceInstance* province : line.provinces) {
+				if (province->get_controller() == line.country) {
+					orders.provinces.push_back(province);
+				}
+			}
+		} else if (line.port != nullptr && line.port->get_controller() == line.country) {
+			orders.provinces.push_back(line.port);
+		}
+		join_group_armies(orders);
+		if (line.type == PlanLine::type_t::DEFENCE) {
+			ArmyGroup const* const group = line.country->find_army_group(line.group_id);
+			distribute_divisions(instance_manager, orders, group != nullptr ? group->integrity : 1);
+		} else {
+			order_front_armies(instance_manager, orders);
+		}
 	}
 
 	// The AI countries at war without mechanic:command have no fronts: the same minimal plan gives their divisions orders by hand, every division

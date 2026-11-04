@@ -2970,7 +2970,8 @@ namespace {
 			CountryInstanceManager const& all_countries = im.get_country_instance_manager();
 			ArmyInstance* raider = nullptr;
 			for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
-				if (!country.is_at_war() || country.get_war_enemies().empty() || !country.has_armies()) {
+				// (a country with a reserve of supplies: the ones without mechanic:division_templates have none)
+				if (!country.is_at_war() || country.get_war_enemies().empty() || !country.has_armies() || country.get_supply_reserve_capacity() <= fixed_point_t::_0) {
 					continue;
 				}
 				for (ArmyInstance& candidate : country.get_armies()) {
@@ -3839,7 +3840,7 @@ namespace {
 		r.check(set_army_group_front(im, *country, group_id, front_id, true) && war_manager.get_front_by_id(front_id)->group_id == group_id
 				&& !set_army_group_front(im, *country, group_id, front_id, true) && !set_army_group_front(im, *country, 9999, front_id, true),
 			"plan: a group holds a front (once, a known group)");
-		r.check(!war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front of a group gets no orders while the plan is not executed");
+		r.check(war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)), "plan: a front of a group gets orders before the execution (its divisions hold the line)");
 		r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: the execution does not start without a field marshal");
 
 		// The modes of the execution
@@ -3864,14 +3865,18 @@ namespace {
 			fmt::println("TEST INFO command plan: no free general, the start of the plan is not checked");
 		} else {
 			r.check(set_army_group_marshal(im, *country, group_id, leader_id), "plan: a marshal is set");
+			first.clear_path();
 			first.set_army_group_id(group_id);
-			r.check(set_army_group_plan_active(im, *country, group_id, true) && country->get_army_groups().back().plan_active, "plan: the button starts the execution");
+			im.force_tick_and_update();
 			Front const* const front = war_manager.get_front_by_id(front_id);
-			r.check(war_manager.is_front_commanded(*front) && std::find(front->army_ids.begin(), front->army_ids.end(), first.unique_id) != front->army_ids.end(),
-				"plan: the front gets orders, with the armies of the group");
+			r.check(front != nullptr && std::find(front->army_ids.begin(), front->army_ids.end(), first.unique_id) != front->army_ids.end()
+					&& !country->get_army_groups().back().plan_active,
+				"plan: an army attached to the marshal goes on his front by itself, before the execution");
+			r.check(set_army_group_plan_active(im, *country, group_id, true) && country->get_army_groups().back().plan_active, "plan: the button starts the execution");
 			r.check(!set_army_group_plan_active(im, *country, group_id, true), "plan: a plan that runs is not started again");
-			r.check(set_army_group_plan_active(im, *country, group_id, false) && !war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id)),
-				"plan: the button stops the execution, the front gets no orders again");
+			r.check(set_army_group_plan_active(im, *country, group_id, false) && war_manager.is_front_commanded(*war_manager.get_front_by_id(front_id))
+					&& !country->get_army_groups().back().plan_active,
+				"plan: the button stops the execution, the front still holds its line");
 			// the marshal leaves while the plan runs: the daily update stops it
 			set_army_group_plan_active(im, *country, group_id, true);
 			set_army_group_marshal(im, *country, group_id, 0);
@@ -5090,6 +5095,165 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the divisions of a field marshal go to his order by themselves (docs/WAR_ASSUMPTIONS.md, section 6): the front, the line of defence; a division
+	// split from the army of a general stays his; a front on a part of the border
+
+	void test_order_moves(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		ArmyInstance* army = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			// An army that stands on its own land at most two provinces from the land of a neighbour (it reaches the front over land)
+			ArmyInstance* found_army = nullptr;
+			CountryInstance* found_neighbour = nullptr;
+			const auto foreign_land_near = [&](ProvinceInstance& start) -> CountryInstance* {
+				for (ProvinceDefinition::adjacency_t const& first : start.province_definition.get_adjacencies()) {
+					if (first.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
+						continue;
+					}
+					ProvinceInstance& step = map_instance.get_province_instance_by_definition(first.get_to());
+					if (step.get_controller() != nullptr && step.get_controller() != &candidate) {
+						return step.get_controller();
+					}
+					for (ProvinceDefinition::adjacency_t const& second : step.province_definition.get_adjacencies()) {
+						CountryInstance* const other = map_instance.get_province_instance_by_definition(second.get_to()).get_controller();
+						if (second.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate) {
+							return other;
+						}
+					}
+				}
+				return nullptr;
+			};
+			for (ArmyInstance& candidate_army : candidate.get_armies()) {
+				if (candidate_army.get_transport_navy() == nullptr && !candidate_army.is_moving() && !candidate_army.is_in_combat() && candidate_army.get_divisions().size() >= 2
+					&& candidate_army.get_location().get_controller() == &candidate) {
+					found_neighbour = foreign_land_near(candidate_army.get_location());
+					if (found_neighbour != nullptr) {
+						found_army = &candidate_army;
+						break;
+					}
+				}
+			}
+			if (found_army != nullptr && found_neighbour != nullptr) {
+				country = &candidate;
+				neighbour = found_neighbour;
+				army = found_army;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO order moves: no country at peace with a neighbour and an army of two divisions, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const unique_id_t army_id = army->unique_id;
+		const std::uint32_t group_before = army->get_army_group_id();
+		r.check(set_army_group(*country, *army, group_id, get_marshal_max_attached(im, *country)), "order moves: the army is attached to the marshal");
+
+		// A part of the border: between the two ends of the line
+		const memory::vector<FrontEdge> whole = war_manager.get_border_part(im, *country, *neighbour, nullptr, nullptr);
+		const memory::vector<FrontEdge> part = whole.size() >= 2
+			? war_manager.get_border_part(im, *country, *neighbour, whole.front().own, whole.front().own) : memory::vector<FrontEdge> {};
+		r.check(whole.size() < 2 || (!part.empty() && part.size() < whole.size() && part.front().own == whole.front().own),
+			"order moves: a part of the border between one province and itself is the pieces of that province only");
+
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		im.force_tick_and_update();
+		Front const* front = war_manager.get_front_by_id(front_id);
+		bool on_front = front != nullptr && std::find(front->army_ids.begin(), front->army_ids.end(), army_id) != front->army_ids.end();
+		bool heading = false;
+		std::size_t divisions_of_group = 0;
+		bool children_valid = true;
+		for (ArmyInstance const& other : country->get_armies()) {
+			if (other.get_army_group_id() != group_id) {
+				children_valid &= other.get_parent_army_id() != army_id;
+				continue;
+			}
+			divisions_of_group += other.get_divisions().size();
+			children_valid &= other.unique_id == army_id || other.get_parent_army_id() == army_id;
+			ProvinceInstance const* const at = other.is_moving() ? &static_cast<ProvinceInstance const&>(other.get_path().back()) : &other.get_location();
+			heading |= front != nullptr && std::find(front->provinces.begin(), front->provinces.end(), at) != front->provinces.end();
+		}
+		r.check(on_front && heading && !country->get_army_groups().back().plan_active,
+			"order moves: the divisions of the marshal go to his front at once, without the execution of the plan",
+			fmt::format("on front {} heading {} front armies {} provinces {} country {}", on_front, heading, front != nullptr ? front->army_ids.size() : 0,
+				front != nullptr ? front->provinces.size() : 0, country->get_identifier()));
+		r.check(children_valid && divisions_of_group >= 2, "order moves: the divisions split along the line stay in the group, under the army of their general");
+		std::size_t attached = 0;
+		for (ArmyInstance const& other : country->get_armies()) {
+			attached += other.get_army_group_id() == group_id && other.get_parent_army_id() == 0;
+		}
+		r.check(attached == 1, "order moves: the limit of the marshal counts the armies of the generals only (the divisions are not generals)");
+
+		// A few days: the divisions are split and spread along the line (as many provinces as there are divisions, up to the length of the line)
+		for (int day = 0; day < 3; ++day) {
+			im.force_tick_and_update();
+		}
+		front = war_manager.get_front_by_id(front_id);
+		std::vector<ProvinceInstance const*> held;
+		std::size_t group_armies = 0;
+		for (ArmyInstance const& other : country->get_armies()) {
+			if (other.get_army_group_id() != group_id) {
+				continue;
+			}
+			group_armies++;
+			ProvinceInstance const* const at = other.is_moving() ? &static_cast<ProvinceInstance const&>(other.get_path().back()) : &other.get_location();
+			if (std::find(front->provinces.begin(), front->provinces.end(), at) != front->provinces.end() && std::find(held.begin(), held.end(), at) == held.end()) {
+				held.push_back(at);
+			}
+		}
+		r.check(held.size() >= std::min(group_armies, front->provinces.size()),
+			"order moves: the divisions are spread along the front, not in one stack", fmt::format("{} provinces held by {} divisions, the line has {}", held.size(),
+				group_armies, front->provinces.size()));
+
+		// A line of defence takes the place of the front: the divisions go to its provinces; it is a chain of neighbours (a gap is filled)
+		ProvinceInstance* const own = front->provinces.back();
+		ProvinceInstance* const far_end = front->provinces.front();
+		const std::uint32_t defence_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::DEFENCE, *own);
+		const bool extended = own == far_end || war_manager.extend_plan_line(im, *country, defence_id, true, *far_end);
+		PlanLine const* const defence = war_manager.get_plan_line_by_id(defence_id);
+		bool chained = defence != nullptr && defence->provinces.back() == far_end;
+		for (std::size_t index = 1; defence != nullptr && index < defence->provinces.size(); ++index) {
+			bool neighbours = false;
+			for (ProvinceDefinition::adjacency_t const& adjacency : defence->provinces[index - 1]->province_definition.get_adjacencies()) {
+				neighbours |= &adjacency.get_to() == &defence->provinces[index]->province_definition;
+			}
+			chained &= neighbours;
+		}
+		r.check(extended && chained, "order moves: a line of defence drawn to a far province is a chain of neighbouring provinces up to it");
+		if (defence != nullptr && defence->provinces.size() >= 3) {
+			ProvinceInstance* const middle = defence->provinces[1];
+			r.check(war_manager.extend_plan_line(im, *country, defence_id, true, *middle) && war_manager.get_plan_line_by_id(defence_id)->provinces.size() == 2,
+				"order moves: the end of the line dragged onto a province of it cuts the line there");
+		}
+		im.force_tick_and_update();
+		bool to_line = false;
+		for (ArmyInstance const& other : country->get_armies()) {
+			if (other.get_army_group_id() == group_id) {
+				ProvinceInstance const* const at = other.is_moving() ? &static_cast<ProvinceInstance const&>(other.get_path().back()) : &other.get_location();
+				to_line |= at == own;
+			}
+		}
+		r.check(war_manager.find_front_of_group(*country, group_id) == nullptr && to_line, "order moves: the divisions go to the line of defence that took the place of the front");
+
+		// Taken out of the group: the divisions follow their army
+		set_army_group(*country, *army, group_before, get_marshal_max_attached(im, *country));
+		bool all_out = true;
+		for (ArmyInstance const& other : country->get_armies()) {
+			all_out &= other.get_parent_army_id() != army_id || other.get_army_group_id() == group_before;
+		}
+		r.check(all_out, "order moves: the divisions of an army leave the group with it");
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -5625,6 +5789,7 @@ namespace {
 		test_live_battle(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own
+		test_order_moves(r, *im); // ticks days
 		game.end();
 
 		// ---- the defines hash does not change while playing

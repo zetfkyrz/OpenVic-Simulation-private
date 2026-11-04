@@ -79,6 +79,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army.get_supply_priority()));
 			hasher.add(army.is_supply_priority_custom() ? 1 : 0);
 			hasher.add(static_cast<std::uint64_t>(army.get_army_group_id()));
+			if (army.get_parent_army_id() != 0) {
+				hasher.add(army.get_parent_army_id());
+			}
 			hasher.add(army.get_supply_leader_bonus());
 			for (DivisionInstance const& division : army.get_divisions()) {
 				hasher.add(static_cast<std::uint64_t>(division.id));

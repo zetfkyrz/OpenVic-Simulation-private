@@ -62,7 +62,11 @@ namespace OpenVic {
 		//     the old plan of one front (set_army_group_plan) and toggle_front_province are gone
 		// 41: the fronts of the field marshals follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): made again when a province changes its controller
 		//     or a war its sides, the allies of the enemy in the war are in the sector, an edited front keeps its pieces, a front without a border stays empty
-		inline constexpr int SIMULATION_VERSION = 41;
+		// 42: the divisions of a field marshal go to his order by themselves (the front, the line of defence, the port of the landing), the execution lets
+		//     them attack; a division split from the army of a general stays in the group under him (parent_army_id); a front on a part of the border
+		// 43: the divisions of a field marshal are spread along the line of his order by the weights of its provinces (P4: the minimum and the enemy divisions
+		//     next to it, the integrity of the front), a line of defence is a chain of neighbouring provinces (extend_plan_line)
+		inline constexpr int SIMULATION_VERSION = 43;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

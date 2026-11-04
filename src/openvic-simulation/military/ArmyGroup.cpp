@@ -331,34 +331,9 @@ bool OpenVic::set_army_group_plan_active(
 		stop_plan(instance_manager, country, *group);
 		return true;
 	}
-	WarManager& war_manager = instance_manager.get_war_manager();
-	std::vector<std::uint32_t> front_ids;
-	for (Front const& front : war_manager.get_fronts()) {
-		if (front.country == &country && front.group_id == group_id) {
-			front_ids.push_back(front.id);
-		}
-	}
-	if (front_ids.empty() || group->marshal_id == 0) {
+	// The armies of the group are on the order already (WarManager::update_fronts puts them there every day); the execution lets them attack
+	if (instance_manager.get_war_manager().find_front_of_group(country, group_id) == nullptr || group->marshal_id == 0) {
 		return false;
-	}
-	// The armies of the group go on its fronts, one after another (an army is on one front at a time; the distribution by the threat is P4 of
-	// docs/WAR_ASSUMPTIONS.md, section 6). An army that is on a front of the group already stays on it
-	std::vector<unique_id_t> army_ids;
-	for (ArmyInstance const& army : country.get_armies()) {
-		if (army.get_army_group_id() != group_id) {
-			continue;
-		}
-		bool on_own_front = false;
-		for (const std::uint32_t front_id : front_ids) {
-			Front const* const front = war_manager.get_front_by_id(front_id);
-			on_own_front |= std::find(front->army_ids.begin(), front->army_ids.end(), army.unique_id) != front->army_ids.end();
-		}
-		if (!on_own_front) {
-			army_ids.push_back(army.unique_id);
-		}
-	}
-	for (std::size_t index = 0; index < army_ids.size(); ++index) {
-		war_manager.set_front_army(instance_manager, country, front_ids[index % front_ids.size()], army_ids[index], true);
 	}
 	group->plan_active = true;
 	return true;
@@ -422,13 +397,20 @@ bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army,
 	if (group_id != 0) {
 		std::uint32_t attached = 0;
 		for (ArmyInstance const& other : country.get_armies()) {
-			attached += other.get_army_group_id() == group_id;
+			attached += other.get_army_group_id() == group_id && other.get_parent_army_id() == 0;
 		}
-		if (attached >= max_attached) {
+		if (attached >= max_attached && army.get_parent_army_id() == 0) {
 			return false;
 		}
 	}
+	// A division of the army of a general moved on its own becomes an army of its own; the divisions of an army go with it
+	army.set_parent_army_id(0);
 	army.set_army_group_id(group_id);
+	for (ArmyInstance& other : const_cast<CountryInstance&>(country).get_armies()) {
+		if (other.get_parent_army_id() == army.unique_id) {
+			other.set_army_group_id(group_id);
+		}
+	}
 	return true;
 }
 
@@ -542,8 +524,24 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 		}
 		std::uint32_t attached = 0;
 		for (ArmyInstance& army : country.get_armies()) {
-			if (army.get_army_group_id() == group.id && ++attached > max_attached) {
+			if (army.get_army_group_id() == group.id && army.get_parent_army_id() == 0 && ++attached > max_attached) {
 				army.set_army_group_id(0);
+			}
+		}
+	}
+	// A division follows the army of its general (into a group, out of it); without that army it is an army of its own
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	for (ArmyInstance& army : country.get_armies()) {
+		if (army.get_parent_army_id() == 0) {
+			continue;
+		}
+		UnitInstanceGroup const* const parent = unit_manager.get_unit_instance_group_by_unique_id(army.get_parent_army_id());
+		if (parent == nullptr || parent->branch != unit_branch_t::LAND || &parent->get_country() != &country) {
+			army.set_parent_army_id(0);
+		} else {
+			army.set_army_group_id(static_cast<ArmyInstance const*>(parent)->get_army_group_id());
+			if (army.get_army_group_id() == 0) {
+				army.set_parent_army_id(0);
 			}
 		}
 	}

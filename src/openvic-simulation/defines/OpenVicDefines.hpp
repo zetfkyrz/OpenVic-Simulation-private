@@ -296,6 +296,15 @@ namespace OpenVic {
 	/* The zone of an offensive (docs/WAR_ASSUMPTIONS.md, section 6): the targets and the enemy provinces on the shortest ways (in provinces) from the */ \
 	/* front to them, with this many steps more (the width of the corridor of the arrow) */ \
 	INT(PLAN_ZONE_SLACK, plan_zone_slack, 1, 0, 20) \
+	/* The divisions of a field marshal along the line of his order (P4): every province of the line gets a share of them by its weight, */ \
+	/* FRONT_MIN_WEIGHT plus the enemy divisions next to it; a placed division moves to even the line out when its province has this many */ \
+	/* divisions more than its share (the medium integrity of the front; the loose one moves at 1, the firm one never); the armies of an order */ \
+	/* are split into divisions of their own, at most this many splits a day for every order */ \
+	INT(FRONT_MIN_WEIGHT, front_min_weight, 1, 1, 100) \
+	INT(FRONT_REBALANCE_THRESHOLD, front_rebalance_threshold, 2, 1, 100) \
+	INT(FRONT_GROUP_SPLITS_PER_DAY, front_group_splits_per_day, 64, 0, 1000) \
+	/* A line of defence is a chain of neighbouring provinces: a gap is filled by the shortest way over our land, at most this many provinces */ \
+	INT(PLAN_LINE_MAX_STEPS, plan_line_max_steps, 40, 1, 500) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
 	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \

@@ -166,11 +166,13 @@ X(set_theatre_colour, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_theatre_focus, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_army_group_theatre, country_index_t, std::uint32_t, std::uint32_t) \
 X(create_border_front, country_index_t, std::uint32_t, country_index_t) \
+X(create_border_front_part, country_index_t, std::uint32_t, country_index_t, province_index_t, province_index_t) \
 X(create_coastal_front, country_index_t, std::uint32_t, province_index_t) \
 X(toggle_front_edge, country_index_t, std::uint32_t, province_index_t, province_index_t) \
 X(create_plan_line, country_index_t, std::uint32_t, std::uint32_t, province_index_t) \
 X(toggle_plan_line_province, country_index_t, std::uint32_t, province_index_t) \
 X(delete_plan_line, country_index_t, std::uint32_t) \
+X(extend_plan_line, country_index_t, std::uint32_t, bool, province_index_t) \
 X(delete_group_lines, country_index_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 

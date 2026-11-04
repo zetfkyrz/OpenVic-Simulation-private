@@ -111,7 +111,8 @@ namespace OpenVic {
 	bool set_army_group_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, std::uint32_t front_id, bool held);
 	// The modes of the execution of the plan: aggression 1..3, integrity 0..2
 	bool set_army_group_modes(CountryInstance& country, std::uint32_t group_id, std::uint32_t aggression, std::uint32_t integrity);
-	// Starts or stops the execution of the plan: it needs a front of the group and a field marshal; the armies of the group go on its fronts
+	// Starts or stops the execution of the plan (the attack of the offensive): it needs a front of the group and a field marshal. The armies of the group
+	// go to the order of the marshal without it (its front, its line of defence, the port of its landing)
 	bool set_army_group_plan_active(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool active);
 	bool delete_army_group(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id);
 	// group_id 0 takes the army out of its group

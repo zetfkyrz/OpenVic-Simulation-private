@@ -1259,6 +1259,11 @@ ArmyInstance* UnitInstanceManager::split_regiment(ArmyInstance& army, RegimentIn
 	new_army.set_supply_priority_custom(army.is_supply_priority_custom());
 	// The regiment leaves its division (the next day the new army puts it into its reserve)
 	regiment.set_division_id(0);
+	// A division split from an army of a group stays in the group, under the general of that army
+	if (army.get_army_group_id() != 0) {
+		new_army.set_army_group_id(army.get_army_group_id());
+		new_army.set_parent_army_id(army.get_parent_army_id() != 0 ? army.get_parent_army_id() : army.unique_id);
+	}
 
 	if (!army.remove_unit(regiment)) {
 		destroy_group(new_army);

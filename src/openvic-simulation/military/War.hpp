@@ -265,6 +265,13 @@ namespace OpenVic {
 		PlanLine* find_plan_line(std::uint32_t id);
 		// The lines of the fronts of the field marshals follow the border (P3): made again when a province changes its controller or a war its sides
 		void update_front_lines(InstanceManager& instance_manager);
+		// The armies of the group of the front (an order of a field marshal) are on it: the ones of the group join, the others leave, an army moving by a
+		// manual order joins when it stops
+		void join_group_armies(Front& front);
+		// The divisions of the order of a field marshal along its line (P4, docs/WAR_ASSUMPTIONS.md, section 6): split into divisions of their own, a share of
+		// them for every province by its weight (FRONT_MIN_WEIGHT plus the enemy divisions next to it), the ones without a place to the nearest province
+		// that lacks divisions; integrity 0 never moves a placed division, 1 when its province has FRONT_REBALANCE_THRESHOLD more than its share, 2 at one
+		void distribute_divisions(InstanceManager& instance_manager, Front& front, std::uint32_t integrity);
 		// The pieces of the line of the front as the border is now (an edited front keeps its pieces that are still on the border and gets the pieces of the
 		// provinces taken from the other side and of our neighbours of the ones the enemy took)
 		void rebuild_front_edges(InstanceManager& instance_manager, Front& front);
@@ -411,7 +418,16 @@ namespace OpenVic {
 		// line of defence or a naval invasion; a new front, line of defence or naval invasion deletes all his earlier lines, a new offensive the earlier one.
 		// The front of a field marshal drawn on the map (0: nobody's): along the whole border with the neighbour (and, at war, with his allies in the
 		// war with the country), the neighbour has to touch the land the country controls. Returns the id of the front, 0 on failure
-		std::uint32_t create_border_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, CountryInstance const& neighbour);
+		// With from and to (provinces of either side of the border) only the part of the border between them (in the order of our provinces along it)
+		std::uint32_t create_border_front(
+			InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, CountryInstance const& neighbour,
+			ProvinceInstance const* from = nullptr, ProvinceInstance const* to = nullptr
+		);
+		// The pieces of the border of the country with the sector of the neighbour, all of them or the part between the two provinces
+		memory::vector<FrontEdge> get_border_part(
+			InstanceManager& instance_manager, CountryInstance const& country, CountryInstance const& neighbour, ProvinceInstance const* from,
+			ProvinceInstance const* to
+		);
 		// A coastal front of a field marshal: the coast of the country next to the sea province. Returns the id of the front, 0 on failure
 		std::uint32_t create_coastal_front(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, ProvinceInstance const& sea);
 		// The edit mode: a piece of the border between the provinces is added to the line of the front (or taken away if it is on it). The other province
@@ -427,6 +443,14 @@ namespace OpenVic {
 		// Adds the province to the line or takes it away (the last one cannot be taken: the line is deleted instead)
 		bool toggle_plan_line_province(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t line_id, ProvinceInstance& province);
 		bool delete_plan_line(CountryInstance const& country, std::uint32_t line_id);
+		// A line of defence is a chain of neighbouring provinces (P9 of docs/WAR_ASSUMPTIONS.md, section 6): its end (the last province, or the first one)
+		// goes to the province over the shortest way over our land (the gap is filled; no way from that end: from the other one); a province of the line
+		// cuts it there
+		bool extend_plan_line(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t line_id, bool at_end, ProvinceInstance& province);
+		// The shortest way over our land (not over the chain) from an end of the chain to the province is added to it; false if there is none
+		bool extend_chain(
+			InstanceManager& instance_manager, CountryInstance const& country, memory::vector<ProvinceInstance*>& chain, bool at_end, ProvinceInstance& province
+		) const;
 		// The fronts and the lines of the plan of the field marshal are deleted (the armies stop where they are)
 		bool delete_group_lines(InstanceManager& instance_manager, CountryInstance const& country, std::uint32_t group_id);
 		std::span<const PlanLine> get_plan_lines() const {
