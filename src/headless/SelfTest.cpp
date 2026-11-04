@@ -3041,9 +3041,9 @@ namespace {
 					play(im, 1);
 					// (an army this far on the land of the enemy is cut off from the supply, P8: the priority sends more, nothing arrives)
 					r.check(raider->get_supply_send_multiplier() > fixed_point_t::_1
-							&& (raider->is_encircled() ? raider->get_supply_ratio() == fixed_point_t::_0 : raider->get_supply_ratio() > standard_ratio),
+							&& (raider->is_cut_off() ? raider->get_supply_ratio() == fixed_point_t::_0 : raider->get_supply_ratio() > standard_ratio),
 						"supply on enemy land: the maximum priority sends more (what arrives is more, nothing when the army is cut off)",
-						fmt::format("{} -> {} (sent x{}, cut off {})", standard_ratio, raider->get_supply_ratio(), raider->get_supply_send_multiplier(), raider->is_encircled()));
+						fmt::format("{} -> {} (sent x{}, cut off {})", standard_ratio, raider->get_supply_ratio(), raider->get_supply_send_multiplier(), raider->is_cut_off()));
 					r.check(raider->get_supply_ratio() <= fixed_point_t::_1, "supply on enemy land: what arrives never exceeds the need");
 					(void)open_defines;
 				}
@@ -5666,7 +5666,7 @@ namespace {
 		army->set_location(*deep);
 		im.force_tick_and_update();
 		army = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id));
-		r.check(army != nullptr && army->is_encircled(), "encirclement: an army deep in the land of its enemy is cut off from the supply");
+		r.check(army != nullptr && army->is_encircled() && army->is_cut_off(), "encirclement: an army deep in the land of its enemy is cut off from the supply, in a pocket");
 		if (army != nullptr) {
 			im.force_tick_and_update();
 			r.check(army->get_supply_delivery() == fixed_point_t::_0, "encirclement: nothing of the supply arrives to it");

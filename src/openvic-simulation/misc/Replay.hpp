@@ -80,7 +80,9 @@ namespace OpenVic {
 		// 50: the naval invasion of the field marshals (P10): the divisions gather in the port, after NAVAL_PLAN_PREP_DAYS of the preparation they board the
 		//     fleets there, sail to the sea of the target and land with less of the penalty (NAVAL_PLAN_PENALTY_REDUCTION)
 		// 51: the plans of the field marshals for the AI countries (P11), behind ov_war.PLAN_AI_ENABLED (0: off, the AI as before)
-		inline constexpr int SIMULATION_VERSION = 51;
+		// 52: an army cut off from the supply far from the enemy (a colony) gets no supply and no new men but keeps its organisation; only a pocket next to
+		//     the land of an enemy at war (or deep in it) takes the organisation and makes it give itself up
+		inline constexpr int SIMULATION_VERSION = 52;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

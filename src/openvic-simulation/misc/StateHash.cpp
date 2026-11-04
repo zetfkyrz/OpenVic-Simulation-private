@@ -88,6 +88,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			if (army.is_encircled()) {
 				hasher.add(0x656e6369ULL + army.get_encircled_days());
 			}
+			if (army.is_cut_off()) {
+				hasher.add(0x63757430ULL);
+			}
 			hasher.add(army.get_supply_leader_bonus());
 			for (DivisionInstance const& division : army.get_divisions()) {
 				hasher.add(static_cast<std::uint64_t>(division.id));

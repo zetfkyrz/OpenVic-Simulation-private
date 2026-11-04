@@ -1717,8 +1717,13 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				}
 			}
 		}
-		// The line of the offensive two provinces deep: the land of the enemy next to the strip as well
-		if (PlanLine const* const line = war_manager.get_plan_line_by_id(offensive_id); line != nullptr) {
+		// The line of the offensive deeper: OV_FRONT_DEPTH rings of the land of the enemy behind the strip (1 by default)
+		const int depth = std::getenv("OV_FRONT_DEPTH") != nullptr ? std::max(0, std::atoi(std::getenv("OV_FRONT_DEPTH"))) : 1;
+		for (int ring = 0; ring < depth; ++ring) {
+			PlanLine const* const line = war_manager.get_plan_line_by_id(offensive_id);
+			if (line == nullptr) {
+				break;
+			}
 			const memory::vector<ProvinceInstance*> strip = line->provinces;
 			for (ProvinceInstance* province : strip) {
 				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
@@ -1820,10 +1825,11 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		);
 		// The encirclements (P8): the armies cut off from the supply, their divisions and the days without organisation
 		for (CountryInstance* const side : { side_a, side_b }) {
-			std::size_t cut_off = 0, divisions = 0;
+			std::size_t cut_off = 0, divisions = 0, without_supply = 0;
 			std::uint32_t longest = 0;
 			std::string where;
 			for (ArmyInstance const& army : side->get_armies()) {
+				without_supply += army.is_cut_off() && !army.is_encircled();
 				if (army.is_encircled()) {
 					cut_off++;
 					divisions += army.get_divisions().size();
@@ -1832,17 +1838,23 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				}
 			}
 			fmt::println(
-				"ENCIRCLEMENT day={} country={} armies={} divisions={} days_without_organisation={} provinces={}", day, side->get_identifier(), cut_off, divisions,
-				longest, where.empty() ? "-" : where
+				"ENCIRCLEMENT day={} country={} armies={} divisions={} days_without_organisation={} provinces={} cut_off_not_in_pocket={}", day, side->get_identifier(),
+				cut_off, divisions, longest, where.empty() ? "-" : where, without_supply
 			);
 		}
 	};
 	print_state(0);
+	// The time of a tick (the average and the longest of every ten days)
+	double tick_sum_ms = 0.0, tick_max_ms = 0.0;
 	for (std::size_t day = 1; day <= days; ++day) {
 		if (group_scenario && day == stop_day) {
 			fmt::println("FRONT_GROUP stop plan={}", set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, false));
 		}
+		const auto tick_start = std::chrono::steady_clock::now();
 		instance_manager.force_tick_and_update();
+		const double tick_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tick_start).count();
+		tick_sum_ms += tick_ms;
+		tick_max_ms = std::max(tick_max_ms, tick_ms);
 		// The land battles of the two (one line a battle and a day)
 		for (LandBattleReport const& report : war_manager.get_battle_reports()) {
 			if ((report.attacker != side_a && report.attacker != side_b) || (report.defender != side_a && report.defender != side_b)) {
@@ -1863,6 +1875,13 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		std::fflush(stdout);
 		if (day % 10 == 0) {
 			print_state(day);
+			std::size_t divisions = 0;
+			for (ArmyInstance const& army : side_a->get_armies()) {
+				divisions += army.get_divisions().size();
+			}
+			fmt::println("FRONT_TIME day={} tick_avg_ms={:.1f} tick_max_ms={:.1f} {}_divisions={}", day, tick_sum_ms / 10.0, tick_max_ms, side_a->get_identifier(), divisions);
+			tick_sum_ms = 0.0;
+			tick_max_ms = 0.0;
 			std::fflush(stdout);
 		}
 	}

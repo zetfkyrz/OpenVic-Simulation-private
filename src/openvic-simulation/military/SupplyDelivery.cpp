@@ -211,7 +211,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 				);
 				army.set_supply_send_multiplier(result.send_multiplier);
 				// Cut off from every source of the supply (P8): nothing arrives
-				army.set_supply_delivery(army.is_encircled() ? fixed_point_t::_0 : result.delivery);
+				army.set_supply_delivery(army.is_cut_off() ? fixed_point_t::_0 : result.delivery);
 			}
 		}
 

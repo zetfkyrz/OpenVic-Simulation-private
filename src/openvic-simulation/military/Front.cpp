@@ -1304,7 +1304,7 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 		ArmyInstance* const army = static_cast<ArmyInstance*>(group);
 		// A division that stands on the land of an enemy (it won the battle there) stays to take it; one that is cut off breaks out by itself
 		CountryInstance const* const here = group->get_location().get_controller();
-		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || army->is_encircled()) {
+		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || army->is_cut_off()) {
 			continue;
 		}
 		if (!army->is_moving() && !army->is_in_combat()) {
@@ -1876,7 +1876,7 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 			continue;
 		}
 		for (ArmyInstance& army : country.get_armies()) {
-			if (army.get_army_group_id() != 0 && army.is_encircled()) {
+			if (army.get_army_group_id() != 0 && army.is_cut_off()) {
 				break_out_encircled(instance_manager, army);
 			}
 		}

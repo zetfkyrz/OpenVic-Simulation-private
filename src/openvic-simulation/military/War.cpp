@@ -1364,6 +1364,7 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 		}
 		if (!country.is_at_war()) {
 			for (ArmyInstance& army : country.get_armies()) {
+				army.set_cut_off(false);
 				army.set_encircled(false);
 				army.set_encircled_days(0);
 			}
@@ -1399,6 +1400,7 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 		if (queue.empty()) {
 			supply_reach.erase(&country);
 			for (ArmyInstance& army : country.get_armies()) {
+				army.set_cut_off(false);
 				army.set_encircled(false);
 			}
 			continue;
@@ -1423,6 +1425,42 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 				}
 			}
 		}
+		// The pockets: the land of the friends that is not reached, by its connected parts; a part next to the land of an enemy at war is a pocket (the
+		// others, a colony far from the war, are only cut off from the supply)
+		const auto enemy_held = [&](ProvinceInstance const& province) -> bool {
+			CountryInstance const* const controller = province.get_controller();
+			return controller != nullptr && controller != &country && country.is_at_war_with(*controller);
+		};
+		std::vector<std::int32_t> part(count, -1);
+		std::vector<std::uint8_t> part_touches_enemy;
+		const auto pocket_of = [&](ProvinceInstance const& start) -> bool {
+			const std::size_t start_index = type_safe::get(start.index);
+			if (part[start_index] >= 0) {
+				return part_touches_enemy[static_cast<std::size_t>(part[start_index])] != 0;
+			}
+			const std::int32_t id = static_cast<std::int32_t>(part_touches_enemy.size());
+			part_touches_enemy.push_back(0);
+			std::deque<ProvinceInstance const*> pocket_queue { &start };
+			part[start_index] = id;
+			while (!pocket_queue.empty()) {
+				ProvinceInstance const* const current = pocket_queue.front();
+				pocket_queue.pop_front();
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+					if (!connects(adjacency)) {
+						continue;
+					}
+					ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					const std::size_t index = type_safe::get(next.index);
+					if (enemy_held(next)) {
+						part_touches_enemy[static_cast<std::size_t>(id)] = 1;
+					} else if (part[index] < 0 && reach[index] == 0 && is_supply_held(next, friends)) {
+						part[index] = id;
+						pocket_queue.push_back(&next);
+					}
+				}
+			}
+			return part_touches_enemy[static_cast<std::size_t>(id)] != 0;
+		};
 		// An army is reached in its province, or next to it (it stands on the land of the enemy at the edge of ours: the last step leads to it)
 		for (ArmyInstance& army : country.get_armies()) {
 			ProvinceInstance const& at = army.get_location();
@@ -1435,8 +1473,11 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 					}
 				}
 			}
-			army.set_encircled(!reached);
-			if (reached) {
+			// Cut off: no supply; in a pocket (deep in the land of the enemy, or on the land of the friends that touches the enemy): it loses organisation too
+			const bool pocket = !reached && (!is_supply_held(at, friends) || pocket_of(at));
+			army.set_cut_off(!reached);
+			army.set_encircled(pocket);
+			if (!pocket) {
 				army.set_encircled_days(0);
 			}
 		}
@@ -1470,9 +1511,9 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 				continue;
 			}
 
-			// Men are only replaced on friendly ground
+			// Men are only replaced on friendly ground, not when the army is cut off from the supply
 			CountryInstance const* const owner = province.get_owner();
-			const bool friendly = owner != nullptr
+			const bool friendly = !army.is_cut_off() && owner != nullptr
 				&& (owner == &army.get_country() || army.get_country().has_alliance_with(*owner));
 
 			// Armies the national stockpile cannot supply recover more slowly, and get no new men below half supplies
