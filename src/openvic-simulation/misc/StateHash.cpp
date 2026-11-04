@@ -224,6 +224,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		for (const unique_id_t army_id : line.army_ids) {
 			hasher.add(army_id);
 		}
+		hasher.add(static_cast<std::uint64_t>(line.prepared_days));
 	}
 	// The land battles that go on (in the order of the provinces): the days, the counter of the breakthrough, the divisions of the front
 	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {

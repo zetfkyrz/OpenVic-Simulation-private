@@ -492,7 +492,7 @@ bool UnitInstanceGroupBranched<NAVAL>::unload_army(ArmyInstance& army) {
 	return true;
 }
 
-bool UnitInstanceGroupBranched<NAVAL>::land_army(ArmyInstance& army, ProvinceInstance& target) {
+bool UnitInstanceGroupBranched<NAVAL>::land_army(ArmyInstance& army, ProvinceInstance& target, const fixed_point_t penalty_reduction) {
 	if (army.get_transport_navy() != this || !get_location().province_definition.is_water()
 		|| target.province_definition.is_water() || is_in_combat()) {
 		return false;
@@ -514,9 +514,12 @@ bool UnitInstanceGroupBranched<NAVAL>::land_army(ArmyInstance& army, ProvinceIns
 	forget_carried_army(army);
 	army.clear_path();
 	army.set_location(target);
-	// The men are tired after the landing
+	// The men are tired after the landing (less after the preparation of a plan)
+	const fixed_point_t kept_of_penalty = fixed_point_t::_1 - std::clamp(penalty_reduction, fixed_point_t::_0, fixed_point_t::_1);
 	for (RegimentInstance& regiment : army.get_regiment_instances()) {
-		regiment.take_damage(regiment.get_organisation() * (war_defines->landing_organisation_divisor - 1) / war_defines->landing_organisation_divisor, fixed_point_t::_0);
+		regiment.take_damage(
+			regiment.get_organisation() * (war_defines->landing_organisation_divisor - 1) / war_defines->landing_organisation_divisor * kept_of_penalty, fixed_point_t::_0
+		);
 	}
 	army.reset_dig_in();
 	return true;

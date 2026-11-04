@@ -331,8 +331,13 @@ bool OpenVic::set_army_group_plan_active(
 		stop_plan(instance_manager, country, *group);
 		return true;
 	}
-	// The armies of the group are on the order already (WarManager::update_fronts puts them there every day); the execution lets them attack
-	if (instance_manager.get_war_manager().find_front_of_group(country, group_id) == nullptr || group->marshal_id == 0) {
+	// The armies of the group are on the order already (WarManager::update_fronts puts them there every day); the execution lets them attack (a front)
+	// or sail (a naval invasion)
+	bool executable = instance_manager.get_war_manager().find_front_of_group(country, group_id) != nullptr;
+	for (PlanLine const& line : instance_manager.get_war_manager().get_plan_lines()) {
+		executable |= line.country == &country && line.group_id == group_id && line.type == PlanLine::type_t::NAVAL;
+	}
+	if (!executable || group->marshal_id == 0) {
 		return false;
 	}
 	group->plan_active = true;
@@ -526,8 +531,12 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 		if (!group.plan_active) {
 			continue;
 		}
-		if (instance_manager.get_war_manager().find_front_of_group(country, group.id) == nullptr) {
-			group.plan_active = false; // the fronts are gone, there are no armies to stop
+		bool executable = instance_manager.get_war_manager().find_front_of_group(country, group.id) != nullptr;
+		for (PlanLine const& line : instance_manager.get_war_manager().get_plan_lines()) {
+			executable |= line.country == &country && line.group_id == group.id && line.type == PlanLine::type_t::NAVAL;
+		}
+		if (!executable) {
+			group.plan_active = false; // the order is gone, there are no armies to stop
 		} else if (group.marshal_id == 0) {
 			stop_plan(instance_manager, country, group);
 		}

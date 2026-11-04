@@ -341,6 +341,11 @@ namespace OpenVic {
 	/* goes back to the line */ \
 	RATE(FALLBACK_ORG_THRESHOLD, fallback_org_threshold, Rate(25, 100), 0, 1) \
 	RATE(FALLBACK_RETURN_ORG, fallback_return_org, Rate(60, 100), 0, 1) \
+	/* The naval invasion (P10): the divisions gather in the port; the plan is executed after NAVAL_PLAN_PREP_DAYS days of the preparation: they board */ \
+	/* the fleets in the port, the fleets sail to the sea next to the target and land them. The organisation the landing takes is times */ \
+	/* (1 - the bonus of the planning x NAVAL_PLAN_PENALTY_REDUCTION) (a landing by hand: the whole of it) */ \
+	INT(NAVAL_PLAN_PREP_DAYS, naval_plan_prep_days, 10, 0, 365) \
+	FIXED(NAVAL_PLAN_PENALTY_REDUCTION, naval_plan_penalty_reduction, fixed_point_t(2), 0, 100) \
 	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \

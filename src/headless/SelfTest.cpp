@@ -5788,6 +5788,136 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the naval invasion (P10, docs/WAR_ASSUMPTIONS.md, section 6): the divisions gather in the port, the preparation counts the days, executed and
+	// prepared the divisions board the fleet in the port and it sails; a landing of a plan takes less organisation
+
+	void test_naval_invasion(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		OpenVicWarDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		// A country with mechanic:command, a fleet with transports in a port of its own, and a foreign coast at the sea of the port or at a sea next to it
+		// that the country can make war on
+		CountryInstance* country = nullptr;
+		NavyInstance* fleet = nullptr;
+		ProvinceInstance* port = nullptr;
+		ProvinceInstance* target = nullptr;
+		CountryInstance* enemy = nullptr;
+		const auto coast_near = [&](CountryInstance& owner, ProvinceDefinition const& sea) -> ProvinceInstance* {
+			std::vector<ProvinceDefinition const*> seas { &sea };
+			for (ProvinceDefinition::adjacency_t const& adjacency : sea.get_adjacencies()) {
+				if (adjacency.get_to().is_water()) {
+					seas.push_back(&adjacency.get_to());
+				}
+			}
+			for (ProvinceDefinition const* const water : seas) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : water->get_adjacencies()) {
+					ProvinceInstance& land = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					CountryInstance* const controller = land.get_controller();
+					if (!land.province_definition.is_water() && controller != nullptr && controller != &owner && !controller->is_at_war() && !controller->is_rebel_country()
+						&& !controller->has_alliance_with(owner) && war_manager.declare_war(im, owner, *controller)) {
+						enemy = controller;
+						return &land;
+					}
+				}
+			}
+			return nullptr;
+		};
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()
+				|| !candidate.has_armies()) {
+				continue;
+			}
+			for (NavyInstance& navy : candidate.get_navies()) {
+				ProvinceInstance& at = navy.get_location();
+				if (at.province_definition.is_water() || !at.province_definition.has_port() || at.province_definition.get_port_adjacent_province() == nullptr
+					|| at.get_controller() != &candidate || navy.get_transport_capacity() < 2 || navy.is_moving() || !navy.get_carried_armies().empty()) {
+					continue;
+				}
+				target = coast_near(candidate, *at.province_definition.get_port_adjacent_province());
+				if (target != nullptr) {
+					fleet = &navy;
+					port = &at;
+					break;
+				}
+			}
+			if (fleet != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO naval invasion: no country with a fleet of transports in its port and a coast to make war on, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(im, *country, group_id, leader.unique_id)) {
+				break;
+			}
+		}
+		// One army of the country into the group, standing in the port already (the gathering is checked by the days below)
+		ArmyInstance* army = nullptr;
+		for (ArmyInstance& candidate : country->get_armies()) {
+			if (candidate.get_transport_navy() == nullptr && !candidate.is_in_combat() && candidate.get_unit_count() <= fleet->get_transport_capacity()) {
+				army = &candidate;
+				break;
+			}
+		}
+		if (army == nullptr) {
+			fmt::println("TEST INFO naval invasion: no army small enough for the fleet, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		const unique_id_t army_id = army->unique_id;
+		const std::uint32_t group_before = army->get_army_group_id();
+		set_army_group(*country, *army, group_id, get_marshal_max_attached(im, *country));
+		army->clear_path();
+		army->set_location(*port);
+		const std::uint32_t line_id = war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::NAVAL, *port);
+		war_manager.toggle_plan_line_province(im, *country, line_id, *target);
+		for (int day = 0; day < 3; ++day) {
+			im.force_tick_and_update();
+		}
+		PlanLine const* line = war_manager.get_plan_line_by_id(line_id);
+		r.check(line != nullptr && line->prepared_days >= 3, "naval invasion: the days of the preparation are counted while it waits");
+		const bool started = set_army_group_plan_active(im, *country, group_id, true);
+		r.check(started, "naval invasion: it can be executed (an order of the marshal)");
+		// Not prepared yet: nobody boards; prepared: the divisions in the port board the fleet
+		im.force_tick_and_update();
+		army = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id));
+		r.check(army != nullptr && army->get_transport_navy() == nullptr, "naval invasion: before NAVAL_PLAN_PREP_DAYS of the preparation nobody boards");
+		const_cast<PlanLine*>(war_manager.get_plan_line_by_id(line_id))->prepared_days = static_cast<std::uint32_t>(defines.naval_plan_prep_days);
+		bool boarded = false, sailed = false, landed = false;
+		for (int day = 0; day < 40 && !landed; ++day) {
+			im.force_tick_and_update();
+			bool any = false;
+			for (ArmyInstance const& other : country->get_armies()) {
+				if (other.get_army_group_id() != group_id) {
+					continue;
+				}
+				any = true;
+				boarded |= other.get_transport_navy() != nullptr;
+				sailed |= other.get_transport_navy() != nullptr && &other.get_transport_navy()->get_location() != port;
+				landed |= &other.get_location() == target && other.get_transport_navy() == nullptr;
+			}
+			if (!any) {
+				break;
+			}
+		}
+		r.check(boarded, "naval invasion: executed and prepared, the divisions in the port board the fleet");
+		fmt::println("TEST INFO naval invasion: sailed {} landed {}", sailed, landed);
+		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		war_manager.delete_group_lines(im, *country, group_id);
+		if (ArmyInstance* const left = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id)); left != nullptr) {
+			set_army_group(*country, *left, group_before, get_marshal_max_attached(im, *country));
+		}
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -6330,6 +6460,7 @@ namespace {
 		test_breakthrough(r, *im); // ticks a day
 		test_encirclement(r, *im); // ticks days, a war of its own
 		test_fallback(r, *im); // ticks days, a war of its own
+		test_naval_invasion(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

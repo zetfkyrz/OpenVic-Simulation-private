@@ -241,8 +241,9 @@ namespace OpenVic {
 		bool load_army(ArmyInstance& army);
 		// Unloads a carried army in a port
 		bool unload_army(ArmyInstance& army);
-		// Lands a carried army from the sea next to the coastal province
-		bool land_army(ArmyInstance& army, ProvinceInstance& target);
+		// Lands a carried army from the sea next to the coastal province; the share of the organisation the landing takes is reduced by penalty_reduction
+		// (0..1: the naval invasion of a plan, P10)
+		bool land_army(ArmyInstance& army, ProvinceInstance& target, fixed_point_t penalty_reduction = fixed_point_t::_0);
 		// Forgets an army (it was destroyed or left)
 		void forget_carried_army(ArmyInstance const& army);
 

@@ -77,7 +77,9 @@ namespace OpenVic {
 		//     no supply and no new men, lose organisation and give themselves up; the executor keeps the flank and closes the pockets
 		// 49: the fallback of the divisions of the field marshals (P9): worn out on the line next to the enemy they fall back behind it and recover before they
 		//     go back (FALLBACK_ORG_THRESHOLD, FALLBACK_RETURN_ORG)
-		inline constexpr int SIMULATION_VERSION = 49;
+		// 50: the naval invasion of the field marshals (P10): the divisions gather in the port, after NAVAL_PLAN_PREP_DAYS of the preparation they board the
+		//     fleets there, sail to the sea of the target and land with less of the penalty (NAVAL_PLAN_PENALTY_REDUCTION)
+		inline constexpr int SIMULATION_VERSION = 50;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

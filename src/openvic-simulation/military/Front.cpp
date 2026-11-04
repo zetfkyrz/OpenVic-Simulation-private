@@ -1668,6 +1668,102 @@ void WarManager::break_out_encircled(InstanceManager& instance_manager, ArmyInst
 	}
 }
 
+void WarManager::execute_naval_invasion(InstanceManager& instance_manager, PlanLine& line, const bool executed) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	OpenVicWarDefines const& defines = get_war_defines();
+	CountryInstance& country = *line.country;
+	ArmyGroup const* const group = country.find_army_group(line.group_id);
+	if (group == nullptr || line.port == nullptr) {
+		return;
+	}
+	if (!executed) {
+		line.prepared_days++;
+	}
+	const bool go = executed && line.prepared_days >= static_cast<std::uint32_t>(defines.naval_plan_prep_days);
+	// The first target the enemy holds and the sea next to it (its port, else the first sea along its coast)
+	ProvinceInstance* target = nullptr;
+	for (ProvinceInstance* province : line.provinces) {
+		CountryInstance const* const controller = province->get_controller();
+		if (controller != nullptr && controller != &country && country.is_at_war_with(*controller)) {
+			target = province;
+			break;
+		}
+	}
+	ProvinceInstance* sea = nullptr;
+	if (target != nullptr) {
+		if (target->province_definition.has_port() && target->province_definition.get_port_adjacent_province() != nullptr) {
+			sea = &map_instance.get_province_instance_by_definition(*target->province_definition.get_port_adjacent_province());
+		} else {
+			for (ProvinceDefinition::adjacency_t const& adjacency : target->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::COASTAL && adjacency.get_to().is_water()) {
+					sea = &map_instance.get_province_instance_by_definition(adjacency.get_to());
+					break;
+				}
+			}
+		}
+	}
+	const fixed_point_t reduction = group->planning * defines.naval_plan_penalty_reduction;
+	// The fleets: carrying divisions of the marshal at the sea of the target land them; carrying them in the port sail there
+	if (go && target != nullptr && sea != nullptr) {
+		for (NavyInstance& navy : country.get_navies()) {
+			if (navy.is_moving() || navy.is_in_combat()) {
+				continue;
+			}
+			std::vector<ArmyInstance*> carried;
+			for (ArmyInstance& army : navy.get_carried_armies()) {
+				if (army.get_army_group_id() == line.group_id) {
+					carried.push_back(&army);
+				}
+			}
+			if (carried.empty()) {
+				continue;
+			}
+			if (&navy.get_location() == sea) {
+				for (ArmyInstance* army : carried) {
+					navy.land_army(*army, *target, reduction);
+				}
+			} else if (&navy.get_location() == line.port) {
+				unit_manager.order_move(navy, *sea, map_instance);
+			}
+		}
+	}
+	// The divisions of the marshal: on the land of the enemy they take it (the next target when this one is ours); the others gather in the port and,
+	// executed, board a fleet there
+	for (ArmyInstance& army : country.get_armies()) {
+		if (army.get_army_group_id() != line.group_id || army.get_transport_navy() != nullptr || army.empty() || army.is_moving() || army.is_in_combat()
+			|| army.is_manual_order()) {
+			continue;
+		}
+		CountryInstance const* const here = army.get_location().get_controller();
+		const bool on_enemy_land = here != nullptr && here != &country && country.is_at_war_with(*here);
+		if (on_enemy_land) {
+			continue;
+		}
+		const bool landed = std::find(line.provinces.begin(), line.provinces.end(), &army.get_location()) != line.provinces.end();
+		if (landed) {
+			// The target is taken: to the next one over land, when there is one next to it
+			if (target != nullptr && target->province_definition.is_adjacent_to(army.get_location().province_definition)) {
+				unit_manager.order_move(army, *target, map_instance);
+			}
+			continue;
+		}
+		if (&army.get_location() != line.port) {
+			if (line.port->get_controller() == &country) {
+				unit_manager.order_move(army, *line.port, map_instance);
+			}
+			continue;
+		}
+		if (go && target != nullptr) {
+			for (NavyInstance& navy : country.get_navies()) {
+				if (&navy.get_location() == line.port && !navy.is_moving() && !navy.is_in_combat() && navy.load_army(army)) {
+					break;
+				}
+			}
+		}
+	}
+}
+
 void WarManager::update_fronts(InstanceManager& instance_manager) {
 	std::erase_if(fronts, [](Front const& front) -> bool {
 		return !front.country->exists();
@@ -1730,7 +1826,7 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 
 	// The line of defence and the naval invasion of a field marshal (his order when he has no front): his divisions go to the provinces of the line
 	// and hold them (P9), to the port of the landing (P10)
-	for (PlanLine const& line : plan_lines) {
+	for (PlanLine& line : plan_lines) {
 		if (line.type == PlanLine::type_t::OFFENSIVE || line.type == PlanLine::type_t::BREAKTHROUGH || !line.country->exists()
 			|| line.country->find_army_group(line.group_id) == nullptr) {
 			continue;
@@ -1739,22 +1835,19 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		orders.country = line.country;
 		orders.group_id = line.group_id;
 		orders.mode = Front::mode_t::DEFEND;
-		if (line.type == PlanLine::type_t::DEFENCE) {
-			for (ProvinceInstance* province : line.provinces) {
-				if (province->get_controller() == line.country) {
-					orders.provinces.push_back(province);
-				}
+		if (line.type == PlanLine::type_t::NAVAL) {
+			ArmyGroup const* const naval_group = line.country->find_army_group(line.group_id);
+			execute_naval_invasion(instance_manager, line, naval_group != nullptr && naval_group->plan_active);
+			continue;
+		}
+		for (ProvinceInstance* province : line.provinces) {
+			if (province->get_controller() == line.country) {
+				orders.provinces.push_back(province);
 			}
-		} else if (line.port != nullptr && line.port->get_controller() == line.country) {
-			orders.provinces.push_back(line.port);
 		}
 		join_group_armies(orders);
-		if (line.type == PlanLine::type_t::DEFENCE) {
-			ArmyGroup const* const group = line.country->find_army_group(line.group_id);
-			distribute_divisions(instance_manager, orders, group != nullptr ? group->integrity : 1);
-		} else {
-			order_front_armies(instance_manager, orders);
-		}
+		ArmyGroup const* const group = line.country->find_army_group(line.group_id);
+		distribute_divisions(instance_manager, orders, group != nullptr ? group->integrity : 1);
 	}
 
 	// The AI countries at war without mechanic:command have no fronts: the same minimal plan gives their divisions orders by hand, every division
