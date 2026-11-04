@@ -75,7 +75,9 @@ namespace OpenVic {
 		//     aggressive threshold; a new offensive no longer deletes the other lines of the front
 		// 48: the encirclements (P8): the land reached from the capital and the ports with a naval base over the land of the friends, the armies cut off get
 		//     no supply and no new men, lose organisation and give themselves up; the executor keeps the flank and closes the pockets
-		inline constexpr int SIMULATION_VERSION = 48;
+		// 49: the fallback of the divisions of the field marshals (P9): worn out on the line next to the enemy they fall back behind it and recover before they
+		//     go back (FALLBACK_ORG_THRESHOLD, FALLBACK_RETURN_ORG)
+		inline constexpr int SIMULATION_VERSION = 49;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -5692,6 +5692,102 @@ namespace {
 		r.check(none_cut_off, "encirclement: at peace nobody is cut off");
 	}
 
+	// ---- the fallback (P9, docs/WAR_ASSUMPTIONS.md, section 6): a worn out division on the line next to the enemy falls back behind it, recovers and goes
+	// back to the line
+
+	void test_fallback(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			for (ArmyInstance& army : candidate.get_armies()) {
+				if (army.get_transport_navy() != nullptr || army.is_moving() || army.get_location().get_controller() != &candidate || army.get_divisions().size() < 2) {
+					continue;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : army.get_location().province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate) && war_manager.declare_war(im, candidate, *other)) {
+						neighbour = other;
+					}
+				}
+				if (neighbour != nullptr) {
+					break;
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO fallback: no war of a country with an army next to its neighbour, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t max_attached = get_marshal_max_attached(im, *country);
+		for (ArmyInstance& army : country->get_armies()) {
+			if (army.get_transport_navy() == nullptr) {
+				set_army_group(*country, army, group_id, max_attached);
+			}
+		}
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		for (int day = 0; day < 6; ++day) {
+			im.force_tick_and_update();
+		}
+		Front const* front = war_manager.get_front_by_id(front_id);
+		// A division standing on the line, worn out
+		ArmyInstance* worn = nullptr;
+		for (ArmyInstance& army : country->get_armies()) {
+			if (front != nullptr && army.get_army_group_id() == group_id && !army.is_moving() && !army.is_in_combat()
+				&& std::find(front->provinces.begin(), front->provinces.end(), &army.get_location()) != front->provinces.end()) {
+				worn = &army;
+				break;
+			}
+		}
+		if (worn == nullptr) {
+			fmt::println("TEST INFO fallback: no division standing on the line, not checked");
+		} else {
+			const unique_id_t worn_id = worn->unique_id;
+			for (RegimentInstance& regiment : worn->get_regiment_instances()) {
+				regiment.take_damage(regiment.get_organisation() * 9 / 10, fixed_point_t::_0);
+			}
+			im.force_tick_and_update();
+			worn = static_cast<ArmyInstance*>(im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(worn_id));
+			front = war_manager.get_front_by_id(front_id);
+			const auto heading = [](ArmyInstance const& army) -> ProvinceInstance const* {
+				return army.is_moving() ? &static_cast<ProvinceInstance const&>(army.get_path().back()) : &army.get_location();
+			};
+			const bool fell_back = worn != nullptr && heading(*worn)->get_controller() == country
+				&& std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) == front->provinces.end();
+			r.check(fell_back, "fallback: a worn out division on the line next to the enemy falls back behind it");
+			if (worn != nullptr && fell_back) {
+				for (int day = 0; day < 10 && worn->is_moving(); ++day) {
+					im.force_tick_and_update();
+				}
+				// Recovered: back to the line
+				for (RegimentInstance& regiment : worn->get_regiment_instances()) {
+					regiment.recover(regiment.get_max_organisation(), fixed_point_t::_0);
+				}
+				im.force_tick_and_update();
+				front = war_manager.get_front_by_id(front_id);
+				r.check(std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) != front->provinces.end() || worn->is_in_combat(),
+					"fallback: a recovered division goes back to the line");
+			}
+		}
+		if (War* const war = war_manager.find_war_between(*country, *neighbour); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	void test_ai_war_captures(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		std::size_t held = 0;
@@ -6233,6 +6329,7 @@ namespace {
 		test_planning(r, *im);
 		test_breakthrough(r, *im); // ticks a day
 		test_encirclement(r, *im); // ticks days, a war of its own
+		test_fallback(r, *im); // ticks days, a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

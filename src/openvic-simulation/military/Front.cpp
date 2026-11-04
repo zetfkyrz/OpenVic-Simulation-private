@@ -1154,18 +1154,76 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 	if (front.provinces.empty()) {
 		return;
 	}
+	// The fallback (P9): the share of the organisation of a division, the enemy next to a province, a province of the country behind the line
+	const auto organisation_share = [](ArmyInstance const& army) -> fixed_point_t {
+		fixed_point_t organisation = fixed_point_t::_0, maximum = fixed_point_t::_0;
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			organisation += regiment.get_organisation();
+			maximum += regiment.get_max_organisation();
+		}
+		return maximum > fixed_point_t::_0 ? organisation / maximum : fixed_point_t::_1;
+	};
+	const auto enemy_next_to = [&](ProvinceInstance const& province) -> bool {
+		for (ProvinceInstance* neighbour : get_land_neighbours(province, map_instance)) {
+			CountryInstance const* const controller = neighbour->get_controller();
+			if (controller != nullptr && controller != &country && country.is_at_war_with(*controller)) {
+				return true;
+			}
+		}
+		return false;
+	};
+	const auto behind = [&](ProvinceInstance const& from) -> ProvinceInstance* {
+		// The nearest province of the country (in steps, the order of the neighbours) off the line with no enemy next to it, at most three steps away
+		std::vector<ProvinceInstance*> layer { const_cast<ProvinceInstance*>(&from) };
+		std::vector<ProvinceInstance const*> seen { &from };
+		for (int step = 0; step < 3 && !layer.empty(); ++step) {
+			std::vector<ProvinceInstance*> next_layer;
+			for (ProvinceInstance* current : layer) {
+				for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+					if (neighbour->get_controller() != &country || std::find(seen.begin(), seen.end(), neighbour) != seen.end()) {
+						continue;
+					}
+					seen.push_back(neighbour);
+					if (!enemy_next_to(*neighbour) && std::find(front.provinces.begin(), front.provinces.end(), neighbour) == front.provinces.end()) {
+						return neighbour;
+					}
+					next_layer.push_back(neighbour);
+				}
+			}
+			layer = std::move(next_layer);
+		}
+		return nullptr;
+	};
+	const fixed_point_t fall_back_below = defines.fallback_org_threshold.of(fixed_point_t::_1);
+	const fixed_point_t return_from = defines.fallback_return_org.of(fixed_point_t::_1);
 	std::vector<ArmyInstance*> armies;
 	for (const unique_id_t army_id : front.army_ids) {
 		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
 		if (group == nullptr || group->branch != unit_branch_t::LAND || &group->get_country() != &country || group->empty()) {
 			continue;
 		}
+		ArmyInstance* const army = static_cast<ArmyInstance*>(group);
 		// A division that stands on the land of an enemy (it won the battle there) stays to take it; one that is cut off breaks out by itself
 		CountryInstance const* const here = group->get_location().get_controller();
-		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || static_cast<ArmyInstance*>(group)->is_encircled()) {
+		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || army->is_encircled()) {
 			continue;
 		}
-		armies.push_back(static_cast<ArmyInstance*>(group));
+		if (!army->is_moving() && !army->is_in_combat()) {
+			const bool on_line = std::find(front.provinces.begin(), front.provinces.end(), &army->get_location()) != front.provinces.end();
+			const fixed_point_t share = organisation_share(*army);
+			// Worn out on the line next to the enemy: it falls back behind the line
+			if (on_line && share < fall_back_below && enemy_next_to(army->get_location())) {
+				if (ProvinceInstance* const rear = behind(army->get_location()); rear != nullptr) {
+					unit_manager.order_move(*army, *rear, map_instance);
+					continue;
+				}
+			}
+			// Off the line it recovers before it goes back
+			if (!on_line && share < return_from && army->get_location().get_controller() == &country) {
+				continue;
+			}
+		}
+		armies.push_back(army);
 	}
 	// Every army that stands is split into divisions of their own
 	std::int32_t splits = 0;

@@ -336,6 +336,11 @@ namespace OpenVic {
 	/* The executor in the careful and the balanced mode does not take a target whose land neighbours are held by the enemy for more than this */ \
 	/* share (the flank it would open); a target that closes a pocket (an enemy province next to it has no other way to its land) gets this more */ \
 	RATE(FLANK_EXPOSURE_MAX, flank_exposure_max, Rate(60, 100), 0, 1) \
+	/* The fallback (P9): a division of a field marshal on his line next to the enemy with less than FALLBACK_ORG_THRESHOLD of its organisation */ \
+	/* falls back to a province of the country behind the line (no enemy next to it); off the line it recovers until FALLBACK_RETURN_ORG, then it */ \
+	/* goes back to the line */ \
+	RATE(FALLBACK_ORG_THRESHOLD, fallback_org_threshold, Rate(25, 100), 0, 1) \
+	RATE(FALLBACK_RETURN_ORG, fallback_return_org, Rate(60, 100), 0, 1) \
 	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
