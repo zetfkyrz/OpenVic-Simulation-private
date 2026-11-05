@@ -88,7 +88,9 @@ namespace OpenVic {
 		//     line does not take a place of it
 		// 54: the recruitment of a division by a template (the manpower of the pops of soldiers, 3000 men a regiment), the state of the executed plan
 		//     (the war with the countries of the front, the targets, the divisions, the chance) checked every day and when the execution is pressed
-		inline constexpr int SIMULATION_VERSION = 54;
+		// 55: an AI country at war recruits whole divisions by its first template (ov_ai.AI_DIVISIONS_PER_MONTH), single regiments when it cannot
+		// 56: the way by sea of an army with no way over the land (through the ports of its country, P4d)
+		inline constexpr int SIMULATION_VERSION = 56;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -122,6 +122,10 @@ namespace OpenVic {
 	RATE(WAR_REGIMENTS_PER_PROVINCE, war_regiments_per_province, Rate(300, 1000), 0, 100) \
 	INT(MIN_WAR_REGIMENTS, min_war_regiments, 3, 0, 1000) \
 	INT(MAX_RECRUITS_PER_MONTH, max_recruits_per_month, 3, 0, 1000) \
+	/* An AI country at war recruits whole divisions by its first template (docs/RECRUITMENT.md): at most AI_DIVISIONS_PER_MONTH a month, in its */ \
+	/* capital first, then in its other provinces; when a division cannot be recruited (the manpower, the goods) it recruits single regiments as */ \
+	/* before (MAX_RECRUITS_PER_MONTH). 0 turns the divisions off */ \
+	INT(AI_DIVISIONS_PER_MONTH, ai_divisions_per_month, 1, 0, 100) \
 	INT(COLONISE_MIN_POINTS_DIVISOR, colonise_min_points_divisor, 2, 1, 100) \
 	/* The budget of an AI country, once a month (docs/POPULATION.md A2-b): when the treasury holds less than BUDGET_RESERVE_DAYS days of the spending */ \
 	/* and the income of yesterday is under the spending, the taxes of all strata go up by BUDGET_STEP (to BUDGET_MAX_TAX), and when they are at the top the */ \
@@ -441,6 +445,11 @@ namespace OpenVic {
 	INT(MOVEMENT_SPEED_SCALE, movement_speed_scale, 3, 1, 1000) \
 	INT(PORT_STEP_DISTANCE, port_step_distance, 10, 1, 10000) \
 	INT(REGIMENTS_PER_TRANSPORT, regiments_per_transport, 4, 0, 1000) \
+	/* The way by sea of an army (P4d, docs/WAR_ASSUMPTIONS.md, section 6): an army with no way over the land goes to the nearest port of its */ \
+	/* country, sails (SEA_TRANSFER_SPEED x MOVEMENT_SPEED_SCALE of the distance a day, past no navy of an enemy at war) to the port of its */ \
+	/* country nearest to the destination and goes on over the land; at sea it does not fight. 0 turns it off */ \
+	INT(SEA_TRANSFER_ENABLED, sea_transfer_enabled, 1, 0, 1) \
+	FIXED(SEA_TRANSFER_SPEED, sea_transfer_speed, fixed_point_t(8), 0.1, 1000) \
 	INT(LANDING_ORGANISATION_DIVISOR, landing_organisation_divisor, 2, 1, 1000)
 #define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(OFFER_VALID_DAYS, offer_valid_days, 60, 1, 36500) \

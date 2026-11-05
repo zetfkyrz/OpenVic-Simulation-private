@@ -45,7 +45,8 @@ namespace {
 	std::vector<ArmyInstance*> copy_active_armies(ProvinceInstance& province) {
 		std::vector<ArmyInstance*> result;
 		for (ArmyInstance& army : province.get_armies()) {
-			if (army.get_transport_navy() == nullptr) {
+			// Not on board of a fleet and not at sea on its way by sea (P4d)
+			if (army.get_transport_navy() == nullptr && !army.is_at_sea()) {
 				result.push_back(&army);
 			}
 		}
@@ -1936,6 +1937,8 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 
 void WarManager::tick(InstanceManager& instance_manager) {
 	fought_today.clear();
+	// The ways by sea of the armies (P4d): the ones in their boarding port sail, the ones at sea land
+	instance_manager.get_unit_instance_manager().update_sea_transfers(instance_manager.get_map_instance());
 
 	update_combat(instance_manager);
 

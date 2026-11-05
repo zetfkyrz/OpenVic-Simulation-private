@@ -854,9 +854,13 @@ bool UnitInstanceManager::order_move(
 		return false;
 	}
 	const bool naval = group.branch == NAVAL;
-	// Armies carried by a navy move with it
-	if (!naval && static_cast<ArmyInstance&>(group).get_transport_navy() != nullptr) {
+	// Armies carried by a navy move with it; an army at sea (its way by sea, P4d) goes on to its destination
+	if (!naval && (static_cast<ArmyInstance&>(group).get_transport_navy() != nullptr || static_cast<ArmyInstance&>(group).is_at_sea())) {
 		return false;
+	}
+	// A new order (not added to the route) ends a way by sea that has not started
+	if (!naval && !append) {
+		static_cast<ArmyInstance&>(group).clear_sea_transfer();
 	}
 	if (naval ? !(destination.province_definition.is_water() || destination.province_definition.has_port())
 		: destination.province_definition.is_water()) {
@@ -965,6 +969,14 @@ bool UnitInstanceManager::order_move(
 	}
 
 	if (!previous.contains(&destination)) {
+		// No way over the land: by sea, through the ports of the country (P4d)
+		if (!naval && !extend_route && !planning_sea_transfer && UnitInstanceGroup::war_defines != nullptr && UnitInstanceGroup::war_defines->sea_transfer_enabled != 0) {
+			// The way over the land to the boarding port must not try the sea again
+			planning_sea_transfer = true;
+			const bool by_sea = order_sea_transfer(static_cast<ArmyInstance&>(group), destination, map_instance);
+			planning_sea_transfer = false;
+			return by_sea;
+		}
 		return false;
 	}
 
@@ -985,6 +997,188 @@ bool UnitInstanceManager::order_move(
 
 	group.set_path(std::move(path));
 	return true;
+}
+
+namespace {
+	// The cost over the land (the distance, the straits as in order_move) from a province to every province an army of the country can reach
+	std::unordered_map<ProvinceInstance*, fixed_point_t> land_costs_from(
+		ProvinceInstance& start, CountryInstance const& country, MapInstance& map_instance
+	) {
+		using entry_t = std::pair<fixed_point_t, ProvinceInstance*>;
+		struct entry_greater {
+			bool operator()(entry_t const& lhs, entry_t const& rhs) const {
+				return lhs.first != rhs.first ? lhs.first > rhs.first : type_safe::get(lhs.second->index) > type_safe::get(rhs.second->index);
+			}
+		};
+		std::priority_queue<entry_t, std::vector<entry_t>, entry_greater> queue;
+		std::unordered_map<ProvinceInstance*, fixed_point_t> cost;
+		cost[&start] = fixed_point_t::_0;
+		queue.emplace(fixed_point_t::_0, &start);
+		while (!queue.empty()) {
+			const auto [current_cost, current] = queue.top();
+			queue.pop();
+			if (current_cost > cost[current]) {
+				continue;
+			}
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				const auto type = adjacency.get_type();
+				if ((type != ProvinceDefinition::adjacency_t::type_t::LAND && type != ProvinceDefinition::adjacency_t::type_t::STRAIT)
+					|| adjacency.get_to().is_water()) {
+					continue;
+				}
+				ProvinceInstance& to = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (!UnitInstanceGroup::can_country_enter(country, to)) {
+					continue;
+				}
+				// A strait with a navy of an enemy at war is closed (as in order_move)
+				if (type == ProvinceDefinition::adjacency_t::type_t::STRAIT && adjacency.get_through() != nullptr) {
+					ProvinceInstance const& strait = map_instance.get_province_instance_by_definition(*adjacency.get_through());
+					if (std::any_of(strait.get_navies().begin(), strait.get_navies().end(), [&country](NavyInstance const& navy) -> bool {
+						return !navy.empty() && navy.get_country().is_at_war_with(country);
+					})) {
+						continue;
+					}
+				}
+				const fixed_point_t next_cost = current_cost + adjacency.get_distance();
+				const auto it = cost.find(&to);
+				if (it == cost.end() || next_cost < it->second) {
+					cost[&to] = next_cost;
+					queue.emplace(next_cost, &to);
+				}
+			}
+		}
+		return cost;
+	}
+}
+
+bool UnitInstanceManager::order_sea_transfer(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance) {
+	CountryInstance const& country = army.get_country();
+	// The ports of the country (owned and held) the army reaches over the land, and the ones the destination is reached from
+	const auto from_army = land_costs_from(army.get_location(), country, map_instance);
+	const auto from_destination = land_costs_from(destination, country, map_instance);
+	const auto is_own_port = [&country](ProvinceInstance const* province) -> bool {
+		return province->province_definition.has_port() && province->province_definition.get_port_adjacent_province() != nullptr
+			&& province->get_owner() == &country && province->get_controller() == &country;
+	};
+	ProvinceInstance* boarding = nullptr;
+	fixed_point_t boarding_cost = fixed_point_t::_0;
+	for (ProvinceInstance* province : country.get_owned_provinces()) {
+		const auto it = from_army.find(province);
+		if (it != from_army.end() && is_own_port(province) && (boarding == nullptr || it->second < boarding_cost)) {
+			boarding = province;
+			boarding_cost = it->second;
+		}
+	}
+	if (boarding == nullptr) {
+		return false;
+	}
+	// The sea from the boarding port: the distance to every water province, not through a sea with a navy of an enemy at war
+	const auto enemy_sea = [&country](ProvinceInstance const& sea) -> bool {
+		return std::any_of(sea.get_navies().begin(), sea.get_navies().end(), [&country](NavyInstance const& navy) -> bool {
+			return !navy.empty() && navy.get_country().is_at_war_with(country);
+		});
+	};
+	using entry_t = std::pair<fixed_point_t, ProvinceInstance*>;
+	struct entry_greater {
+		bool operator()(entry_t const& lhs, entry_t const& rhs) const {
+			return lhs.first != rhs.first ? lhs.first > rhs.first : type_safe::get(lhs.second->index) > type_safe::get(rhs.second->index);
+		}
+	};
+	ProvinceInstance& first_sea = map_instance.get_province_instance_by_definition(*boarding->province_definition.get_port_adjacent_province());
+	std::unordered_map<ProvinceInstance*, fixed_point_t> sea_cost;
+	if (!enemy_sea(first_sea)) {
+		std::priority_queue<entry_t, std::vector<entry_t>, entry_greater> queue;
+		sea_cost[&first_sea] = fixed_point_t(UnitInstanceGroup::war_defines->port_step_distance);
+		queue.emplace(sea_cost[&first_sea], &first_sea);
+		while (!queue.empty()) {
+			const auto [current_cost, current] = queue.top();
+			queue.pop();
+			if (current_cost > sea_cost[current]) {
+				continue;
+			}
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				if (!adjacency.get_to().is_water() || adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE) {
+					continue;
+				}
+				ProvinceInstance& to = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (enemy_sea(to)) {
+					continue;
+				}
+				const fixed_point_t next_cost = current_cost + adjacency.get_distance();
+				const auto it = sea_cost.find(&to);
+				if (it == sea_cost.end() || next_cost < it->second) {
+					sea_cost[&to] = next_cost;
+					queue.emplace(next_cost, &to);
+				}
+			}
+		}
+	}
+	// The landing port: of the country, reached by sea, the destination reached from it over the land; the shortest way (sea and land) wins
+	ProvinceInstance* landing = nullptr;
+	fixed_point_t landing_sea = fixed_point_t::_0, landing_total = fixed_point_t::_0;
+	for (ProvinceInstance* province : country.get_owned_provinces()) {
+		if (province == boarding || !is_own_port(province)) {
+			continue;
+		}
+		const auto land = from_destination.find(province);
+		if (land == from_destination.end()) {
+			continue;
+		}
+		ProvinceInstance* const sea = &map_instance.get_province_instance_by_definition(*province->province_definition.get_port_adjacent_province());
+		const auto by_sea = sea_cost.find(sea);
+		if (by_sea == sea_cost.end()) {
+			continue;
+		}
+		const fixed_point_t sea_distance = by_sea->second + fixed_point_t(UnitInstanceGroup::war_defines->port_step_distance);
+		const fixed_point_t total = sea_distance + land->second;
+		if (landing == nullptr || total < landing_total) {
+			landing = province;
+			landing_sea = sea_distance;
+			landing_total = total;
+		}
+	}
+	if (landing == nullptr) {
+		return false;
+	}
+	// Over the land to the boarding port first (it may be where the army is)
+	if (&army.get_location() != boarding && !order_move(army, *boarding, map_instance)) {
+		return false;
+	}
+	const fixed_point_t per_day = std::max(fixed_point_t::_0_01, UnitInstanceGroup::war_defines->sea_transfer_speed * UnitInstanceGroup::war_defines->movement_speed_scale);
+	const std::uint32_t days = static_cast<std::uint32_t>(std::max(1, (landing_sea / per_day).ceil<std::int32_t>()));
+	army.set_sea_transfer(*boarding, *landing, destination, days);
+	return true;
+}
+
+void UnitInstanceManager::update_sea_transfers(MapInstance& map_instance) {
+	for (ArmyInstance& army : armies) {
+		if (!army.has_sea_transfer()) {
+			continue;
+		}
+		if (army.is_at_sea()) {
+			army.set_sea_transfer_days_left(army.get_sea_transfer_days_left() - 1);
+			if (army.get_sea_transfer_days_left() == 0) {
+				// Landed in the port: on over the land
+				ProvinceInstance& landing = *army.get_sea_transfer_to();
+				ProvinceInstance& destination = *army.get_sea_transfer_destination();
+				army.clear_sea_transfer();
+				army.set_location(landing);
+				if (&landing != &destination) {
+					order_move(army, destination, map_instance);
+				}
+			}
+			continue;
+		}
+		if (army.is_moving()) {
+			continue;
+		}
+		if (&army.get_location() == army.get_sea_transfer_from() && !army.is_in_combat()) {
+			// In the boarding port: it sails
+			army.set_sea_transfer_days_left(army.get_sea_transfer_days_total());
+		} else if (!army.is_in_combat()) {
+			army.clear_sea_transfer(); // stopped elsewhere: the way by sea is given up
+		}
+	}
 }
 
 ProvinceInstance* UnitInstanceManager::find_nearest_port(

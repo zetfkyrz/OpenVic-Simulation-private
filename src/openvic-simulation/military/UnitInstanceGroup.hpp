@@ -184,8 +184,36 @@ namespace OpenVic {
 		std::uint32_t PROPERTY_RW(encircled_days, 0);
 		// The bonus of the general of the army and the field marshal of its group to its supply, worked out every day
 		fixed_point_t PROPERTY_RW(supply_leader_bonus, fixed_point_t::_0);
+		// The way by sea (P4d): the army goes to the port sea_transfer_from, sails for sea_transfer_days_total days (sea_transfer_days_left > 0: at
+		// sea, it stays in the list of the port and does not fight) to the port sea_transfer_to and goes on to sea_transfer_destination over the land
+		ProvinceInstance* PROPERTY_PTR(sea_transfer_from, nullptr);
+		ProvinceInstance* PROPERTY_PTR(sea_transfer_to, nullptr);
+		ProvinceInstance* PROPERTY_PTR(sea_transfer_destination, nullptr);
+		std::uint32_t PROPERTY(sea_transfer_days_total, 0);
+		std::uint32_t PROPERTY_RW(sea_transfer_days_left, 0);
 
 	public:
+		[[nodiscard]] bool is_at_sea() const {
+			return sea_transfer_days_left > 0;
+		}
+		[[nodiscard]] bool has_sea_transfer() const {
+			return sea_transfer_to != nullptr;
+		}
+		void set_sea_transfer(ProvinceInstance& from, ProvinceInstance& to, ProvinceInstance& destination, const std::uint32_t days) {
+			sea_transfer_from = &from;
+			sea_transfer_to = &to;
+			sea_transfer_destination = &destination;
+			sea_transfer_days_total = days;
+			sea_transfer_days_left = 0;
+		}
+		void clear_sea_transfer() {
+			sea_transfer_from = nullptr;
+			sea_transfer_to = nullptr;
+			sea_transfer_destination = nullptr;
+			sea_transfer_days_total = 0;
+			sea_transfer_days_left = 0;
+		}
+
 		UnitInstanceGroupBranched(
 			unique_id_t new_unique_id,
 			std::string_view new_name,
@@ -366,6 +394,13 @@ namespace OpenVic {
 		// false if the destination is unreachable. With append = true the route starts at the end of the current route
 		// of the group and is added to it
 		bool order_move(UnitInstanceGroup& group, ProvinceInstance& destination, MapInstance& map_instance, bool append = false);
+		// The way by sea of an army that has no way over the land (P4d): to the nearest port of its country, by sea to the port of its country nearest
+		// to the destination (no sea with a navy of an enemy at war), then over the land; false if there is none
+		bool order_sea_transfer(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance);
+		// Set while a way by sea is planned
+		bool planning_sea_transfer = false;
+		// Every day: an army that reached the port of its way by sea sails, one at sea counts its days and lands, then goes on
+		void update_sea_transfers(MapInstance& map_instance);
 		// The nearest port the country's navy can dock in, from the province (nullptr if there is none)
 		ProvinceInstance* find_nearest_port(CountryInstance const& country, ProvinceInstance& from, MapInstance& map_instance);
 

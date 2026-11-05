@@ -18,6 +18,7 @@
 #include "openvic-simulation/population/PopManager.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/misc/GameAction.hpp"
@@ -191,6 +192,40 @@ namespace {
 			return;
 		}
 
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		// Whole divisions by the first template: the capital first, then the other provinces of the country (the soldiers come from the whole
+		// country, the province is where the division appears)
+		if (ai.ai_divisions_per_month > 0 && !country.get_division_templates().empty()) {
+			UnitTypeManager const& unit_type_manager = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+			DivisionTemplate const& division_template = country.get_division_templates().front();
+			std::vector<ProvinceInstance*> places;
+			if (country.get_capital() != nullptr && country.get_capital()->get_controller() == &country) {
+				places.push_back(country.get_capital());
+			}
+			for (ProvinceInstance* province : country.get_owned_provinces()) {
+				if (province != country.get_capital() && province->get_controller() == &country) {
+					places.push_back(province);
+				}
+			}
+			int divisions = 0;
+			for (ProvinceInstance* province : places) {
+				if (divisions >= ai.ai_divisions_per_month) {
+					break;
+				}
+				if (unit_manager.get_division_recruitment_block_reason(country, unit_type_manager, division_template, *province).empty()
+					&& unit_manager.start_division_recruitment(country, unit_type_manager, division_template, *province)) {
+					++divisions;
+				}
+				// The reason is the same in every province but the first (the manpower and the goods are of the country)
+				if (divisions == 0) {
+					break;
+				}
+			}
+			if (divisions > 0) {
+				return;
+			}
+		}
+
 		RegimentType const* regiment_type = nullptr;
 		for (RegimentType const& type : instance_manager.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
 			if (country.is_unit_type_unlocked(type) && (regiment_type == nullptr || type.build_time < regiment_type->build_time)) {
@@ -201,7 +236,6 @@ namespace {
 			return;
 		}
 
-		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 		int started = 0;
 		for (ProvinceInstance* province : country.get_owned_provinces()) {
 			if (started >= ai.max_recruits_per_month) {

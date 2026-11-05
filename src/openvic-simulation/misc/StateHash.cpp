@@ -93,6 +93,11 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			if (army.is_cut_off()) {
 				hasher.add(0x63757430ULL);
 			}
+			if (army.has_sea_transfer()) {
+				hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_to()->index)));
+				hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_destination()->index)));
+				hasher.add(static_cast<std::uint64_t>(army.get_sea_transfer_days_left()) * 1000 + army.get_sea_transfer_days_total());
+			}
 			hasher.add(army.get_supply_leader_bonus());
 			for (DivisionInstance const& division : army.get_divisions()) {
 				hasher.add(static_cast<std::uint64_t>(division.id));

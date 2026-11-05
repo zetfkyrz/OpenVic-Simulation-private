@@ -5417,6 +5417,56 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the way by sea (P4d, docs/WAR_ASSUMPTIONS.md, section 6): an army with no way over the land (Turkey: Tripolitania behind Egypt) goes to a port
+	// of its country, sails and lands in the port nearest to its destination, then goes on over the land
+
+	void test_sea_transfer(Results& r, InstanceManager& im) {
+		CountryInstance* turkey = im.get_country_instance_manager().get_country_instance_by_identifier("TUR");
+		if (turkey == nullptr || turkey->get_capital() == nullptr) {
+			fmt::println("TEST INFO sea transfer: no Turkey, not checked");
+			return;
+		}
+		ArmyInstance* army = nullptr;
+		for (ArmyInstance& candidate : turkey->get_armies()) {
+			if (candidate.get_location().get_identifier() == "1733" && candidate.get_transport_navy() == nullptr && !candidate.is_moving()) {
+				army = &candidate;
+			}
+		}
+		if (army == nullptr) {
+			fmt::println("TEST INFO sea transfer: no Turkish army in Tripolitania, not checked");
+			return;
+		}
+		const unique_id_t army_id = army->unique_id;
+		ProvinceInstance& capital = *turkey->get_capital();
+		const bool ordered = im.get_unit_instance_manager().order_move(*army, capital, im.get_map_instance());
+		r.check(ordered && army->has_sea_transfer() && army->get_sea_transfer_from() != nullptr && army->get_sea_transfer_to() != nullptr
+				&& army->get_sea_transfer_days_total() > 0,
+			"sea transfer: an army with no way over the land gets a way by sea through the ports of its country",
+			army->has_sea_transfer() ? fmt::format("{} -> {} by sea, {} days", army->get_sea_transfer_from()->get_identifier(),
+				army->get_sea_transfer_to()->get_identifier(), army->get_sea_transfer_days_total()) : std::string {});
+		bool was_at_sea = false;
+		ArmyInstance* found = nullptr;
+		for (int day = 0; day < 200; ++day) {
+			im.force_tick_and_update();
+			found = nullptr;
+			for (ArmyInstance& candidate : turkey->get_armies()) {
+				if (candidate.unique_id == army_id) {
+					found = &candidate;
+				}
+			}
+			if (found == nullptr) {
+				break;
+			}
+			was_at_sea |= found->is_at_sea();
+			if (&found->get_location() == &capital && !found->is_moving()) {
+				break;
+			}
+		}
+		r.check(found != nullptr && was_at_sea && &found->get_location() == &capital,
+			"sea transfer: the army sails, lands and reaches its destination over the land",
+			found != nullptr ? fmt::format("at {}", found->get_location().get_identifier()) : std::string { "gone" });
+	}
+
 	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
 	// ---- the fronts follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): a taken province moves the line, a war brings the allies of the
 	// enemy into the sector, an edited front keeps its pieces, a front without a border stays empty
@@ -5780,7 +5830,9 @@ namespace {
 		const auto gained_outside_zone = [&]() -> std::size_t {
 			std::size_t outside = 0;
 			for (ProvinceInstance const& province : map_instance.get_province_instances()) {
-				if (province.get_controller() == country && std::find(ours_before.begin(), ours_before.end(), &province) == ours_before.end()
+				// The land of another country (taking back an own province somewhere else is not the plan)
+				if (province.get_controller() == country && province.get_owner() != country
+					&& std::find(ours_before.begin(), ours_before.end(), &province) == ours_before.end()
 					&& std::find(zone.begin(), zone.end(), &province) == zone.end()) {
 					outside++;
 				}
@@ -5829,7 +5881,23 @@ namespace {
 			fmt::format("at war {} front {} armies {} next to the target {} mode {} country {} target controller {}", country->is_at_war_with(*neighbour), front != nullptr,
 				front != nullptr ? front->army_ids.size() : 0, next_to_target, front != nullptr ? static_cast<int>(front->mode) : -1, country->get_identifier(),
 				target->get_controller() != nullptr ? target->get_controller()->get_identifier() : "none"));
-		r.check(gained_outside_zone() == 0, "offensive: no land beyond the zone of the plan is taken", fmt::format("{} provinces", gained_outside_zone()));
+		std::string outside_names;
+		for (ProvinceInstance const& province : map_instance.get_province_instances()) {
+			if (province.get_controller() == country && province.get_owner() != country
+				&& std::find(ours_before.begin(), ours_before.end(), &province) == ours_before.end()
+				&& std::find(zone.begin(), zone.end(), &province) == zone.end()) {
+				outside_names += fmt::format(" {} (owner {}, armies of the country there:", province.get_identifier(),
+					province.get_owner() != nullptr ? province.get_owner()->get_identifier() : "none");
+				for (ArmyInstance const& army : province.get_armies()) {
+					if (&army.get_country() == country) {
+						outside_names += fmt::format(" {} group {} manual {}", army.unique_id, army.get_army_group_id(), army.is_manual_order());
+					}
+				}
+				outside_names += ")";
+			}
+		}
+		r.check(gained_outside_zone() == 0, "offensive: no land beyond the zone of the plan is taken",
+			fmt::format("{} provinces{} country {}", gained_outside_zone(), outside_names, country->get_identifier()));
 		fmt::println("TEST INFO offensive execution: target taken {}", target->get_controller() == country);
 		if (War* const war = war_manager.find_war_between(*country, *neighbour); war != nullptr) {
 			war_manager.end_war(im, war->id);
@@ -6420,8 +6488,37 @@ namespace {
 			if (a == nullptr || b == nullptr || a->is_at_war_with(*b) || !war_manager.declare_war(im, *a, *b)) {
 				continue;
 			}
+			// Plenty of the goods of its first template in the stockpile of the first: the AI recruits a whole division (docs/RECRUITMENT.md)
+			UnitTypeManager const& unit_type_manager = im.definition_manager.get_military_manager().get_unit_type_manager();
+			if (!a->get_division_templates().empty()) {
+				for (const std::uint8_t cell : a->get_division_templates().front().cells) {
+					if (RegimentType const* const type = cell != 0 ? unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cell - 1)) : nullptr) {
+						for (auto const& [good, quantity] : type->get_build_cost()) {
+							a->get_good_data(*good).stockpile_amount += quantity * 1000; // the army eats some of the goods every day
+						}
+					}
+				}
+			}
+			const bool had_manpower = im.get_unit_instance_manager().get_manpower(*a).available_regiments >= 12;
+			const std::string ai_reason = a->get_division_templates().empty() || a->get_capital() == nullptr ? std::string { "no template or capital" }
+				: im.get_unit_instance_manager().get_division_recruitment_block_reason(*a, unit_type_manager, a->get_division_templates().front(), *a->get_capital());
+			// The AI recruits only below the regiments it wants: it wants more for the test
+			OpenVicAIDefines& ai_defines = const_cast<OpenVicAIDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().ai);
+			const auto wanted_before = ai_defines.min_war_regiments;
+			ai_defines.min_war_regiments = 100000;
 			for (int day = 0; day < 60; ++day) {
 				im.force_tick_and_update();
+			}
+			ai_defines.min_war_regiments = wanted_before;
+			std::size_t division_orders = 0;
+			for (RecruitmentOrder const& order : im.get_unit_instance_manager().get_recruitment_orders()) {
+				division_orders += order.country == a && order.division_id != 0;
+			}
+			if (had_manpower) {
+				r.check(division_orders > 0, "AI recruitment: an AI country at war with the goods and the manpower recruits a whole division by its template",
+					fmt::format("{} regiments of divisions ordered; at the start: {}; ai {}", division_orders, ai_reason, a->is_ai()));
+			} else {
+				fmt::println("TEST INFO AI recruitment: {} has no manpower for a division, not checked", a->get_identifier());
 			}
 			for (ProvinceInstance const* province : a->get_owned_provinces()) {
 				held += province->get_controller() == b;
@@ -6948,6 +7045,7 @@ namespace {
 		test_straits_and_manual_orders(r, *im);
 		test_division_recruitment(r, *im);
 		test_plan_status(r, *im);
+		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own
 		test_order_moves(r, *im); // ticks days
