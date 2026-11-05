@@ -8,6 +8,7 @@
 #include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/military/Leader.hpp"
+#include "openvic-simulation/military/LeaderSkills.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
@@ -392,9 +393,31 @@ bool OpenVic::delete_army_group(InstanceManager& instance_manager, CountryInstan
 	return true;
 }
 
+bool OpenVic::return_group_armies_to_orders(CountryInstance& country, const std::uint32_t group_id) {
+	bool changed = false;
+	for (ArmyInstance& army : country.get_armies()) {
+		if (army.get_army_group_id() == group_id && army.is_manual_order()) {
+			army.set_manual_order(false);
+			changed = true;
+		}
+	}
+	return changed;
+}
+
 bool OpenVic::set_army_group(CountryInstance const& country, ArmyInstance& army, const std::uint32_t group_id, const std::uint32_t max_attached) {
-	if (!country.has_army_command() || army.get_army_group_id() == group_id) {
+	if (!country.has_army_command()) {
 		return false;
+	}
+	if (army.get_army_group_id() == group_id) {
+		// Already of the group: sent by hand, it (and the divisions of its general) goes back to the orders of the marshal
+		bool changed = false;
+		for (ArmyInstance& other : const_cast<CountryInstance&>(country).get_armies()) {
+			if ((&other == &army || other.get_parent_army_id() == army.unique_id) && other.is_manual_order()) {
+				other.set_manual_order(false);
+				changed = true;
+			}
+		}
+		return group_id != 0 && changed;
 	}
 	if (group_id != 0 && country.find_army_group(group_id) == nullptr) {
 		return false;
@@ -493,7 +516,7 @@ fixed_point_t OpenVic::get_army_planning(ArmyInstance const& army) {
 		return fixed_point_t::_0;
 	}
 	ArmyGroup const* const group = army.get_country().find_army_group(army.get_army_group_id());
-	return group != nullptr ? group->planning : fixed_point_t::_0;
+	return group != nullptr ? group->planning * group->planning_effect : fixed_point_t::_0;
 }
 
 void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInstance& country) {
@@ -569,18 +592,40 @@ void OpenVic::update_army_groups(InstanceManager& instance_manager, CountryInsta
 	WarManager const& war_manager = instance_manager.get_war_manager();
 	const fixed_point_t planning_max = get_planning_max(instance_manager, country);
 	const fixed_point_t planning_gain = get_planning_gain(instance_manager, country);
-	const fixed_point_t planning_decay = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.planning_decay_per_day.of(fixed_point_t::_1);
+	OpenVicWarDefines const& war_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
+	const fixed_point_t planning_decay = war_defines.planning_decay_per_day.of(fixed_point_t::_1);
+	const fixed_point_t marshal_step = war_defines.marshal_skill_step.fixed();
+	const bool at_war = country.is_at_war();
 	for (ArmyGroup& group : groups) {
 		bool has_order = war_manager.find_front_of_group(country, group.id) != nullptr;
 		for (PlanLine const& line : war_manager.get_plan_lines()) {
 			has_order |= line.country == &country && line.group_id == group.id;
 		}
+		// The skill of the planning of the marshal (section 7): the bonus grows faster, falls slower and is worth more
+		LeaderInstance* const marshal = leader_skills::get_group_marshal(instance_manager, group);
+		const std::int32_t planning_level = static_cast<std::int32_t>(
+			leader_skills::get_active_level(war_defines, marshal, leader_skills::skill_t::PLANNING)
+		);
+		group.planning_effect = fixed_point_t::_1 + marshal_step * planning_level;
 		if (!has_order || group.marshal_id == 0) {
 			group.planning = fixed_point_t::_0;
 		} else if (group.plan_active) {
-			group.planning = std::max(group.planning - planning_decay, fixed_point_t::_0);
+			const fixed_point_t decay = planning_decay * std::max(fixed_point_t::_0, fixed_point_t::_1 - marshal_step * planning_level);
+			group.planning = std::max(group.planning - decay, fixed_point_t::_0);
 		} else {
-			group.planning = std::min(group.planning + planning_gain, planning_max);
+			group.planning = std::min(group.planning + planning_gain * (fixed_point_t::_1 + marshal_step * planning_level), planning_max);
+		}
+		// The marshal learns in a war of his country: the supply while his group has armies, the planning while it has an order
+		if (at_war && marshal != nullptr && marshal->is_marshal()) {
+			const bool has_armies = std::any_of(country.get_armies().begin(), country.get_armies().end(), [&group](ArmyInstance const& army) -> bool {
+				return army.get_army_group_id() == group.id;
+			});
+			if (has_armies) {
+				leader_skills::add_experience(instance_manager, *marshal, leader_skills::skill_t::SUPPLY, war_defines.marshal_xp_per_day);
+			}
+			if (has_order) {
+				leader_skills::add_experience(instance_manager, *marshal, leader_skills::skill_t::PLANNING, war_defines.marshal_xp_per_day);
+			}
 		}
 	}
 	// A division follows the army of its general (into a group, out of it); without that army it is an army of its own

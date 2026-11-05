@@ -900,7 +900,17 @@ bool UnitInstanceManager::order_move(
 
 		if (!naval) {
 			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
-				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
+				// Over the land, and over a strait (the Bosporus, the Dardanelles...) unless a navy of an enemy at war holds its sea (as in Vic2)
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT) {
+					if (adjacency.get_through() != nullptr) {
+						ProvinceInstance const& sea = map_instance.get_province_instance_by_definition(*adjacency.get_through());
+						if (std::any_of(sea.get_navies().begin(), sea.get_navies().end(), [&country](NavyInstance const& navy) -> bool {
+							return !navy.empty() && navy.get_country().is_at_war_with(country);
+						})) {
+							continue;
+						}
+					}
+				} else if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND) {
 					continue;
 				}
 				ProvinceDefinition const& to_definition = adjacency.get_to();

@@ -59,6 +59,8 @@ namespace OpenVic {
 		std::uint32_t integrity = 1;
 		// The bonus of the planning (P6, docs/WAR_ASSUMPTIONS.md, section 6): 0..PLANNING_MAX (with the modifier planning_max_add)
 		fixed_point_t planning;
+		// What the bonus is worth in a battle: 1 + MARSHAL_SKILL_STEP x the level of the planning of the marshal (section 7, set every day)
+		fixed_point_t planning_effect = fixed_point_t::_1;
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 	};
 
@@ -117,8 +119,10 @@ namespace OpenVic {
 	// go to the order of the marshal without it (its front, its line of defence, the port of its landing)
 	bool set_army_group_plan_active(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool active);
 	bool delete_army_group(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id);
+	// The armies of the group that were sent by hand go back to the orders of the marshal (they and their divisions); false if there were none
+	bool return_group_armies_to_orders(CountryInstance& country, std::uint32_t group_id);
 	// group_id 0 takes the army out of its group
-	// A group holds at most max_attached armies
+	// A group holds at most max_attached armies; an army of the group attached again that was sent by hand goes back to the orders
 	bool set_army_group(CountryInstance const& country, ArmyInstance& army, std::uint32_t group_id, std::uint32_t max_attached);
 	bool set_army_group_orders(CountryInstance& country, std::uint32_t group_id, bool execute);
 	// leader_id 0 takes the marshal off; the general must not be a marshal already and must be usable; if he leads an army he leaves it
@@ -129,7 +133,8 @@ namespace OpenVic {
 	// The most the bonus of the planning of the country reaches (PLANNING_MAX plus the modifier planning_max_add) and how fast it grows a day
 	[[nodiscard]] fixed_point_t get_planning_max(InstanceManager const& instance_manager, CountryInstance const& country);
 	[[nodiscard]] fixed_point_t get_planning_gain(InstanceManager const& instance_manager, CountryInstance const& country);
-	// The bonus of the planning the army has in a battle: the one of its group, 0 out of a group or while it moves by a manual order
+	// The bonus of the planning the army has in a battle: the one of its group times what the skill of the marshal makes it worth, 0 out of a group or
+	// while it moves by a manual order
 	[[nodiscard]] fixed_point_t get_army_planning(ArmyInstance const& army);
 	// Every day: the countries without the technology have no groups and no marshals; the groups lose what does not exist any more
 	void update_army_groups(InstanceManager& instance_manager, CountryInstance& country);

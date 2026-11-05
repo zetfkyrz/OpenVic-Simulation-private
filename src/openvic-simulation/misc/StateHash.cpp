@@ -10,6 +10,8 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/map/TerrainType.hpp"
+#include "openvic-simulation/military/Leader.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/population/Pop.hpp"
@@ -127,7 +129,25 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(static_cast<std::uint64_t>(army_group.aggression));
 			hasher.add(static_cast<std::uint64_t>(army_group.integrity));
 			hasher.add(army_group.planning);
+			hasher.add(army_group.planning_effect);
 			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
+		}
+		// The experience of the generals (section 7 of docs/WAR_ASSUMPTIONS.md); only the ones that have some
+		for (LeaderInstance const& leader : country.get_leaders<unit_branch_t::LAND>()) {
+			if (leader.get_attack_experience() == fixed_point_t::_0 && leader.get_defence_experience() == fixed_point_t::_0
+				&& leader.get_supply_experience() == fixed_point_t::_0 && leader.get_planning_experience() == fixed_point_t::_0
+				&& leader.get_terrain_experience().empty()) {
+				continue;
+			}
+			hasher.add(leader.unique_id);
+			hasher.add(leader.get_attack_experience());
+			hasher.add(leader.get_defence_experience());
+			hasher.add(leader.get_supply_experience());
+			hasher.add(leader.get_planning_experience());
+			for (auto const& [terrain, experience] : leader.get_terrain_experience()) {
+				hasher.add(static_cast<std::uint64_t>(type_safe::get(terrain->index)));
+				hasher.add(experience);
+			}
 		}
 		for (Theatre const& theatre : country.get_theatres()) {
 			hasher.add(static_cast<std::uint64_t>(theatre.id));

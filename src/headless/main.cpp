@@ -6,6 +6,7 @@
 #include <map>
 #include <memory>
 #include <random>
+#include <deque>
 #include <unordered_set>
 
 #include <fmt/base.h>
@@ -1681,7 +1682,9 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		return;
 	}
 	fmt::println("FRONT war {} vs {}: armies {} and {}", side_a->get_identifier(), side_b->get_identifier(), side_a->get_armies().size(), side_b->get_armies().size());
-	if (!war_manager.declare_war(instance_manager, *side_a, *side_b)) {
+	// OV_FRONT_NOWAR=1: no war, the front of the player is drawn against a neighbour at peace (the divisions go to the border)
+	const bool no_war = std::getenv("OV_FRONT_NOWAR") != nullptr;
+	if (!no_war && !war_manager.declare_war(instance_manager, *side_a, *side_b)) {
 		fmt::println("FRONT FAIL the war was not declared");
 		return;
 	}
@@ -1736,7 +1739,8 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				}
 			}
 		}
-		const bool started = set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, true);
+		// OV_FRONT_NOEXEC=1: the plan is not executed (the divisions only go to the line)
+		const bool started = std::getenv("OV_FRONT_NOEXEC") == nullptr && set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, true);
 		fmt::println(
 			"FRONT_GROUP setup group={} marshal={} front={} offensive={} targets={} active={}", scenario_group_id, side_a->get_army_groups().back().marshal_id != 0 ? 1 : 0,
 			front_id, offensive_id, war_manager.get_plan_line_by_id(offensive_id) != nullptr ? war_manager.get_plan_line_by_id(offensive_id)->provinces.size() : 0, started
@@ -1787,6 +1791,58 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				"FRONT_COUNTRY day={} country={} fronts={} armies={} on_fronts={} auto_plan={} at_war={}", day, side->get_identifier(), fronts, side->get_armies().size(),
 				assigned_armies, war_manager.is_auto_plan_enabled(*side) ? 1 : 0, side->is_at_war() ? 1 : 0
 			);
+		}
+		// OV_FRONT_ARMIES=1: every army of the first country: where it stands, how many steps over the land from the own side of its front, moving
+		if (std::getenv("OV_FRONT_ARMIES") != nullptr) {
+			std::unordered_set<ProvinceInstance const*> line;
+			for (Front const& front : war_manager.get_fronts()) {
+				if (front.country == side_a) {
+					for (FrontEdge const& edge : front.edges) {
+						line.insert(edge.own);
+					}
+				}
+			}
+			std::unordered_map<ProvinceInstance const*, std::uint32_t> steps;
+			std::deque<ProvinceInstance const*> queue;
+			for (ProvinceInstance const* province : line) {
+				steps[province] = 0;
+				queue.push_back(province);
+			}
+			while (!queue.empty()) {
+				ProvinceInstance const* const current = queue.front();
+				queue.pop_front();
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+					if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND && adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::STRAIT) {
+						continue;
+					}
+					ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					if (!next.province_definition.is_water() && !steps.contains(&next)) {
+						steps[&next] = steps[current] + 1;
+						queue.push_back(&next);
+					}
+				}
+			}
+			for (ArmyInstance const& army : side_a->get_armies()) {
+				const auto it = steps.find(&army.get_location());
+				fmt::println(
+					"FRONT_ARMY day={} id={} at={} steps={} moving={} path={} manual={} group={} parent={} divisions={} in_combat={} carried={} organisation={:.2f}/{:.2f}", day, army.unique_id,
+					army.get_location().get_identifier(), it != steps.end() ? static_cast<std::int64_t>(it->second) : -1, army.is_moving() ? 1 : 0, army.get_path().size(),
+					army.is_manual_order() ? 1 : 0, army.get_army_group_id(), army.get_parent_army_id(), army.get_divisions().size(), army.is_in_combat() ? 1 : 0,
+					army.get_transport_navy() != nullptr ? 1 : 0, [&army]() -> double {
+						fixed_point_t organisation = fixed_point_t::_0;
+						for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+							organisation += regiment.get_organisation();
+						}
+						return static_cast<double>(organisation);
+					}(), [&army]() -> double {
+						fixed_point_t maximum = fixed_point_t::_0;
+						for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+							maximum += regiment.get_max_organisation();
+						}
+						return static_cast<double>(maximum);
+					}()
+				);
+			}
 		}
 		if (group_scenario && !side_a->get_army_groups().empty()) {
 			ArmyGroup const& group = side_a->get_army_groups().back();
@@ -1850,9 +1906,26 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		if (group_scenario && day == stop_day) {
 			fmt::println("FRONT_GROUP stop plan={}", set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, false));
 		}
+		// OV_FRONT_MANUAL=<day>: on that day the first army of the first country is sent by hand (the game action) to its capital
+		if (std::getenv("OV_FRONT_MANUAL") != nullptr && day == static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_MANUAL"))))
+			&& !side_a->get_armies().empty() && side_a->get_capital() != nullptr) {
+			ArmyInstance const& army = side_a->get_armies()[0].get();
+			const bool queued = instance_manager.queue_game_action<move_army_argument_t>(army.unique_id, side_a->get_capital()->index);
+			fmt::println("FRONT_MANUAL day={} army={} from={} to={} queued={}", day, army.unique_id, army.get_location().get_identifier(),
+				side_a->get_capital()->get_identifier(), queued);
+		}
 		const auto tick_start = std::chrono::steady_clock::now();
 		instance_manager.force_tick_and_update();
 		const double tick_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - tick_start).count();
+		// OV_FRONT_TRACE=<army id>: that army every day (where, the path, the manual order)
+		if (const char* const trace = std::getenv("OV_FRONT_TRACE"); trace != nullptr) {
+			for (ArmyInstance const& army : side_a->get_armies()) {
+				if (army.unique_id == static_cast<unique_id_t>(std::atoll(trace))) {
+					fmt::println("FRONT_TRACE day={} army={} at={} path={} to={} manual={}", day, army.unique_id, army.get_location().get_identifier(), army.get_path().size(),
+						army.get_path().empty() ? std::string_view { "-" } : std::string_view { army.get_path().back().get().get_identifier() }, army.is_manual_order() ? 1 : 0);
+				}
+			}
+		}
 		tick_sum_ms += tick_ms;
 		tick_max_ms = std::max(tick_max_ms, tick_ms);
 		// The land battles of the two (one line a battle and a day)

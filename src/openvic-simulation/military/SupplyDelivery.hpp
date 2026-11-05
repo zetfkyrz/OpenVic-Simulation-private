@@ -1,9 +1,11 @@
 #pragma once
 
 #include "openvic-simulation/core/object/FixedPoint.hpp"
+#include "openvic-simulation/types/UnitBranchType.hpp"
 #include "openvic-simulation/military/SupplyPriority.hpp"
 
 namespace OpenVic {
+
 	struct InstanceManager;
 	struct OpenVicSupplyDefines;
 
@@ -35,6 +37,10 @@ namespace OpenVic {
 	[[nodiscard]] SupplyReserveResult step_supply_reserve(
 		fixed_point_t reserve, const fixed_point_t shortfall, const fixed_point_t refill, const fixed_point_t capacity
 	);
+
+	// The need of an army in the load of its province: the supply consumption of its regiments, less by the skill of the supply of its field marshal
+	// (docs/WAR_ASSUMPTIONS.md, section 7)
+	[[nodiscard]] fixed_point_t get_army_supply_need(InstanceManager& instance_manager, ArmyInstance const& army);
 
 	// Works out the delivery of all the armies (one thread, in the order of the countries and the provinces)
 	void update_army_supply_delivery(InstanceManager& instance_manager);

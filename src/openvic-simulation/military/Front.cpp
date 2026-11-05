@@ -1203,8 +1203,9 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 }
 
 void WarManager::join_group_armies(Front& front) {
-	// The armies (and the divisions) of the field marshal are on his order: the ones of the group join it, the others leave it. An army that moves
-	// and is not on the order (a manual order) joins when it stops
+	// The armies (and the divisions) of the field marshal are on his order: the ones of the group join it, the others leave it. An army sent by hand
+	// (a manual order) stays off the order where it stopped until the player gives it back (return_group_armies_to_orders: a right click on the
+	// marshal with it selected, a new order of the marshal)
 	CountryInstance& country = *front.country;
 	std::erase_if(front.army_ids, [&country, &front](const unique_id_t army_id) -> bool {
 		for (ArmyInstance const& army : country.get_armies()) {
@@ -1232,10 +1233,9 @@ void WarManager::join_group_armies(Front& front) {
 		if (std::find(front.army_ids.begin(), front.army_ids.end(), army.unique_id) != front.army_ids.end()) {
 			continue;
 		}
-		if (army.is_moving()) {
+		if (army.is_moving() || army.is_manual_order()) {
 			continue;
 		}
-		army.set_manual_order(false);
 		for (Front& other : fronts) {
 			if (&other != &front) {
 				std::erase(other.army_ids, army.unique_id);
@@ -1442,10 +1442,12 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 		if (best == province_count) {
 			break;
 		}
-		placed[best]++;
-		if (front.provinces[best] != &army.get_location()) {
-			unit_manager.order_move(army, *front.provinces[best], map_instance);
+		// A division with no way there over the land (a colony across the sea, the land of a country it may not enter on the way) does not take the
+		// place: it stays for the next division (else the ones that can go stood behind the line, docs/WAR_ASSUMPTIONS.md, section 6, P4)
+		if (front.provinces[best] != &army.get_location() && !unit_manager.order_move(army, *front.provinces[best], map_instance)) {
+			continue;
 		}
+		placed[best]++;
 	}
 }
 

@@ -1334,7 +1334,12 @@ bool GameActionManager::VariantVisitor::operator() (create_border_front_argument
 	const auto [country_index, group_id, neighbour_index] = argument;
 	CountryInstance& country = war_action_country(instance_manager, country_index);
 	CountryInstance& neighbour = war_action_country(instance_manager, neighbour_index);
-	return instance_manager.get_war_manager().create_border_front(instance_manager, country, group_id, neighbour) != 0;
+	if (instance_manager.get_war_manager().create_border_front(instance_manager, country, group_id, neighbour) == 0) {
+		return false;
+	}
+	// A new order of the marshal: the armies of his group sent by hand go to it too
+	return_group_armies_to_orders(country, group_id);
+	return true;
 }
 
 bool GameActionManager::VariantVisitor::operator() (create_border_front_part_argument_t const& argument) const {
@@ -1345,9 +1350,14 @@ bool GameActionManager::VariantVisitor::operator() (create_border_front_part_arg
 		spdlog::error_s("GAME_ACTION_CREATE_BORDER_FRONT_PART called with invalid province indices: {} {}", from_index, to_index);
 		return false;
 	}
-	return instance_manager.get_war_manager().create_border_front(
-		instance_manager, war_action_country(instance_manager, country_index), group_id, war_action_country(instance_manager, neighbour_index), from, to
-	) != 0;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	if (instance_manager.get_war_manager().create_border_front(
+		instance_manager, country, group_id, war_action_country(instance_manager, neighbour_index), from, to
+	) == 0) {
+		return false;
+	}
+	return_group_armies_to_orders(country, group_id);
+	return true;
 }
 
 bool GameActionManager::VariantVisitor::operator() (create_coastal_front_argument_t const& argument) const {
@@ -1357,7 +1367,12 @@ bool GameActionManager::VariantVisitor::operator() (create_coastal_front_argumen
 		spdlog::error_s("GAME_ACTION_CREATE_COASTAL_FRONT called with invalid province index: {}", sea_index);
 		return false;
 	}
-	return instance_manager.get_war_manager().create_coastal_front(instance_manager, war_action_country(instance_manager, country_index), group_id, *sea) != 0;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	if (instance_manager.get_war_manager().create_coastal_front(instance_manager, country, group_id, *sea) == 0) {
+		return false;
+	}
+	return_group_armies_to_orders(country, group_id);
+	return true;
 }
 
 bool GameActionManager::VariantVisitor::operator() (toggle_front_edge_argument_t const& argument) const {
@@ -1378,9 +1393,12 @@ bool GameActionManager::VariantVisitor::operator() (create_plan_line_argument_t 
 		spdlog::error_s("GAME_ACTION_CREATE_PLAN_LINE called with invalid type or province index: {} {}", type, province_index);
 		return false;
 	}
-	return instance_manager.get_war_manager().create_plan_line(
-		instance_manager, war_action_country(instance_manager, country_index), group_id, static_cast<PlanLine::type_t>(type), *province
-	) != 0;
+	CountryInstance& country = war_action_country(instance_manager, country_index);
+	if (instance_manager.get_war_manager().create_plan_line(instance_manager, country, group_id, static_cast<PlanLine::type_t>(type), *province) == 0) {
+		return false;
+	}
+	return_group_armies_to_orders(country, group_id);
+	return true;
 }
 
 bool GameActionManager::VariantVisitor::operator() (toggle_plan_line_province_argument_t const& argument) const {

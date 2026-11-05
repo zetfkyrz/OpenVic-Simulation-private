@@ -1,5 +1,7 @@
 #include "SupplyDelivery.hpp"
 
+#include "openvic-simulation/military/LeaderSkills.hpp"
+
 #include <algorithm>
 #include <vector>
 
@@ -76,25 +78,42 @@ SupplyReserveResult OpenVic::step_supply_reserve(
 }
 
 namespace {
-	// The need of an army: the supply consumption of its regiments
-	fixed_point_t army_need(ArmyInstance const& army) {
+	// The level of the supply of the field marshal of the group of an army (section 7, 0 without one)
+	std::int32_t marshal_supply_level(InstanceManager& instance_manager, ArmyInstance const& army) {
+		OpenVicWarDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war;
+		return static_cast<std::int32_t>(leader_skills::get_active_level(
+			defines, leader_skills::get_army_marshal(instance_manager, army), leader_skills::skill_t::SUPPLY
+		));
+	}
+
+	// The need of an army: the supply consumption of its regiments, MARSHAL_SKILL_STEP less for every level of the supply of its marshal
+	fixed_point_t army_need(InstanceManager& instance_manager, ArmyInstance const& army) {
 		fixed_point_t need = fixed_point_t::_0;
 		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
 			need += regiment.unit_type.supply_consumption;
+		}
+		const std::int32_t level = marshal_supply_level(instance_manager, army);
+		if (level > 0) {
+			const fixed_point_t step = instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.marshal_skill_step.fixed();
+			need *= std::max(fixed_point_t::_0, fixed_point_t::_1 - step * level);
 		}
 		return need;
 	}
 
 	// The need of the armies of the friends of a country in a province
-	fixed_point_t friends_load(ProvinceInstance const& province, SupplyFriends const& friends) {
+	fixed_point_t friends_load(InstanceManager& instance_manager, ProvinceInstance const& province, SupplyFriends const& friends) {
 		fixed_point_t load = fixed_point_t::_0;
 		for (ArmyInstance const& army : province.get_armies()) {
 			if (friends.contains(&army.get_country())) {
-				load += army_need(army);
+				load += army_need(instance_manager, army);
 			}
 		}
 		return load;
 	}
+}
+
+fixed_point_t OpenVic::get_army_supply_need(InstanceManager& instance_manager, ArmyInstance const& army) {
+	return army_need(instance_manager, army);
 }
 
 void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
@@ -146,7 +165,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 		for (ProvinceInstance* const province : provinces) {
 			const SupplyTerritory territory = calculate_supply_territory(*province, map, country, friends, defines);
 			const ProvinceInstance::supply_breakdown_t supply = province->get_supply_breakdown(&country, territory);
-			const fixed_point_t load = friends_load(*province, friends);
+			const fixed_point_t load = friends_load(instance_manager, *province, friends);
 			fixed_point_t limit = supply.capacity;
 
 			// A province that cannot feed what stands in it takes the free limit of the neighbours that are held by the country or its friends
@@ -165,7 +184,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 					}
 					const std::size_t neighbour_index = type_safe::get(neighbour.index);
 					const fixed_point_t neighbour_limit = neighbour.get_supply_breakdown(&country, SupplyTerritory {}).capacity;
-					const fixed_point_t free = neighbour_limit - friends_load(neighbour, friends) - lent[neighbour_index];
+					const fixed_point_t free = neighbour_limit - friends_load(instance_manager, neighbour, friends) - lent[neighbour_index];
 					if (free <= fixed_point_t::_0) {
 						continue;
 					}
@@ -206,8 +225,13 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 				}
 				army.set_supply_leader_bonus(leader_bonus);
 				const fixed_point_t third_factor = std::max(fixed_point_t::_0, fixed_point_t::_1 + leader_bonus - calculate_temporary_supply_debuff(country));
+				// The skill of the supply of the marshal: the army gets MARSHAL_SKILL_STEP more of the limit for every level (section 7)
+				const std::int32_t supply_level = marshal_supply_level(instance_manager, army);
+				const fixed_point_t throughput = supply_level > 0
+					? fixed_point_t::_1 + instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.marshal_skill_step.fixed() * supply_level
+					: fixed_point_t::_1;
 				const SupplyDeliveryResult result = calculate_supply_delivery(
-					std::clamp(share * third_factor, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
+					std::clamp(share * throughput * third_factor, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
 				);
 				army.set_supply_send_multiplier(result.send_multiplier);
 				// Cut off from every source of the supply (P8): nothing arrives

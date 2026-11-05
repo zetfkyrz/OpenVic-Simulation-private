@@ -46,6 +46,7 @@
 #include <openvic-simulation/modifier/ModifierManager.hpp>
 #include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/military/SupplyDelivery.hpp>
+#include <openvic-simulation/military/LeaderSkills.hpp>
 #include <openvic-simulation/military/SupplyTerritory.hpp>
 #include <openvic-simulation/military/UnitInstance.hpp>
 #include <openvic-simulation/military/War.hpp>
@@ -4981,6 +4982,295 @@ namespace {
 		}
 	}
 
+
+	// ---- the skills of the leaders (docs/WAR_ASSUMPTIONS.md, section 7): the levels by the experience, the battle teaches the generals (the terrain
+	// half as fast), a new level gives the country prestige, the attack and the defence work in a battle, the field marshal learns the supply and the
+	// planning in a war and they work; the role decides which skills work
+
+	void test_leader_skills(Results& r, InstanceManager& im) {
+		using namespace leader_skills;
+		OpenVicWarDefines& war = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		const std::int32_t general_per_level = war.general_xp_per_level;
+		const std::int32_t marshal_per_level = war.marshal_xp_per_level;
+		r.check(level_of(fixed_point_t(general_per_level) - fixed_point_t::_1, general_per_level, 5) == 0
+				&& level_of(fixed_point_t(general_per_level), general_per_level, 5) == 1
+				&& level_of(fixed_point_t(general_per_level * 3), general_per_level, 5) == 2
+				&& level_of(fixed_point_t(general_per_level * 15), general_per_level, 5) == 5
+				&& level_of(fixed_point_t(general_per_level * 100), general_per_level, 5) == 5
+				&& level_of(fixed_point_t(marshal_per_level * 6), marshal_per_level, 3) == 3,
+			"leader skills: level n needs the experience of a level x (1 + ... + n), no more than the maximum");
+		r.check(scale_terrain_effect(fixed_point_t(1) / 10, fixed_point_t(5) / 100, 2) == fixed_point_t(1) / 10 * (fixed_point_t(110) / 100)
+				&& scale_terrain_effect(fixed_point_t(-2) / 10, fixed_point_t(5) / 100, 2) == fixed_point_t(-2) / 10 * (fixed_point_t(90) / 100)
+				&& scale_terrain_effect(fixed_point_t(-2) / 10, fixed_point_t(5) / 100, 0) == fixed_point_t(-2) / 10,
+			"leader skills: a level of a terrain makes its bonus 5 % bigger and its penalty 5 % smaller");
+
+		// The battles of the war of France and Prussia (test_live_battle) taught the generals: the terrain half of the attack and the defence
+		std::size_t taught = 0;
+		bool halves = true;
+		for (CountryInstance* country : { im.get_country_instance_manager().get_country_instance_by_identifier("FRA"),
+				im.get_country_instance_manager().get_country_instance_by_identifier("PRU") }) {
+			if (country == nullptr) {
+				continue;
+			}
+			for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+				fixed_point_t terrain_total = fixed_point_t::_0;
+				for (auto const& [terrain, experience] : leader.get_terrain_experience()) {
+					terrain_total += experience;
+				}
+				const fixed_point_t battle = leader.get_attack_experience() + leader.get_defence_experience();
+				taught += battle > fixed_point_t::_0;
+				halves &= near(terrain_total, war.general_terrain_xp_share.of(battle), fixed_point_t(1) / 100);
+			}
+		}
+		r.check(taught > 0 && halves, "leader skills: the generals of a battle learn the attack or the defence, the terrain half of it",
+			fmt::format("{} generals learned", taught));
+
+		// A new level: the prestige of the country, the message; the levels of a marshal are worth more
+		CountryInstance* france = im.get_country_instance_manager().get_country_instance_by_identifier("FRA");
+		LeaderInstance* general = nullptr;
+		ArmyInstance* general_army = nullptr;
+		for (ArmyInstance& army : france->get_armies()) {
+			if (army.get_leader() != nullptr && !army.get_leader()->is_marshal() && army.get_transport_navy() == nullptr && !army.get_divisions().empty()) {
+				general = army.get_leader();
+				general_army = &army;
+				break;
+			}
+		}
+		r.check(general != nullptr, "leader skills: France has an army with a general");
+		if (general == nullptr) {
+			return;
+		}
+		const fixed_point_t saved_attack = general->get_attack_experience();
+		const fixed_point_t saved_defence = general->get_defence_experience();
+		general->set_attack_experience(fixed_point_t::_0);
+		const fixed_point_t prestige_before = france->get_prestige_untracked();
+		const std::size_t messages_before = im.get_notification_log().get_entries().size();
+		add_experience(im, *general, skill_t::ATTACK, experience_for_level(3, general_per_level));
+		r.check(get_level(war, *general, skill_t::ATTACK) == 3 && france->get_prestige_untracked() == prestige_before + war.general_level_prestige * 6
+				&& im.get_notification_log().get_entries().size() == messages_before + 1
+				&& im.get_notification_log().get_entries().back().kind == "leader_skill_up",
+			"leader skills: three levels at once give the country 1 + 2 + 3 prestige and a message",
+			fmt::format("prestige {} -> {}", france->get_prestige_untracked() - prestige_before, france->get_prestige_untracked()));
+
+		// The attack and the defence of the general in a battle: the estimate against a Prussian army
+		CountryInstance* prussia = im.get_country_instance_manager().get_country_instance_by_identifier("PRU");
+		ProvinceInstance const* target = nullptr;
+		for (ArmyInstance const& army : prussia->get_armies()) {
+			if (army.get_transport_navy() == nullptr && !army.empty() && !army.get_location().province_definition.is_water()) {
+				target = &army.get_location();
+				break;
+			}
+		}
+		if (target != nullptr && france->is_at_war_with(*prussia)) {
+			std::vector<ArmyInstance const*> attacking { general_army };
+			general->set_attack_experience(fixed_point_t::_0);
+			general->set_defence_experience(fixed_point_t::_0);
+			const BattleEstimate plain = im.get_war_manager().estimate_battle(im, attacking, *target);
+			general->set_attack_experience(experience_for_level(5, general_per_level));
+			const BattleEstimate skilled = im.get_war_manager().estimate_battle(im, attacking, *target);
+			r.check(plain.valid && skilled.valid && near(skilled.attacker_attack, plain.attacker_attack * fixed_point_t(125) / 100, plain.attacker_attack / 100),
+				"leader skills: 5 levels of the attack give the divisions of the general 25 % more attack",
+				fmt::format("{} -> {}", dbl(plain.attacker_attack), dbl(skilled.attacker_attack)));
+			// The role: the same general made a marshal does not use the skills of a general
+			general->set_marshal(true);
+			r.check(get_active_level(war, general, skill_t::ATTACK) == 0 && get_level(war, *general, skill_t::ATTACK) == 5,
+				"leader skills: a general that is a marshal keeps his levels of a general but does not use them");
+			general->set_marshal(false);
+		} else {
+			fmt::println("TEST INFO leader skills: no Prussian army to estimate against");
+		}
+		general->set_attack_experience(saved_attack);
+		general->set_defence_experience(saved_defence);
+
+		// The field marshal: a war teaches him, his levels work on the planning and the supply
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && candidate.has_army_command() && candidate.is_at_war() && !candidate.get_armies().empty()) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO leader skills: no country with the command at war, the marshal not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		LeaderInstance* marshal = nullptr;
+		for (LeaderInstance& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && leader.get_unit_instance_group() == nullptr
+				&& set_army_group_marshal(im, *country, group_id, leader.unique_id)) {
+				marshal = &leader;
+				break;
+			}
+		}
+		if (marshal == nullptr) {
+			fmt::println("TEST INFO leader skills: no free general for a field marshal, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		ArmyInstance* army = nullptr;
+		for (ArmyInstance& candidate : country->get_armies()) {
+			if (candidate.get_army_group_id() == 0 && candidate.get_parent_army_id() == 0 && !candidate.empty()) {
+				army = &candidate;
+				break;
+			}
+		}
+		if (army == nullptr || !set_army_group(*country, *army, group_id, get_marshal_max_attached(im, *country))) {
+			fmt::println("TEST INFO leader skills: no army for the marshal, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		const fixed_point_t supply_before = marshal->get_supply_experience();
+		const fixed_point_t planning_before = marshal->get_planning_experience();
+		update_army_groups(im, *country);
+		r.check(marshal->get_supply_experience() == supply_before + war.marshal_xp_per_day && marshal->get_planning_experience() == planning_before,
+			"leader skills: a marshal at war learns the supply while his group has armies, not the planning without an order");
+		const fixed_point_t base_need = get_army_supply_need(im, *army);
+		marshal->set_supply_experience(experience_for_level(2, marshal_per_level));
+		const fixed_point_t skilled_need = get_army_supply_need(im, *army);
+		r.check(near(skilled_need, base_need * fixed_point_t(90) / 100, base_need / 1000 + fixed_point_t(1) / 1000),
+			"leader skills: 2 levels of the supply of the marshal: his armies need 10 % less", fmt::format("{} -> {}", dbl(base_need), dbl(skilled_need)));
+		marshal->set_planning_experience(experience_for_level(3, marshal_per_level));
+		update_army_groups(im, *country);
+		ArmyGroup const* const group = country->find_army_group(group_id);
+		r.check(group != nullptr && group->planning_effect == fixed_point_t::_1 + war.marshal_skill_step.fixed() * 3,
+			"leader skills: 3 levels of the planning: the bonus is worth 15 % more");
+		marshal->set_supply_experience(supply_before);
+		marshal->set_planning_experience(planning_before);
+		set_army_group(*country, *army, 0, get_marshal_max_attached(im, *country));
+		delete_army_group(im, *country, group_id);
+	}
+
+	// ---- the armies cross the straits (the Bosporus, the Dardanelles...) like in Vic2; an army sent by hand stays off the orders of the marshal until the
+	// player gives it back (a right click on the marshal: set_army_group to the same group, or a new order of the marshal)
+
+	void test_straits_and_manual_orders(Results& r, InstanceManager& im) {
+		MapInstance& map_instance = im.get_map_instance();
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		// A strait between two land provinces of one country that has an army
+		bool crossed = false, found = false;
+		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+			if (found || province.province_definition.is_water() || province.get_controller() == nullptr) {
+				continue;
+			}
+			CountryInstance* const country = province.get_controller();
+			for (ProvinceDefinition::adjacency_t const& adjacency : province.province_definition.get_adjacencies()) {
+				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::STRAIT || adjacency.get_to().is_water()) {
+					continue;
+				}
+				ProvinceInstance& other = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (other.get_controller() != country) {
+					continue;
+				}
+				ArmyInstance* army = nullptr;
+				for (ArmyInstance& candidate : country->get_armies()) {
+					if (!candidate.empty() && candidate.get_transport_navy() == nullptr && !candidate.is_moving() && !candidate.is_in_combat()) {
+						army = &candidate;
+						break;
+					}
+				}
+				if (army == nullptr) {
+					continue;
+				}
+				found = true;
+				ProvinceInstance& home = army->get_location();
+				army->set_location(province);
+				crossed = unit_manager.order_move(*army, other, map_instance) && army->get_path().size() >= 1
+					&& &army->get_path().back().get() == &other;
+				fmt::println("TEST INFO straits: {} from {} to {}, path {}", country->get_identifier(), province.get_identifier(), other.get_identifier(), army->get_path().size());
+				army->clear_path();
+				army->set_location(home);
+				break;
+			}
+		}
+		r.check(found && crossed, "straits: an army goes over a strait between two provinces of its country");
+
+		// The manual order
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.get_armies().empty()) {
+				continue;
+			}
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate) {
+						neighbour = other;
+					}
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO manual orders: no country with the command and a neighbour, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		ArmyInstance* army = nullptr;
+		for (ArmyInstance& candidate : country->get_armies()) {
+			if (candidate.get_army_group_id() == 0 && candidate.get_parent_army_id() == 0 && !candidate.empty() && candidate.get_transport_navy() == nullptr) {
+				army = &candidate;
+				break;
+			}
+		}
+		if (army == nullptr || !set_army_group(*country, *army, group_id, get_marshal_max_attached(im, *country))) {
+			fmt::println("TEST INFO manual orders: no army for the group, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		const unique_id_t army_id = army->unique_id;
+		const auto find_army_by_id = [](CountryInstance& owner, const unique_id_t id) -> ArmyInstance* {
+			for (ArmyInstance& candidate : owner.get_armies()) {
+				if (candidate.unique_id == id) {
+					return &candidate;
+				}
+			}
+			return nullptr;
+		};
+		WarManager& war_manager = im.get_war_manager();
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		const auto on_front = [&]() -> bool {
+			Front const* const front = war_manager.get_front_by_id(front_id);
+			return front != nullptr && std::find(front->army_ids.begin(), front->army_ids.end(), army_id) != front->army_ids.end();
+		};
+		// Sent by hand and stopped: it stays off the front
+		army->clear_path();
+		army->set_manual_order(true);
+		im.force_tick_and_update();
+		army = find_army_by_id(*country, army_id);
+		r.check(army != nullptr && army->is_manual_order() && !on_front(), "manual orders: an army sent by hand that stopped stays off the front of its marshal");
+		if (army == nullptr) {
+			return;
+		}
+		// The right click on the marshal (the same group again): back to the orders
+		r.check(set_army_group(*country, *army, group_id, get_marshal_max_attached(im, *country)) && !army->is_manual_order(),
+			"manual orders: attached to its marshal again it goes back to his orders");
+		im.force_tick_and_update();
+		r.check(on_front(), "manual orders: back on the front of the marshal");
+		// A new order of the marshal (the game action) takes it back too
+		army = find_army_by_id(*country, army_id);
+		if (army == nullptr) {
+			return;
+		}
+		army->clear_path();
+		army->set_manual_order(true);
+		im.force_tick_and_update();
+		im.queue_game_action<create_border_front_argument_t>(country->index, group_id, neighbour->index);
+		im.force_tick_and_update();
+		army = find_army_by_id(*country, army_id);
+		r.check(army != nullptr && !army->is_manual_order(), "manual orders: a new order of the marshal takes back the armies sent by hand");
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
 	// ---- the fronts follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): a taken province moves the line, a war brings the allies of the
 	// enemy into the sector, an edited front keeps its pieces, a front without a border stays empty
@@ -6508,6 +6798,8 @@ namespace {
 		}
 		test_live_divisions(r, *im);
 		test_live_battle(r, *im);
+		test_leader_skills(r, *im);
+		test_straits_and_manual_orders(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own
 		test_order_moves(r, *im); // ticks days

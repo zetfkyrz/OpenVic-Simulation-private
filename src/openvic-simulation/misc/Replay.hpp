@@ -82,7 +82,11 @@ namespace OpenVic {
 		// 51: the plans of the field marshals for the AI countries (P11), behind ov_war.PLAN_AI_ENABLED (0: off, the AI as before)
 		// 52: an army cut off from the supply far from the enemy (a colony) gets no supply and no new men but keeps its organisation; only a pocket next to
 		//     the land of an enemy at war (or deep in it) takes the organisation and makes it give itself up
-		inline constexpr int SIMULATION_VERSION = 52;
+		// 53: the experience of the leaders: a general learns the attack, the defence and the terrains in battles (5 levels of 5 %), a field marshal the
+		//     supply and the planning in wars (3 levels of 5 %); a new level gives the country prestige; the armies cross the straits (not past an enemy
+		//     navy in the strait), an army sent by hand stays off the orders of its marshal until the player gives it back, a division with no way to the
+		//     line does not take a place of it
+		inline constexpr int SIMULATION_VERSION = 53;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -18,6 +18,7 @@
 #include "openvic-simulation/map/MapDefinition.hpp"
 #include "openvic-simulation/map/TerrainType.hpp"
 #include "openvic-simulation/military/Division.hpp"
+#include "openvic-simulation/military/LeaderSkills.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
 #include "openvic-simulation/military/UnitModifiers.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
@@ -515,9 +516,10 @@ namespace {
 
 	// The buff of a regiment type in the battle: its general buff, the one of the terrain of the province and the ones against the types of the
 	// enemy front (in proportion to the share of the enemy regiments they are against)
+	// terrain_step x terrain_level: the skill of the general in the terrain makes its penalties smaller and its bonuses bigger
 	RegimentType::OvBuff type_buff(
 		RegimentType const& regiment_type, std::string_view terrain, std::vector<std::pair<RegimentType const*, std::uint32_t>> const& enemy_types,
-		const std::uint32_t enemy_regiments
+		const std::uint32_t enemy_regiments, const fixed_point_t terrain_step = fixed_point_t::_0, const std::uint32_t terrain_level = 0
 	) {
 		RegimentType::OvBuff buff = regiment_type.ov.general;
 		const auto add = [&buff](RegimentType::OvBuff const& other, const fixed_point_t share) {
@@ -527,7 +529,11 @@ namespace {
 		};
 		for (auto const& [identifier, terrain_buff] : regiment_type.ov.terrain) {
 			if (identifier == terrain) {
-				add(terrain_buff, fixed_point_t::_1);
+				RegimentType::OvBuff scaled = terrain_buff;
+				scaled.attack_mult = leader_skills::scale_terrain_effect(scaled.attack_mult, terrain_step, terrain_level);
+				scaled.defense_mult = leader_skills::scale_terrain_effect(scaled.defense_mult, terrain_step, terrain_level);
+				scaled.breakthrough_mult = leader_skills::scale_terrain_effect(scaled.breakthrough_mult, terrain_step, terrain_level);
+				add(scaled, fixed_point_t::_1);
 			}
 		}
 		if (enemy_regiments > 0) {
@@ -612,7 +618,8 @@ namespace {
 	const auto defender_types = front_types(defenders, defender_regiments);
 	const std::string_view terrain_id = terrain != nullptr ? std::string_view { terrain->get_identifier() } : std::string_view {};
 	const fixed_point_t terrain_defence = fixed_point_t::_1 + wd.terrain_defence_per_point.of(terrain != nullptr ? terrain->get_defence_bonus() : fixed_point_t::_0);
-	const fixed_point_t attacker_terrain = conditions.get_terrain(terrain_id) * conditions.night * conditions.weather;
+	const fixed_point_t terrain_conditions = conditions.get_terrain(terrain_id);
+	const fixed_point_t skill_step = wd.general_skill_step.fixed();
 
 	// What every division of the front is worth today: the parts of its types with their buffs, its general, its supply, the bonus of the planning of its
 	// field marshal (P6)
@@ -623,18 +630,25 @@ namespace {
 				continue;
 			}
 			const LeaderBonus bonus = get_leader_bonus(*unit.army, cache);
+			// The skills of the general (section 7): the attack and the defence by levels, the terrain of the province
+			LeaderInstance const* const general = unit.army->get_leader();
+			const std::uint32_t attack_level = leader_skills::get_active_level(wd, general, leader_skills::skill_t::ATTACK);
+			const std::uint32_t defence_level = leader_skills::get_active_level(wd, general, leader_skills::skill_t::DEFENCE);
+			const std::uint32_t terrain_level = terrain != nullptr ? leader_skills::get_active_level(wd, general, leader_skills::skill_t::TERRAIN, terrain) : 0;
+			const fixed_point_t skill_attack = fixed_point_t::_1 + skill_step * static_cast<std::int32_t>(attack_level);
+			const fixed_point_t skill_defence = fixed_point_t::_1 + skill_step * static_cast<std::int32_t>(defence_level);
 			const fixed_point_t leader_attack = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.attack / wd.leader_point_divisor);
 			const fixed_point_t leader_defence = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
 			const fixed_point_t supply = unit.army->get_supply_level();
 			fixed_point_t attack = fixed_point_t::_0, defence = fixed_point_t::_0, breakthrough = fixed_point_t::_0;
 			for (DivisionStats::TypePart const& part : unit.stats->parts) {
-				const RegimentType::OvBuff buff = type_buff(*part.type, terrain_id, enemy_types, enemy_regiments);
+				const RegimentType::OvBuff buff = type_buff(*part.type, terrain_id, enemy_types, enemy_regiments, skill_step, terrain_level);
 				attack += part.attack * (fixed_point_t::_1 + buff.attack_mult);
 				defence += part.defence * (fixed_point_t::_1 + buff.defense_mult);
 				breakthrough += part.breakthrough * (fixed_point_t::_1 + buff.breakthrough_mult);
 			}
 			const fixed_point_t planning = fixed_point_t::_1 + get_army_planning(*unit.army);
-			unit.attack = attack * leader_attack * supply * planning;
+			unit.attack = attack * leader_attack * skill_attack * supply * planning;
 			unit.breakthrough = breakthrough * leader_attack * supply * planning;
 			if (attacking) {
 				unit.protection = unit.breakthrough;
@@ -642,10 +656,23 @@ namespace {
 				ProvinceInstance const* const from = unit.origin;
 				const bool river = from != nullptr
 					&& map_definition.get_river_border_share(from->province_definition, province.province_definition) >= wd.river_border_min_share.fixed();
-				unit.conditions = attacker_terrain * (river ? conditions.river_crossing : fixed_point_t::_1);
+				// The terrain for an attacker: its conditions (a penalty or a bonus) and the defence the terrain gives the enemy (a penalty), both
+				// changed by the skill of the general in it
+				const fixed_point_t own_conditions = fixed_point_t::_1
+					+ leader_skills::scale_terrain_effect(terrain_conditions - fixed_point_t::_1, skill_step, terrain_level);
+				const fixed_point_t enemy_terrain = fixed_point_t::_1
+					- leader_skills::scale_terrain_effect(fixed_point_t::_1 - terrain_defence, skill_step, terrain_level);
+				const fixed_point_t terrain_factor = enemy_terrain > fixed_point_t::_0 ? terrain_defence / enemy_terrain : fixed_point_t::_1;
+				unit.conditions = own_conditions * terrain_factor * conditions.night * conditions.weather
+					* (river ? conditions.river_crossing : fixed_point_t::_1);
 			} else {
 				const fixed_point_t fortification = unit.stats->fortification + fixed_point_t(static_cast<std::int32_t>(unit.army->get_dig_in_level()));
-				unit.protection = battle_formulas::defender_protection(wd, defence * leader_defence * supply, fortification, terrain_defence);
+				// The defence the terrain gives is a bonus: the skill of the general makes it bigger
+				const fixed_point_t own_terrain_defence = fixed_point_t::_1
+					+ leader_skills::scale_terrain_effect(terrain_defence - fixed_point_t::_1, skill_step, terrain_level);
+				unit.protection = battle_formulas::defender_protection(
+					wd, defence * leader_defence * skill_defence * supply, fortification, own_terrain_defence
+				);
 			}
 		}
 	};
@@ -1029,6 +1056,24 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		}
 
 		const BattleDay battle_day = work_out_battle_day(instance_manager, province, attackers, defenders, battle.front_divisions);
+		// The generals of both sides learn (section 7): the attack or the defence, and the terrain of the province
+		const auto learn = [&](BattleSideUnits const& side, const leader_skills::skill_t skill) {
+			for (ArmyInstance* army : side.armies) {
+				LeaderInstance* const general = army->get_leader();
+				if (general == nullptr || general->is_marshal()) {
+					continue;
+				}
+				leader_skills::add_experience(instance_manager, *general, skill, wd.general_xp_per_battle_day);
+				if (province.get_terrain_type() != nullptr) {
+					leader_skills::add_experience(
+						instance_manager, *general, leader_skills::skill_t::TERRAIN, wd.general_terrain_xp_share.of(wd.general_xp_per_battle_day),
+						province.get_terrain_type()
+					);
+				}
+			}
+		};
+		learn(attackers, leader_skills::skill_t::ATTACK);
+		learn(defenders, leader_skills::skill_t::DEFENCE);
 		const std::uint32_t width = battle_day.width;
 		const std::uint32_t attacker_ranks = battle_day.attacker_ranks;
 		const std::uint32_t defender_ranks = battle_day.defender_ranks;

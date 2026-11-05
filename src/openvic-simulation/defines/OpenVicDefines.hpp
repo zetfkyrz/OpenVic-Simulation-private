@@ -350,6 +350,27 @@ namespace OpenVic {
 	INT(PLAN_AI_ENABLED, plan_ai_enabled, 0, 0, 1) \
 	FIXED(NAVAL_PLAN_PENALTY_REDUCTION, naval_plan_penalty_reduction, fixed_point_t(2), 0, 100) \
 	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
+	/* The experience of the leaders (docs/WAR_ASSUMPTIONS.md, section 7, military/LeaderSkills.*). A general learns in battles: every day of a */ \
+	/* battle of his army GENERAL_XP_PER_BATTLE_DAY of the attack (his army attacks) or of the defence (it defends) and GENERAL_TERRAIN_XP_SHARE of */ \
+	/* that of the terrain of the province. Level n of a skill needs GENERAL_XP_PER_LEVEL x (1 + 2 + ... + n), at most GENERAL_SKILL_MAX_LEVEL; a */ \
+	/* level of the attack or the defence gives GENERAL_SKILL_STEP more of it to his divisions, one of a terrain makes the penalty of the terrain */ \
+	/* GENERAL_SKILL_STEP smaller and its bonus GENERAL_SKILL_STEP bigger (a share of them). A field marshal learns every day of a war of his */ \
+	/* country MARSHAL_XP_PER_DAY of the supply (his group has armies) and of the planning (it has an order); level n needs MARSHAL_XP_PER_LEVEL */ \
+	/* x (1 + ... + n), at most MARSHAL_SKILL_MAX_LEVEL. A level of the supply: the armies of the group need MARSHAL_SKILL_STEP less and get */ \
+	/* MARSHAL_SKILL_STEP more of the supply limit of their province; of the planning: the bonus grows MARSHAL_SKILL_STEP faster, falls */ \
+	/* MARSHAL_SKILL_STEP slower and is worth MARSHAL_SKILL_STEP more. The role decides: a general that is a marshal learns and uses only the */ \
+	/* skills of a marshal. A new level n gives the country n x GENERAL_LEVEL_PRESTIGE (a general) or n x MARSHAL_LEVEL_PRESTIGE of prestige */ \
+	FIXED(GENERAL_XP_PER_BATTLE_DAY, general_xp_per_battle_day, fixed_point_t::_1, 0, 1000) \
+	RATE(GENERAL_TERRAIN_XP_SHARE, general_terrain_xp_share, Rate(50, 100), 0, 10) \
+	INT(GENERAL_XP_PER_LEVEL, general_xp_per_level, 10, 1, 100000) \
+	INT(GENERAL_SKILL_MAX_LEVEL, general_skill_max_level, 5, 0, 20) \
+	RATE(GENERAL_SKILL_STEP, general_skill_step, Rate(5, 100), 0, 1) \
+	FIXED(MARSHAL_XP_PER_DAY, marshal_xp_per_day, fixed_point_t::_1, 0, 1000) \
+	INT(MARSHAL_XP_PER_LEVEL, marshal_xp_per_level, 30, 1, 100000) \
+	INT(MARSHAL_SKILL_MAX_LEVEL, marshal_skill_max_level, 3, 0, 20) \
+	RATE(MARSHAL_SKILL_STEP, marshal_skill_step, Rate(5, 100), 0, 1) \
+	FIXED(GENERAL_LEVEL_PRESTIGE, general_level_prestige, fixed_point_t::_1, 0, 1000) \
+	FIXED(MARSHAL_LEVEL_PRESTIGE, marshal_level_prestige, fixed_point_t(5), 0, 1000) \
 	/* The limits of the division templates (docs/PLAN_ARMY_SUPPLY_FRONTS.md, 4b): the ranks (columns) and the depth (rows) of the grid and the */ \
 	/* slots of the support companies of a rank. A country starts with the default and gets more from the effects max_columns, max_rows and */ \
 	/* max_company_slots of its modifiers (technologies, unlocks); never more than the maximum */ \
