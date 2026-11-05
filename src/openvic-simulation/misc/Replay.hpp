@@ -86,7 +86,9 @@ namespace OpenVic {
 		//     supply and the planning in wars (3 levels of 5 %); a new level gives the country prestige; the armies cross the straits (not past an enemy
 		//     navy in the strait), an army sent by hand stays off the orders of its marshal until the player gives it back, a division with no way to the
 		//     line does not take a place of it
-		inline constexpr int SIMULATION_VERSION = 53;
+		// 54: the recruitment of a division by a template (the manpower of the pops of soldiers, 3000 men a regiment), the state of the executed plan
+		//     (the war with the countries of the front, the targets, the divisions, the chance) checked every day and when the execution is pressed
+		inline constexpr int SIMULATION_VERSION = 54;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

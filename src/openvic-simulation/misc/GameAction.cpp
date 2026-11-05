@@ -348,6 +348,23 @@ bool GameActionManager::VariantVisitor::operator() (start_land_unit_recruitment_
 	return instance_manager.get_unit_instance_manager().start_recruitment(*country, *regiment_type, *province, *pop);
 }
 
+bool GameActionManager::VariantVisitor::operator() (start_division_recruitment_argument_t const& argument) const {
+	const auto [country_index, template_id, province_index] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (OV_unlikely(province == nullptr)) {
+		spdlog::error_s("GAME_ACTION_START_DIVISION_RECRUITMENT called with invalid province index: {}", province_index);
+		return false;
+	}
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	DivisionTemplate const* const division_template = country.find_division_template(template_id);
+	if (division_template == nullptr) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().start_division_recruitment(
+		country, instance_manager.definition_manager.get_military_manager().get_unit_type_manager(), *division_template, *province
+	);
+}
+
 // Diplomacy
 bool GameActionManager::VariantVisitor::operator() (diplomatic_action_argument_t const& argument) const {
 	const auto [sender_index, receiver_index, action_type_index] = argument;
@@ -1290,7 +1307,12 @@ bool GameActionManager::VariantVisitor::operator() (set_army_group_modes_argumen
 bool GameActionManager::VariantVisitor::operator() (set_army_group_plan_active_argument_t const& argument) const {
 	const auto [country_index, group_id, active] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
-	return set_army_group_plan_active(instance_manager, country, group_id, active);
+	if (!set_army_group_plan_active(instance_manager, country, group_id, active)) {
+		return false;
+	}
+	// The state of the plan at once (the war with the countries of the front, the targets, the chance), the orders come with the next day
+	instance_manager.get_war_manager().update_plan_status(instance_manager, country, group_id, true);
+	return true;
 }
 
 bool GameActionManager::VariantVisitor::operator() (create_theatre_argument_t const& argument) const {

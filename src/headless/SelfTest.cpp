@@ -5271,6 +5271,152 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the recruitment of a division by a template (docs/RECRUITMENT.md): the manpower of the pops of soldiers (a regiment is POP_SIZE_PER_REGIMENT
+	// men), all the regiments of the template at once, one division of the template when they are ready, the cancel of the whole division
+
+	void test_division_recruitment(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		UnitTypeManager const& unit_type_manager = im.definition_manager.get_military_manager().get_unit_type_manager();
+		CountryInstance* country = nullptr;
+		ProvinceInstance* province = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.get_division_templates().empty() || candidate.is_at_war()
+				|| unit_manager.get_manpower(candidate).available_regiments < 12 || candidate.get_capital() == nullptr) {
+				continue;
+			}
+			country = &candidate;
+			province = candidate.get_capital();
+			break;
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO division recruitment: no country with a template and 12 free regiments, not checked");
+			return;
+		}
+		DivisionTemplate const& division_template = country->get_division_templates().front();
+		const std::uint32_t regiments = division_template.get_total_slots();
+		const Manpower before = unit_manager.get_manpower(*country);
+		r.check(before.men_per_regiment == 3000 && before.available_regiments <= before.max_regiments,
+			"division recruitment: the manpower counts the regiments of the pops of soldiers, 3000 men a regiment",
+			fmt::format("{} of {} regiments", before.available_regiments, before.max_regiments));
+		// The goods of the regiments in the stockpile
+		for (const std::uint8_t cell : division_template.cells) {
+			if (RegimentType const* const type = cell != 0 ? unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cell - 1)) : nullptr) {
+				for (auto const& [good, quantity] : type->get_build_cost()) {
+					country->get_good_data(*good).stockpile_amount += quantity;
+				}
+			}
+		}
+		const std::string reason = unit_manager.get_division_recruitment_block_reason(*country, unit_type_manager, division_template, *province);
+		const std::size_t orders_before = unit_manager.get_recruitment_orders().size();
+		const bool started = reason.empty() && unit_manager.start_division_recruitment(*country, unit_type_manager, division_template, *province);
+		r.check(started && unit_manager.get_recruitment_orders().size() == orders_before + regiments
+				&& unit_manager.get_manpower(*country).available_regiments == before.available_regiments - regiments,
+			"division recruitment: all the regiments of the template are ordered and take the manpower", reason);
+		if (!started) {
+			return;
+		}
+		const std::uint32_t division_id = unit_manager.get_recruitment_orders().back().division_id;
+		std::int32_t days = 0;
+		for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+			days = std::max(days, order.division_id == division_id ? order.days_left : 0);
+		}
+		for (std::int32_t day = 0; day < days + 1; ++day) {
+			im.force_tick_and_update();
+		}
+		ArmyInstance const* recruited = nullptr;
+		for (ArmyInstance const& army : country->get_armies()) {
+			for (DivisionInstance const& division : army.get_divisions()) {
+				if (division.id == division_id) {
+					recruited = &army;
+				}
+			}
+		}
+		std::size_t in_division = 0;
+		if (recruited != nullptr) {
+			for (RegimentInstance const& regiment : recruited->get_regiment_instances()) {
+				in_division += regiment.get_division_id() == division_id;
+			}
+		}
+		r.check(recruited != nullptr && in_division == regiments && &recruited->get_location() == province,
+			"division recruitment: the regiments form one division of the template in the province",
+			fmt::format("{} days, {} of {} regiments", days, in_division, regiments));
+		// The cancel of one regiment cancels the division: the orders, the manpower and the goods come back
+		for (const std::uint8_t cell : division_template.cells) {
+			if (RegimentType const* const type = cell != 0 ? unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cell - 1)) : nullptr) {
+				for (auto const& [good, quantity] : type->get_build_cost()) {
+					country->get_good_data(*good).stockpile_amount += quantity;
+				}
+			}
+		}
+		const Manpower before_second = unit_manager.get_manpower(*country);
+		const std::size_t orders_second = unit_manager.get_recruitment_orders().size();
+		if (unit_manager.start_division_recruitment(*country, unit_type_manager, division_template, *province)) {
+			const unique_id_t one = unit_manager.get_recruitment_orders().back().id;
+			r.check(unit_manager.cancel_recruitment(*country, one) && unit_manager.get_recruitment_orders().size() == orders_second
+					&& unit_manager.get_manpower(*country).available_regiments == before_second.available_regiments,
+				"division recruitment: cancelling a regiment cancels the whole division and gives the manpower back");
+		}
+	}
+
+	// ---- the state of the executed plan (P5c): no war with the countries of the front is told to the player, with the war it is something else
+
+	void test_plan_status(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || candidate.get_armies().empty()) {
+				continue;
+			}
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && war_manager.can_declare_war(candidate, *other, im.get_today())) {
+						neighbour = other;
+					}
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO plan status: no country at peace with the command and a neighbour, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		bool has_marshal = false;
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			if (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(im, *country, group_id, leader.unique_id)) {
+				has_marshal = true;
+				break;
+			}
+		}
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		if (!has_marshal || front_id == 0 || !set_army_group_plan_active(im, *country, group_id, true)) {
+			fmt::println("TEST INFO plan status: no marshal or no front, not checked");
+			delete_army_group(im, *country, group_id);
+			return;
+		}
+		war_manager.update_plan_status(im, *country, group_id, true);
+		r.check(country->find_army_group(group_id)->plan_status == 3, "plan status: executed at peace with the country of the front: no war");
+		if (war_manager.declare_war(im, *country, *neighbour)) {
+			war_manager.update_plan_status(im, *country, group_id, true);
+			r.check(country->find_army_group(group_id)->plan_status != 3, "plan status: at war the check finds the enemy",
+				fmt::format("status {}", country->find_army_group(group_id)->plan_status));
+			if (War* const war = war_manager.find_war_between(*country, *neighbour)) {
+				war_manager.end_war(im, war->id);
+			}
+		}
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
 	// ---- the fronts follow the border (docs/WAR_ASSUMPTIONS.md, section 6, P3): a taken province moves the line, a war brings the allies of the
 	// enemy into the sector, an edited front keeps its pieces, a front without a border stays empty
@@ -6800,6 +6946,8 @@ namespace {
 		test_live_battle(r, *im);
 		test_leader_skills(r, *im);
 		test_straits_and_manual_orders(r, *im);
+		test_division_recruitment(r, *im);
+		test_plan_status(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own
 		test_order_moves(r, *im); // ticks days

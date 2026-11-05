@@ -61,6 +61,14 @@ namespace OpenVic {
 		fixed_point_t planning;
 		// What the bonus is worth in a battle: 1 + MARSHAL_SKILL_STEP x the level of the planning of the marshal (section 7, set every day)
 		fixed_point_t planning_effect = fixed_point_t::_1;
+		// What the executed plan does (P5c, docs/WAR_ASSUMPTIONS.md, section 6): checked every day and when the execution is pressed. plan_status: 0 not
+		// executed, 1 attacking (orders given), 2 in battle, 3 no war with the countries of the front, 4 no target of the offensive next to the line, 5 no
+		// free division on the line (they go there or fight), 6 every division holds its province (PLAN_MIN_HOLD; the aggressive mode or more divisions),
+		// 7 the targets open a wide flank (FLANK_EXPOSURE_MAX in the careful and the balanced mode), 8 the chance is too low (plan_best_chance of the
+		// best target), 9 the front only holds (no offensive)
+		std::uint32_t plan_status = 0;
+		fixed_point_t plan_best_chance;
+		std::uint32_t plan_attacks = 0;
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 	};
 

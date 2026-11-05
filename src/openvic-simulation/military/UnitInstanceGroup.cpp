@@ -13,6 +13,7 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/military/Deployment.hpp"
+#include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
 #include "openvic-simulation/population/Culture.hpp"
 #include "openvic-simulation/population/PopType.hpp"
@@ -731,11 +732,11 @@ void UnitInstanceManager::tick(const Date today) {
 
 	// Recruitment: the regiment appears in the province when the time is up
 	for (size_t i = 0; i < recruitment_orders.size();) {
-		RecruitmentOrder& order = recruitment_orders[i];
-		if (--order.days_left > 0) {
+		if (--recruitment_orders[i].days_left > 0) {
 			++i;
 			continue;
 		}
+		const RecruitmentOrder order = recruitment_orders[i];
 
 		CountryInstance& country = *order.country;
 		ProvinceInstance& province = *order.province;
@@ -775,13 +776,32 @@ void UnitInstanceManager::tick(const Date today) {
 		});
 		unit_instance_map.emplace(regiment.unique_id, regiment);
 
-		// Joins a standing army of the country in the province or forms a new one
+		// A regiment of a division recruited by a template: into the army of its division in the province (a new army for the first one)
 		ArmyInstance* target = nullptr;
+		if (order.division_id != 0) {
+			for (ArmyInstance& army : province.get_armies()) {
+				if (&army.get_country() == &country && std::any_of(army.get_divisions().begin(), army.get_divisions().end(),
+					[&order](DivisionInstance const& division) -> bool { return division.id == order.division_id; })) {
+					target = &army;
+					break;
+				}
+			}
+			if (target == nullptr) {
+				const unique_id_t army_id = unique_id_counter++;
+				target = &*armies.emplace(army_id, fmt::format("Army {}", army_id), country, province);
+				unit_instance_group_map.emplace(target->unique_id, *target);
+				target->get_mutable_divisions().push_back(DivisionInstance { order.division_id, order.template_id });
+			}
+			regiment.set_division_id(order.division_id);
+		}
+		// Else it joins a standing army of the country in the province or forms a new one
 		for (ArmyInstance& army : province.get_armies()) {
+			if (target != nullptr) {
+				break;
+			}
 			if (&army.get_country() == &country && !army.is_moving() && !army.is_in_combat()
 				&& army.get_transport_navy() == nullptr) {
 				target = &army;
-				break;
 			}
 		}
 		if (target == nullptr) {
@@ -1172,6 +1192,142 @@ bool UnitInstanceManager::create_leader(
 
 	return true;
 }
+namespace {
+	// A pop that can give the soldiers of one more regiment to its country
+	bool pop_gives_regiment(CountryInstance const& country, Pop const& pop) {
+		return pop.get_type().can_be_recruited && Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())
+			&& pop.get_regiment_count() < pop.get_max_supported_regiments();
+	}
+}
+
+Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const {
+	Manpower manpower;
+	manpower.men_per_regiment = static_cast<std::int32_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	for (ProvinceInstance const* province : country.get_owned_provinces()) {
+		if (province->get_controller() != &country) {
+			continue;
+		}
+		for (Pop const& pop : province->get_pops()) {
+			if (!pop.get_type().can_be_recruited) {
+				continue;
+			}
+			const std::size_t supported = pop.get_max_supported_regiments();
+			manpower.max_regiments += static_cast<std::uint32_t>(supported);
+			if (pop_gives_regiment(country, pop)) {
+				manpower.available_regiments += static_cast<std::uint32_t>(supported - pop.get_regiment_count());
+			}
+		}
+	}
+	return manpower;
+}
+
+namespace {
+	// The regiment types of the cells of a template (in the order of the cells)
+	std::vector<RegimentType const*> template_regiment_types(UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template) {
+		std::vector<RegimentType const*> types;
+		for (const std::uint8_t cell : division_template.cells) {
+			if (cell != 0) {
+				if (RegimentType const* const type = unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cell - 1)); type != nullptr) {
+					types.push_back(type);
+				}
+			}
+		}
+		return types;
+	}
+}
+
+std::string UnitInstanceManager::get_division_recruitment_block_reason(
+	CountryInstance const& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance const& province
+) const {
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return "Набор возможен только в своей, не оккупированной провинции";
+	}
+	const std::vector<RegimentType const*> types = template_regiment_types(unit_type_manager, division_template);
+	if (types.empty()) {
+		return "В шаблоне нет полков";
+	}
+	for (RegimentType const* type : types) {
+		if (!country.is_unit_type_unlocked(*type)) {
+			return "Тип полка ещё не открыт";
+		}
+	}
+	const Manpower manpower = get_manpower(country);
+	if (manpower.available_regiments < types.size()) {
+		return fmt::format(
+			"Не хватает людских ресурсов: нужно {} полков ({} чел.), доступно {} ({} чел.)", types.size(),
+			static_cast<std::int64_t>(types.size()) * manpower.men_per_regiment, manpower.available_regiments,
+			static_cast<std::int64_t>(manpower.available_regiments) * manpower.men_per_regiment
+		);
+	}
+	std::vector<std::pair<GoodDefinition const*, fixed_point_t>> needed;
+	for (RegimentType const* type : types) {
+		for (auto const& [good, quantity] : type->get_build_cost()) {
+			auto it = std::find_if(needed.begin(), needed.end(), [good](auto const& entry) -> bool { return entry.first == good; });
+			if (it == needed.end()) {
+				needed.emplace_back(good, quantity);
+			} else {
+				it->second += quantity;
+			}
+		}
+	}
+	for (auto const& [good, quantity] : needed) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return "На складе страны не хватает товаров";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::start_division_recruitment(
+	CountryInstance& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance& province
+) {
+	if (!get_division_recruitment_block_reason(country, unit_type_manager, division_template, province).empty()) {
+		return false;
+	}
+	const std::vector<RegimentType const*> types = template_regiment_types(unit_type_manager, division_template);
+	// The pops that give the soldiers: of the province first, then of the other provinces of the country (owned, not occupied) in their order
+	std::vector<Pop*> pops;
+	for (Pop const& pop : province.get_pops()) {
+		if (pop_gives_regiment(country, pop)) {
+			pops.push_back(province.find_pop_by_id(pop.id_in_province));
+		}
+	}
+	for (ProvinceInstance* other : country.get_owned_provinces()) {
+		if (other == &province || other->get_controller() != &country) {
+			continue;
+		}
+		for (Pop const& pop : other->get_pops()) {
+			if (pop_gives_regiment(country, pop)) {
+				pops.push_back(other->find_pop_by_id(pop.id_in_province));
+			}
+		}
+	}
+	int32_t days = 1;
+	for (RegimentType const* type : types) {
+		days = std::max(days, get_recruitment_days(country, *type));
+	}
+	const std::uint32_t division_id = next_division_id++;
+	std::size_t next_pop = 0;
+	for (RegimentType const* type : types) {
+		while (next_pop < pops.size() && !pops[next_pop]->try_recruit()) {
+			++next_pop;
+		}
+		if (next_pop >= pops.size()) {
+			break; // cannot happen: the manpower was checked
+		}
+		for (auto const& [good, quantity] : type->get_build_cost()) {
+			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+			good_data.stockpile_amount -= quantity;
+			good_data.stockpile_change_yesterday -= quantity;
+		}
+		RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, pops[next_pop], days, days };
+		order.division_id = division_id;
+		order.template_id = division_template.id;
+		recruitment_orders.push_back(order);
+	}
+	return true;
+}
+
 int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country, UnitType const& unit_type) {
 	// The build time of the unit scaled by the recruitment time modifier of the country, at least a day
 	const fixed_point_t days = fixed_point_t::parse_unsafe(static_cast<int32_t>(unit_type.build_time.to_int()))
@@ -1231,6 +1387,28 @@ bool UnitInstanceManager::start_recruitment(
 }
 
 bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const unique_id_t order_id) {
+	// A regiment of a division: the whole division is cancelled
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.id == order_id && order.division_id != 0 && order.country == &country) {
+			const std::uint32_t division_id = order.division_id;
+			std::vector<unique_id_t> ids;
+			for (RecruitmentOrder const& other : recruitment_orders) {
+				if (other.division_id == division_id && other.country == &country) {
+					ids.push_back(other.id);
+				}
+			}
+			for (const unique_id_t id : ids) {
+				for (auto it = recruitment_orders.begin(); it != recruitment_orders.end(); ++it) {
+					if (it->id == id) {
+						it->division_id = 0;
+						break;
+					}
+				}
+				cancel_recruitment(country, id);
+			}
+			return true;
+		}
+	}
 	for (auto it = recruitment_orders.begin(); it != recruitment_orders.end(); ++it) {
 		if (it->id != order_id) {
 			continue;

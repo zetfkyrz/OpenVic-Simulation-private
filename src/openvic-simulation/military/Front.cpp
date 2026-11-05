@@ -1459,10 +1459,11 @@ bool OpenVic::offensive_attacks(const std::uint32_t aggression, BattleEstimate c
 	return estimate.win_chance >= needed.of(fixed_point_t::_1);
 }
 
-void WarManager::execute_offensive(
+WarManager::OffensiveReport WarManager::execute_offensive(
 	InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
-	const std::uint32_t aggression
+	const std::uint32_t aggression, const bool dry_run
 ) {
+	OffensiveReport report;
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	OpenVicWarDefines const& defines = get_war_defines();
@@ -1485,9 +1486,7 @@ void WarManager::execute_offensive(
 			standing[static_cast<std::size_t>(at - front.provinces.begin())]++;
 		}
 	}
-	if (free.empty()) {
-		return;
-	}
+	report.free_divisions = static_cast<std::uint32_t>(free.size());
 	// The targets next to the line: the land of the zone across its pieces that an enemy holds (in the order of the pieces)
 	std::vector<ProvinceInstance*> candidates;
 	for (FrontEdge const& edge : front.edges) {
@@ -1496,8 +1495,9 @@ void WarManager::execute_offensive(
 			candidates.push_back(edge.other);
 		}
 	}
-	if (candidates.empty()) {
-		return;
+	report.candidates = static_cast<std::uint32_t>(candidates.size());
+	if (candidates.empty() || free.empty()) {
+		return report;
 	}
 	// The steps from every province of the zone to the line of the plan (its targets), over the zone
 	std::unordered_map<ProvinceInstance const*, std::int32_t> steps;
@@ -1584,13 +1584,20 @@ void WarManager::execute_offensive(
 	for (ProvinceInstance* target : candidates) {
 		// The careful and the balanced mode do not open a wide flank
 		if (aggression <= 2 && flank_of(*target) > defines.flank_exposure_max.of(fixed_point_t::_1)) {
+			report.flank_skipped++;
 			continue;
 		}
 		std::vector<std::int32_t> left = standing;
-		const BattleEstimate estimate = estimate_with(*target, attackers_of(target, left));
+		const std::vector<std::size_t> possible = attackers_of(target, left);
+		if (possible.empty()) {
+			continue;
+		}
+		report.with_attackers++;
+		const BattleEstimate estimate = estimate_with(*target, possible);
 		if (!estimate.valid) {
 			continue;
 		}
+		report.best_chance = std::max(report.best_chance, estimate.win_chance);
 		const auto found = steps.find(target);
 		const std::int32_t to_line = found != steps.end() ? found->second : static_cast<std::int32_t>(zone.size());
 		scored.push_back({
@@ -1616,12 +1623,92 @@ void WarManager::execute_offensive(
 		if (estimate.breakthrough_days == 0 && estimate.ratio >= fixed_point_t(1000)) {
 			chosen.resize(1);
 		}
+		report.attacks++;
 		for (const std::size_t index : chosen) {
 			used[index] = true;
 			const std::size_t place = static_cast<std::size_t>(std::find(front.provinces.begin(), front.provinces.end(), &free[index]->get_location()) - front.provinces.begin());
 			standing[place]--;
-			unit_manager.order_move(*free[index], *entry.target, map_instance);
+			if (!dry_run) {
+				unit_manager.order_move(*free[index], *entry.target, map_instance);
+			}
 		}
+	}
+	return report;
+}
+
+void WarManager::collect_offensive(
+	InstanceManager& instance_manager, Front const& front, memory::vector<ProvinceInstance*>& zone, memory::vector<ProvinceInstance*>& targets
+) const {
+	zone.clear();
+	targets.clear();
+	ArmyGroup const* const group = front.country->find_army_group(front.group_id);
+	if (group == nullptr || !group->plan_active) {
+		return;
+	}
+	for (PlanLine const& line : plan_lines) {
+		if (line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front.id) {
+			for (ProvinceInstance* province : get_offensive_zone(instance_manager, line)) {
+				if (std::find(zone.begin(), zone.end(), province) == zone.end()) {
+					zone.push_back(province);
+				}
+			}
+			targets.insert(targets.end(), line.provinces.begin(), line.provinces.end());
+		}
+	}
+}
+
+void WarManager::update_plan_status(InstanceManager& instance_manager, CountryInstance& country, const std::uint32_t group_id, const bool dry_run) {
+	ArmyGroup* group = nullptr;
+	for (ArmyGroup& candidate : country.get_mutable_army_groups()) {
+		if (candidate.id == group_id) {
+			group = &candidate;
+		}
+	}
+	if (group == nullptr) {
+		return;
+	}
+	group->plan_attacks = 0;
+	group->plan_best_chance = fixed_point_t::_0;
+	Front* const front = const_cast<Front*>(find_front_of_group(country, group_id));
+	if (!group->plan_active || front == nullptr) {
+		group->plan_status = 0;
+		return;
+	}
+	// The war with the countries across the line (the enemy of the front and its allies of the sector)
+	bool at_war = front->enemy != nullptr && country.is_at_war_with(*front->enemy);
+	for (FrontEdge const& edge : front->edges) {
+		CountryInstance const* const controller = edge.other->get_controller();
+		at_war |= controller != nullptr && controller != &country && country.is_at_war_with(*controller);
+	}
+	if (!at_war) {
+		group->plan_status = 3;
+		return;
+	}
+	memory::vector<ProvinceInstance*> zone;
+	memory::vector<ProvinceInstance*> targets;
+	collect_offensive(instance_manager, *front, zone, targets);
+	if (zone.empty()) {
+		group->plan_status = 9;
+		return;
+	}
+	const OffensiveReport report = execute_offensive(instance_manager, *front, zone, targets, group->aggression, dry_run);
+	group->plan_attacks = report.attacks;
+	group->plan_best_chance = report.best_chance;
+	bool fighting = false;
+	for (const unique_id_t army_id : front->army_ids) {
+		UnitInstanceGroup const* const army = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+		fighting |= army != nullptr && army->is_in_combat();
+	}
+	if (report.attacks > 0) {
+		group->plan_status = 1;
+	} else if (report.candidates == 0) {
+		group->plan_status = fighting ? 2 : 4;
+	} else if (report.free_divisions == 0) {
+		group->plan_status = fighting ? 2 : 5;
+	} else if (report.with_attackers == 0) {
+		group->plan_status = report.flank_skipped >= report.candidates ? 7 : 6;
+	} else {
+		group->plan_status = 8;
 	}
 }
 
@@ -1905,24 +1992,12 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		ArmyGroup const* const group = front.country->find_army_group(front.group_id);
 		memory::vector<ProvinceInstance*> zone;
 		memory::vector<ProvinceInstance*> targets;
-		if (group != nullptr && group->plan_active) {
-			for (PlanLine const& line : plan_lines) {
-				if (line.type == PlanLine::type_t::OFFENSIVE && line.front_id == front.id) {
-					for (ProvinceInstance* province : get_offensive_zone(instance_manager, line)) {
-						if (std::find(zone.begin(), zone.end(), province) == zone.end()) {
-							zone.push_back(province);
-						}
-					}
-					targets.insert(targets.end(), line.provinces.begin(), line.provinces.end());
-				}
-			}
-		}
+		collect_offensive(instance_manager, front, zone, targets);
 		front.mode = zone.empty() ? Front::mode_t::DEFEND : Front::mode_t::ATTACK;
-		// The divisions stand along the line; while an offensive is executed the free ones next to its targets attack
+		// The divisions stand along the line; while an offensive is executed the free ones next to its targets attack (and the state of the plan is
+		// checked: the war with the countries of the front, the targets, the free divisions, the chance)
 		distribute_divisions(instance_manager, front, group != nullptr ? group->integrity : 1);
-		if (front.mode == Front::mode_t::ATTACK) {
-			execute_offensive(instance_manager, front, zone, targets, group->aggression);
-		}
+		update_plan_status(instance_manager, *front.country, front.group_id, false);
 	}
 
 	// The line of defence and the naval invasion of a field marshal (his order when he has no front): his divisions go to the provinces of the line

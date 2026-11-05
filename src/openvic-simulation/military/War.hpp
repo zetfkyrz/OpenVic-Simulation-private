@@ -297,16 +297,32 @@ namespace OpenVic {
 		// The naval invasion (P10): the divisions gather in the port; executed and prepared, they board the fleets there, the fleets sail to the sea next to
 		// the first target the enemy holds and land them; the landed divisions go on to the next targets
 		void execute_naval_invasion(InstanceManager& instance_manager, PlanLine& line, bool executed);
-		void execute_offensive(
+		// What the executor found (for the state of the plan): the targets next to the line, the free divisions on it, the targets that had attackers,
+		// the ones left out for the flank, the attacks ordered and the best chance of a victory
+		struct OffensiveReport {
+			std::uint32_t candidates = 0, free_divisions = 0, with_attackers = 0, flank_skipped = 0, attacks = 0;
+			fixed_point_t best_chance = fixed_point_t::_0;
+		};
+		// dry_run: only the report, no orders (the check when the execution is pressed)
+		OffensiveReport execute_offensive(
 			InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone, std::span<ProvinceInstance* const> targets,
-			std::uint32_t aggression
+			std::uint32_t aggression, bool dry_run = false
 		);
+		// The zone and the targets of the offensives of a front (empty when its group does not execute the plan)
+		void collect_offensive(
+			InstanceManager& instance_manager, Front const& front, memory::vector<ProvinceInstance*>& zone, memory::vector<ProvinceInstance*>& targets
+		) const;
 		// The pieces of the line of the front as the border is now (an edited front keeps its pieces that are still on the border and gets the pieces of the
 		// provinces taken from the other side and of our neighbours of the ones the enemy took)
 		void rebuild_front_edges(InstanceManager& instance_manager, Front& front);
 		// The lines of the fronts and of the plans lose what does not exist any more (fronts of groups that are gone, provinces taken from a line)
 		void update_plan_lines(InstanceManager& instance_manager);
 		void update_fronts(InstanceManager& instance_manager);
+	public:
+		// The state of the executed plan of a group (ArmyGroup::plan_status): the war with the countries of its front, the targets, the free divisions, the
+		// chance; with dry_run the executor gives no orders. Every day from update_fronts and at once when the execution is pressed
+		void update_plan_status(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool dry_run);
+	private:
 		void update_auto_plan(InstanceManager& instance_manager);
 		// The plans of the field marshals for an AI country (P11, behind PLAN_AI_ENABLED): a group with a marshal for every enemy it borders, its armies
 		// shared among them, a front along the border and an offensive two provinces deep, executed in the balanced mode

@@ -1906,6 +1906,10 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		if (group_scenario && day == stop_day) {
 			fmt::println("FRONT_GROUP stop plan={}", set_army_group_plan_active(instance_manager, *side_a, scenario_group_id, false));
 		}
+		// OV_FRONT_WAR_DAY=<day> with OV_FRONT_NOWAR: the war is declared on that day (the front and the plan were made at peace)
+		if (no_war && std::getenv("OV_FRONT_WAR_DAY") != nullptr && day == static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_WAR_DAY"))))) {
+			fmt::println("FRONT_WAR day={} declared={}", day, war_manager.declare_war(instance_manager, *side_a, *side_b));
+		}
 		// OV_FRONT_MANUAL=<day>: on that day the first army of the first country is sent by hand (the game action) to its capital
 		if (std::getenv("OV_FRONT_MANUAL") != nullptr && day == static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("OV_FRONT_MANUAL"))))
 			&& !side_a->get_armies().empty() && side_a->get_capital() != nullptr) {

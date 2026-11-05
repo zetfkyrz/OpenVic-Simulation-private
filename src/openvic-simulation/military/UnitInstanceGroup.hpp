@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <functional>
 #include <string_view>
 
@@ -271,6 +273,8 @@ namespace OpenVic {
 	struct LeaderTraitManager;
 	struct MilitaryDefines;
 	struct Pop;
+	struct DivisionTemplate;
+	struct UnitTypeManager;
 
 	// A regiment that is being recruited from a pop, it appears in the province when the days run out
 	struct RecruitmentOrder {
@@ -282,6 +286,18 @@ namespace OpenVic {
 		Pop* pop; // the pop that gives the soldiers, nullptr for a ship
 		int32_t days_total;
 		int32_t days_left;
+		// A regiment of a division recruited by a template (docs/RECRUITMENT.md): all its regiments are ready on the same day and form the division
+		// division_id of the template template_id in a new army of the province (0: a regiment of its own)
+		std::uint32_t division_id = 0;
+		std::uint32_t template_id = 0;
+	};
+
+	// The manpower of a country (docs/RECRUITMENT.md): the pops of soldiers in its provinces (owned and not occupied) support regiments as in Vic2
+	// (POP_SIZE_PER_REGIMENT = 3000 men a regiment); the maximum is what they support, the available what is still free of it
+	struct Manpower {
+		std::uint32_t max_regiments = 0;
+		std::uint32_t available_regiments = 0;
+		std::int32_t men_per_regiment = 0;
 	};
 
 	struct UnitInstanceManager {
@@ -378,6 +394,19 @@ namespace OpenVic {
 		bool cancel_recruitment(CountryInstance& country, unique_id_t order_id);
 		// Days the regiment takes to recruit for the country
 		static int32_t get_recruitment_days(CountryInstance const& country, UnitType const& unit_type);
+
+		// The manpower of the country
+		[[nodiscard]] Manpower get_manpower(CountryInstance const& country) const;
+		// A division by a template: empty if it can be recruited in the province, otherwise the reason (the types, the manpower, the goods)
+		[[nodiscard]] std::string get_division_recruitment_block_reason(
+			CountryInstance const& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template,
+			ProvinceInstance const& province
+		) const;
+		// Recruits every regiment of the template: the soldiers from the pops of the province first, then of the other provinces of the country, the
+		// goods from the national stockpile; the regiments are ready together (the longest days of their types) as one division of the template
+		bool start_division_recruitment(
+			CountryInstance& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance& province
+		);
 
 		// Moves a regiment out of its army into a new army in the same province
 		ArmyInstance* split_regiment(ArmyInstance& army, RegimentInstance& regiment);

@@ -173,7 +173,8 @@ X(create_plan_line, country_index_t, std::uint32_t, std::uint32_t, province_inde
 X(toggle_plan_line_province, country_index_t, std::uint32_t, province_index_t) \
 X(delete_plan_line, country_index_t, std::uint32_t) \
 X(extend_plan_line, country_index_t, std::uint32_t, bool, province_index_t) \
-X(delete_group_lines, country_index_t, std::uint32_t)
+X(delete_group_lines, country_index_t, std::uint32_t) \
+X(start_division_recruitment, country_index_t, std::uint32_t, province_index_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action
