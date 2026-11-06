@@ -1665,7 +1665,8 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	}
 
 	// The new men come out of the free manpower of the country and cost the goods of the regiments for their share of the strength: when the
-	// country has not enough of one, every regiment gets the same share of what it wants (the order of the regiments does not matter)
+	// country has not enough men, every regiment gets the same share of what it wants, and not more than the share of its scarcest good (the order
+	// of the regiments does not matter)
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		country.reinforce_wanted_men = 0;
@@ -1675,33 +1676,59 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	for (auto& [country, need] : needs) {
 		fixed_point_t ratio = fixed_point_t::_1;
 		country->reinforce_wanted_men = need.men;
-		if (!country->is_rebel_country()) {
-			const std::int64_t free_men = std::max<std::int64_t>(0, unit_manager.get_manpower(*country).free_men);
-			if (free_men < need.men) {
-				ratio = fixed_point_t(static_cast<int32_t>(free_men * 10000 / need.men)) / 10000;
-				country->reinforce_limit = 1;
+		if (country->is_rebel_country()) {
+			for (auto const& [regiment, gain] : need.regiments) {
+				regiment->recover(fixed_point_t::_0, gain);
 			}
-			for (auto const& [good, quantity] : need.goods) {
-				const fixed_point_t stockpile = std::max(fixed_point_t::_0, country->get_good_data(*good).stockpile_amount);
-				if (quantity > fixed_point_t::_0 && stockpile < quantity * ratio) {
-					ratio = stockpile / quantity;
-					country->reinforce_limit = 2;
+			country->reinforce_given_men = need.men;
+			continue;
+		}
+		// The share of the men: the same for all the regiments of the country
+		const std::int64_t free_men = std::max<std::int64_t>(0, unit_manager.get_manpower(*country).free_men);
+		if (free_men < need.men) {
+			ratio = fixed_point_t(static_cast<int32_t>(free_men * 10000 / need.men)) / 10000;
+			country->reinforce_limit = 1;
+		}
+		// The share of every good (what the stockpile has of what all the regiments want of it); a regiment gets the smallest share of its own
+		// goods: the wine of the cavalry does not hold back the infantry
+		std::vector<std::pair<GoodDefinition const*, fixed_point_t>> good_shares;
+		for (auto const& [good, quantity] : need.goods) {
+			const fixed_point_t stockpile = std::max(fixed_point_t::_0, country->get_good_data(*good).stockpile_amount);
+			good_shares.emplace_back(good, quantity > stockpile && quantity > fixed_point_t::_0 ? stockpile / quantity : fixed_point_t::_1);
+		}
+		const auto good_share = [&good_shares](GoodDefinition const* good) -> fixed_point_t {
+			for (auto const& [entry_good, share] : good_shares) {
+				if (entry_good == good) {
+					return share;
 				}
 			}
-			if (ratio <= fixed_point_t::_0) {
+			return fixed_point_t::_1;
+		};
+		fixed_point_t given = fixed_point_t::_0;
+		for (auto const& [regiment, gain] : need.regiments) {
+			fixed_point_t regiment_ratio = ratio;
+			for (auto const& [good, quantity] : regiment->unit_type.get_build_cost()) {
+				if (quantity > fixed_point_t::_0 && good_share(good) < regiment_ratio) {
+					regiment_ratio = good_share(good);
+					country->reinforce_limit |= 2;
+				}
+			}
+			if (regiment_ratio <= fixed_point_t::_0) {
 				continue;
 			}
-			for (auto const& [good, quantity] : need.goods) {
-				CountryInstance::good_data_t& good_data = country->get_good_data(*good);
-				good_data.stockpile_amount -= quantity * ratio;
-				good_data.stockpile_change_yesterday -= quantity * ratio;
+			const fixed_point_t got = gain * regiment_ratio;
+			regiment->recover(fixed_point_t::_0, got);
+			given += got;
+			if (regiment->get_max_strength() > fixed_point_t::_0) {
+				const fixed_point_t share = wd.reinforce_goods_share.of(got / regiment->get_max_strength());
+				for (auto const& [good, quantity] : regiment->unit_type.get_build_cost()) {
+					CountryInstance::good_data_t& good_data = country->get_good_data(*good);
+					good_data.stockpile_amount -= quantity * share;
+					good_data.stockpile_change_yesterday -= quantity * share;
+				}
 			}
 		}
-		for (auto const& [regiment, gain] : need.regiments) {
-			regiment->recover(fixed_point_t::_0, gain * ratio);
-		}
-		country->reinforce_given_men = ratio >= fixed_point_t::_1 ? need.men
-			: (fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(need.men, 1000000000))) * ratio).floor<std::int64_t>();
+		country->reinforce_given_men = std::min(need.men, (given * wd.template_men_per_strength).floor<std::int64_t>());
 	}
 	for (ArmyInstance* army : surrendered) {
 		instance_manager.get_notification_log().add(instance_manager.get_today(), &army->get_country(), "army_surrendered", army->get_name());

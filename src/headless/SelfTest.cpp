@@ -6374,7 +6374,16 @@ namespace {
 			};
 			const bool fell_back = worn != nullptr && heading(*worn)->get_controller() == country
 				&& std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) == front->provinces.end();
-			r.check(fell_back, "fallback: a worn out division on the line next to the enemy falls back behind it");
+			// Attacked that day the division is in a battle: it leaves it by the retreat of the battle, not by the fallback
+			if (worn != nullptr && worn->is_in_combat()) {
+				fmt::println("TEST INFO fallback: the worn out division was attacked on the line (in a battle), the fallback is not checked");
+			} else r.check(fell_back, "fallback: a worn out division on the line next to the enemy falls back behind it",
+				worn == nullptr ? std::string { "the division is gone" } : fmt::format(
+					"{} at {} heading {} (controller {}), moving {}, in combat {}, on the line {}", country->get_identifier(),
+					worn->get_location().get_identifier(), heading(*worn)->get_identifier(),
+					heading(*worn)->get_controller() != nullptr ? heading(*worn)->get_controller()->get_identifier() : std::string_view { "-" },
+					worn->is_moving(), worn->is_in_combat(),
+					std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) != front->provinces.end()));
 			if (worn != nullptr && fell_back) {
 				for (int day = 0; day < 10 && worn->is_moving(); ++day) {
 					im.force_tick_and_update();

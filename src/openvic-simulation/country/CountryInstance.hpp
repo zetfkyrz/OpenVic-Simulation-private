@@ -586,7 +586,7 @@ namespace OpenVic {
 		bool start_manpower_fitted = false;
 		bool over_manpower_notified = false;
 		// The new men of yesterday (WarManager::update_army_recovery, for the interface): what the regiments wanted, what they got, and what held them
-		// back (0 nothing, 1 the free manpower, 2 the goods)
+		// back (bits: 1 the free manpower, 2 the goods)
 		std::int64_t reinforce_wanted_men = 0;
 		std::int64_t reinforce_given_men = 0;
 		std::int32_t reinforce_limit = 0;
