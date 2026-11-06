@@ -291,10 +291,12 @@ namespace OpenVic {
 	RATE(STRENGTH_RECOVERY, strength_recovery, Rate(5, 1000), 0, 1) \
 	RATE(RECOVERY_MIN_SUPPLY, recovery_min_supply, Rate(1, 4), 0, 1) \
 	RATE(STRENGTH_RECOVERY_MIN_SUPPLY, strength_recovery_min_supply, Rate(1, 2), 0, 1) \
-	/* The manpower (docs/RECRUITMENT.md): at war the maximum is MANPOWER_WAR_BONUS bigger; an army over the maximum fights with the attack and */ \
+	/* The manpower (docs/RECRUITMENT.md): the maximum is the pops of soldiers MANPOWER_BASE_BONUS bigger, at war MANPOWER_WAR_BONUS more of */ \
+	/* the pops are added; an army over the maximum fights with the attack and */ \
 	/* the defence times 1 - OVER_MANPOWER_PENALTY x the share over it, not below OVER_MANPOWER_MIN_MULT; the new men of the regiments come out of */ \
 	/* the free manpower and cost REINFORCE_GOODS_SHARE of the build cost of the regiment for its share of the strength; the armies of the start */ \
 	/* over the maximum start weaker, at the maximum (START_MANPOWER_FIT); an AI country over it at peace disbands its weakest regiments */ \
+	RATE(MANPOWER_BASE_BONUS, manpower_base_bonus, Rate(10, 100), 0, 10) \
 	RATE(MANPOWER_WAR_BONUS, manpower_war_bonus, Rate(10, 100), 0, 10) \
 	RATE(OVER_MANPOWER_PENALTY, over_manpower_penalty, Rate(1, 1), 0, 100) \
 	RATE(OVER_MANPOWER_MIN_MULT, over_manpower_min_mult, Rate(25, 100), 0, 1) \
@@ -554,11 +556,12 @@ namespace OpenVic {
 	INT(START_SUPPLY_STOCKPILE_DAYS, start_supply_stockpile_days, 90, 0, 3650) \
 	/* Supplies of the army and the navy: every day a unit uses a day of the share (given per month, spread over SUPPLY_DAYS_PER_MONTH days) of */ \
 	/* what its construction cost (its supply_cost goods; a good that is not in the construction cost, such as ammunition, takes the amount of */ \
-	/* small_arms). The goods that are used up (canned_food, fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, */ \
-	/* convoys) the durable one. An infantry regiment (10 rifles, 10 cans to build): 0.1 rifles and 1 can a month (1 and 10 percent) */ \
+	/* small_arms; a regiment uses every good of its construction cost too). The goods that are used up (the food and the drink: canned_food, */ \
+	/* wine, liquor...; fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, clothes, wool, convoys) the durable one. */ \
+	/* An infantry regiment (10 rifles, 10 cans to build): 0.1 rifles and 10 cans a month (1 and 100 percent: 0.033 and 3.33 percent a day) */ \
 	INT(SUPPLY_DAYS_PER_MONTH, supply_days_per_month, 30, 1, 365) \
 	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 100), 0, 10) \
-	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(10, 100), 0, 10) \
+	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(100, 100), 0, 10) \
 	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 100), 0, 10) \
 	RATE(NAVY_SUPPLY_CONSUMABLE_SHARE, navy_supply_consumable_share, Rate(10, 100), 0, 10) \
 	/* The coal and the fuel of ships (their share replaces the consumable one): a fleet that stands at sea, one that moves, one in a port */ \

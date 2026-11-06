@@ -1417,7 +1417,9 @@ Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const
 			}
 		}
 	}
-	manpower.max_men = manpower.pop_men;
+	Rate const& base_bonus = UnitInstanceGroup::war_defines->manpower_base_bonus;
+	manpower.multiplier += base_bonus.fixed();
+	manpower.max_men = manpower.pop_men + base_bonus.of_int(manpower.pop_men);
 	if (country.is_at_war()) {
 		Rate const& bonus = UnitInstanceGroup::war_defines->manpower_war_bonus;
 		manpower.multiplier += bonus.fixed();

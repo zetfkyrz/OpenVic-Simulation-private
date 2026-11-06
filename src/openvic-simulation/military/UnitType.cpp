@@ -1,5 +1,7 @@
 #include "UnitType.hpp"
 
+#include <algorithm>
+
 #include "openvic-simulation/core/memory/FixedVector.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/dataloader/NodeTools.hpp"
@@ -40,6 +42,16 @@ UnitType::UnitType(
 
 	using enum Modifier::modifier_type_t;
 
+	// The goods that are used up (the consumable share of the supply, docs/WAR_ASSUMPTIONS.md): the food and the drink of the soldiers; the
+	// rest is worn out (the durable share)
+	const auto is_consumable_supply = [](std::string_view identifier) -> bool {
+		return identifier == "canned_food" || identifier == "wine" || identifier == "liquor" || identifier == "grain" || identifier == "fish"
+			|| identifier == "fruit" || identifier == "cattle" || identifier == "tea" || identifier == "coffee" || identifier == "tobacco";
+	};
+	const auto is_weapon_good = [](std::string_view identifier) -> bool {
+		return identifier.starts_with("rifle_") || identifier.starts_with("field_gun_") || identifier == "small_arms" || identifier == "artillery";
+	};
+
 	// The goods that the unit uses every month and how many of them its construction needed (ammunition is not in the
 	// construction cost: it takes the amount of the small arms, or of the artillery of a ship)
 	for (auto const& [good, quantity] : supply_cost) {
@@ -59,7 +71,20 @@ UnitType::UnitType(
 		}
 		const std::string_view identifier = good->get_identifier();
 		const bool engine_fuel = identifier == "fuel" || identifier == "coal";
-		supply_items.push_back({ good, construction_amount, engine_fuel || identifier == "canned_food", engine_fuel });
+		supply_items.push_back({ good, construction_amount, engine_fuel || is_consumable_supply(identifier), engine_fuel });
+	}
+	// A regiment also wears out the rest of what it was built with (the clothes, the wool, the horses...) and eats the rest of its food and
+	// drink (the wine, the liquor): every good of its construction cost is a supply good
+	if (branch == unit_branch_t::LAND) {
+		for (auto const& [good, quantity] : build_cost) {
+			const bool listed = std::any_of(supply_items.begin(), supply_items.end(), [good, quantity, &is_weapon_good](supply_item_t const& item) -> bool {
+				return item.good == good || (item.construction_amount == quantity && is_weapon_good(good->get_identifier())
+					&& is_weapon_good(item.good->get_identifier()));
+			});
+			if (!listed) {
+				supply_items.push_back({ good, quantity, is_consumable_supply(good->get_identifier()), false });
+			}
+		}
 	}
 
 	for (auto [terrain, modifier_value] : mutable_iterator(unit_args.terrain_modifier_values)) {

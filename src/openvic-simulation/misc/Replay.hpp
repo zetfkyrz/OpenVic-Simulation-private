@@ -95,7 +95,9 @@ namespace OpenVic {
 		//     pops of soldiers shrink), the new men of the regiments cost the free manpower and the goods of the regiments, an army over the manpower
 		//     fights weaker, the AI disbands down to it at peace; the attrition of an overloaded province; the attacker loses more, the attack from
 		//     several provinces, worn out divisions go to the reserve, the terrain for the attacker
-		inline constexpr int SIMULATION_VERSION = 58;
+		// 59: a regiment uses every good of its construction cost as supply, the food and the drink 100 % a month (ARMY_SUPPLY_CONSUMABLE_SHARE), the
+		//     maximum of the manpower is 10 % bigger (MANPOWER_BASE_BONUS)
+		inline constexpr int SIMULATION_VERSION = 59;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

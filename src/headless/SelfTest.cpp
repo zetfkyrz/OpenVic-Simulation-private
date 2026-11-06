@@ -5318,8 +5318,8 @@ namespace {
 		unit_manager.apply_losses(*regiment, *country);
 		const Manpower after = unit_manager.get_manpower(*country);
 		r.check(type_safe::get(regiment->get_pop()->get_size()) == pop_before - 1000 && after.pop_men == before.pop_men - 1000
-				&& after.army_men == before.army_men - 1000 && after.free_men == before.free_men,
-			"manpower: a strength point lost is 1000 men who die (the pop of the regiment and the maximum shrink, the free men stay)",
+				&& after.army_men == before.army_men - 1000 && before.max_men - after.max_men >= 1000 && before.max_men - after.max_men <= 1200,
+			"manpower: a strength point lost is 1000 men who die (the pop of the regiment and the maximum shrink with its bonus)",
 			fmt::format("pop {} -> {}, max {} -> {}, army {} -> {}", pop_before, type_safe::get(regiment->get_pop()->get_size()), before.max_men,
 				after.max_men, before.army_men, after.army_men));
 
