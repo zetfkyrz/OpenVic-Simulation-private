@@ -43,6 +43,7 @@
 #include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
+#include <openvic-simulation/economy/production/ArtisanalProducer.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/population/Pop.hpp>
@@ -1012,6 +1013,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-front : Stage a war of two neighbours (the AI plans for both), run 60 days and print the FRONT lines: the fronts, the armies on them, the provinces that changed hands.");
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
+	fmt::println(file, "    --dump-supply-goods : Print the SUPPLY_GOOD lines at the start and after the days of -e: the world market and the needs of the supply goods of the regiments.");
 	fmt::println(file, "    --dump-manpower : Print the MANPOWER lines at the start and after the days of -e: the manpower of the countries with the biggest armies.");
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
@@ -1224,7 +1226,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_manpower = false, dump_command = false, dump_front = false, dump_theatre = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_manpower = false, dump_supply_goods = false, dump_command = false, dump_front = false, dump_theatre = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1354,6 +1356,93 @@ static void run_tech_tree_dump(InstanceManager& instance_manager) {
 					fmt::println("TECHTREE_EDGE branch={} from={} to={} line={}", branch, id, technology.identifier, block.size() > 1 ? "dashed" : "solid");
 				}
 			}
+		}
+	}
+}
+
+// --dump-supply-goods (docs/MILITARY_SUPPLY.md): SUPPLY_GOOD lines of the goods the regiments use: the world market of yesterday (supply, demand,
+// traded, price against the base), the factories that make it (open, output of yesterday), what the governments want (their needs with the
+// reserve) and have in their national stockpiles, the countries short of it; label is the moment
+static void run_supply_goods_dump(InstanceManager& instance_manager, std::string_view label) {
+	DefinitionManager const& definitions = instance_manager.definition_manager;
+	std::vector<GoodDefinition const*> goods;
+	for (RegimentType const& type : definitions.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+		for (UnitType::supply_item_t const& item : type.get_supply_items()) {
+			if (std::find(goods.begin(), goods.end(), item.good) == goods.end()) {
+				goods.push_back(item.good);
+			}
+		}
+	}
+	for (GoodDefinition const* good : goods) {
+		std::size_t factories = 0, open_factories = 0;
+		fixed_point_t produced = fixed_point_t::_0;
+		for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+			for (State const& state : state_set.get_states()) {
+				for (FactoryInstance const& factory : state.get_factories()) {
+					if (factory.production_type->output_good.index == good->index) {
+						factories++;
+						open_factories += factory.is_open() && factory.get_level() > building_level_t(0);
+						produced += factory.get_output_quantity_yesterday();
+					}
+				}
+			}
+		}
+		fixed_point_t needs = fixed_point_t::_0, stockpiles = fixed_point_t::_0;
+		std::size_t short_countries = 0;
+		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || country.get_armies().empty()) {
+				continue;
+			}
+			CountryInstance::good_data_t const& data = country.get_good_data(*good);
+			needs += data.government_needs;
+			stockpiles += data.stockpile_amount;
+			short_countries += data.government_needs > fixed_point_t::_0 && data.stockpile_amount < data.government_needs / 10;
+		}
+		GoodInstance const& market = instance_manager.get_good_instance_manager().get_good_instance_by_definition(*good);
+		fmt::println(
+			"SUPPLY_GOOD {} {:<16} price={:.2f}/{:.2f} supply={:.1f} demand={:.1f} traded={:.1f} factories={}/{} factory_output={:.1f} government_needs={:.1f} stockpiles={:.1f} short_countries={}",
+			label, good->get_identifier(), static_cast<double>(market.get_price()), static_cast<double>(good->base_price),
+			static_cast<double>(market.get_total_supply_yesterday()), static_cast<double>(market.get_total_demand_yesterday()),
+			static_cast<double>(market.get_quantity_traded_yesterday()), open_factories, factories, static_cast<double>(produced),
+			static_cast<double>(needs), static_cast<double>(stockpiles), short_countries
+		);
+		// The food and the drink: the countries that make the most of it (artisans and factories) and what their governments want of it
+		const std::string_view identifier = good->get_identifier();
+		if (identifier == "canned_food" || identifier == "wine" || identifier == "liquor") {
+			std::unordered_map<CountryInstance const*, std::pair<fixed_point_t, fixed_point_t>> made; // artisans, factories
+			for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+				if (province.get_owner() == nullptr) {
+					continue;
+				}
+				for (Pop const& pop : province.get_pops()) {
+					ArtisanalProducer const* const artisan = pop.get_artisanal_producer();
+					if (artisan != nullptr && artisan->get_last_produced_good() == good) {
+						made[province.get_owner()].first += artisan->get_current_production();
+					}
+				}
+			}
+			for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+				for (State const& state : state_set.get_states()) {
+					for (FactoryInstance const& factory : state.get_factories()) {
+						if (factory.production_type->output_good.index == good->index && state.get_owner() != nullptr) {
+							made[state.get_owner()].second += factory.get_output_quantity_yesterday();
+						}
+					}
+				}
+			}
+			std::vector<std::pair<CountryInstance const*, std::pair<fixed_point_t, fixed_point_t>>> rows { made.begin(), made.end() };
+			std::sort(rows.begin(), rows.end(), [](auto const& x, auto const& y) -> bool {
+				const fixed_point_t xs = x.second.first + x.second.second, ys = y.second.first + y.second.second;
+				return xs != ys ? xs > ys : type_safe::get(x.first->index) < type_safe::get(y.first->index);
+			});
+			std::string text;
+			for (std::size_t i = 0; i < rows.size() && i < 10; ++i) {
+				CountryInstance const& country = *rows[i].first;
+				text += fmt::format(" {}:artisans={:.1f} factories={:.1f} wants={:.1f}", country.get_identifier(),
+					static_cast<double>(rows[i].second.first), static_cast<double>(rows[i].second.second),
+					static_cast<double>(const_cast<CountryInstance&>(country).get_good_data(*good).government_needs));
+			}
+			fmt::println("SUPPLY_GOOD_MAKERS {} {} countries={}{}", label, identifier, rows.size(), text);
 		}
 	}
 }
@@ -2615,12 +2704,18 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		if (dump_manpower) {
 			run_manpower_dump(instance_manager, "start");
 		}
+		if (dump_supply_goods) {
+			run_supply_goods_dump(instance_manager, "start");
+		}
 		if (profile_ticks) {
 			instance_manager.get_tick_profiler().set_enabled(true);
 			instance_manager.get_tick_profiler().reset();
 		}
 		for (size_t day = 1; day <= economy_report_days; ++day) {
 			instance_manager.force_tick_and_update();
+			if (dump_supply_goods && day % 30 == 0 && day < economy_report_days) {
+				run_supply_goods_dump(instance_manager, fmt::format("day{}", day));
+			}
 			if (checksum_every_day) {
 				print_state_checksum(instance_manager);
 			}
@@ -2681,6 +2776,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 
 	if (ret && dump_manpower) {
 		run_manpower_dump(*game_manager.get_instance_manager(), "end");
+	}
+	if (ret && dump_supply_goods) {
+		run_supply_goods_dump(*game_manager.get_instance_manager(), "end");
 	}
 	if (ret && dump_pop) { // after the days of -e, so the growth of the months is in it
 		run_pop_dump(*game_manager.get_instance_manager());
@@ -2824,6 +2922,8 @@ int main(int argc, char const* argv[]) {
 			dump_pop = true;
 		} else if (strcmp(arg, "--dump-manpower") == 0) {
 			dump_manpower = true;
+		} else if (strcmp(arg, "--dump-supply-goods") == 0) {
+			dump_supply_goods = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");
