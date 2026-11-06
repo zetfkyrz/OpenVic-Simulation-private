@@ -2552,9 +2552,15 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	fixed_point_t navy_supplied_total = 0;
 
 	std::map<std::size_t, fixed_point_t> supplied_share; // by the index of the good; a good that is not here was given in full
+	// The first day: the stockpile of the start, START_SUPPLY_STOCKPILE_DAYS of the need of the units
+	const bool give_start_stockpile = !start_supply_stockpile_given;
+	start_supply_stockpile_given = true;
 	for (auto [good_instance, good_data] : goods_data) {
 		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
 		const fixed_point_t due = good_data.army_due + good_data.navy_due;
+		if (give_start_stockpile && daily_need > fixed_point_t::_0) {
+			good_data.stockpile_amount += daily_need * openvic_economy_defines->start_supply_stockpile_days;
+		}
 
 		// The supplies of the day are used up
 		if (due > fixed_point_t::_0) {

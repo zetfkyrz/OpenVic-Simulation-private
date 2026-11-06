@@ -90,7 +90,8 @@ namespace OpenVic {
 		//     (the war with the countries of the front, the targets, the divisions, the chance) checked every day and when the execution is pressed
 		// 55: an AI country at war recruits whole divisions by its first template (ov_ai.AI_DIVISIONS_PER_MONTH), single regiments when it cannot
 		// 56: the way by sea of an army with no way over the land (through the ports of its country, P4d)
-		inline constexpr int SIMULATION_VERSION = 56;
+		// 57: the stockpile of the start: START_SUPPLY_STOCKPILE_DAYS of the supply of the units of every country
+		inline constexpr int SIMULATION_VERSION = 57;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

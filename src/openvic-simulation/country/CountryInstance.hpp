@@ -514,6 +514,8 @@ namespace OpenVic {
 		memory::vector<DivisionTemplate> division_templates;
 		std::uint32_t next_division_template_id = 1;
 		bool division_templates_made = false;
+		// The stockpile of the start (START_SUPPLY_STOCKPILE_DAYS of the supply of the units) was given
+		bool start_supply_stockpile_given = false;
 		// The unlocks of the country (military/Unlocks.hpp): sorted keys such as equipment:rifle_2, formation:<id>, support_company:<id>, and
 		// the modifiers that unlocks give (limits of the templates...); both are in the state hash
 		memory::vector<memory::string> unlock_keys;

@@ -1877,8 +1877,18 @@ static void run_front_dump(InstanceManager& instance_manager) {
 		}
 		// The supply of the armies of the two: the share of the need that arrives and the supply level (the averages of the country)
 		for (CountryInstance* const side : { side_a, side_b }) {
-			fmt::println("FRONT_SUPPLY day={} country={} arrived={:.2f} level={:.2f}", day, side->get_identifier(),
-				static_cast<double>(side->get_army_supply_ratio()), static_cast<double>(side->get_army_supply_level()));
+			// The goods of the supply the stockpile has for less than a day of the need (what the armies lack)
+			std::string short_goods;
+			for (auto const& [good_instance, good_data] : side->get_goods_data()) {
+				const fixed_point_t need = good_data.army_needs + good_data.navy_needs;
+				if (need > fixed_point_t::_0 && good_data.stockpile_amount < need) {
+					short_goods += fmt::format(" {}:{:.1f}/{:.1f}", good_instance.get_identifier(), static_cast<double>(good_data.stockpile_amount),
+						static_cast<double>(need));
+				}
+			}
+			fmt::println("FRONT_SUPPLY day={} country={} arrived={:.2f} level={:.2f} short={}", day, side->get_identifier(),
+				static_cast<double>(side->get_army_supply_ratio()), static_cast<double>(side->get_army_supply_level()),
+				short_goods.empty() ? std::string { "-" } : short_goods);
 		}
 		fmt::println(
 			"FRONT_HELD day={} {}_holds_of_{}={} {}_holds_of_{}={}", day, side_a->get_identifier(), side_b->get_identifier(), count_held(*side_b, *side_a),

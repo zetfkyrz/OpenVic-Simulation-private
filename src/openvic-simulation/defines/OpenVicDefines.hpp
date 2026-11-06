@@ -523,6 +523,9 @@ namespace OpenVic {
 	FIXED(THROTTLE_MIN, throttle_min, fixed_point_t::_0_20, 0.01, 1) \
 	RATE(MIN_AFFORDABLE_SHARE, min_affordable_share, Rate(1, 1000), 0, 1) \
 	INT(SUPPLY_RESERVE_DAYS, supply_reserve_days, 10, 0, 3650) \
+	/* The first day of the game every country gets the goods of the supply of its armies and fleets for this many days of their need in its */ \
+	/* national stockpile (the market of the start has few of them: without it the armies had no supply for about three months) */ \
+	INT(START_SUPPLY_STOCKPILE_DAYS, start_supply_stockpile_days, 90, 0, 3650) \
 	/* Supplies of the army and the navy: every day a unit uses a day of the share (given per month, spread over SUPPLY_DAYS_PER_MONTH days) of */ \
 	/* what its construction cost (its supply_cost goods; a good that is not in the construction cost, such as ammunition, takes the amount of */ \
 	/* small_arms). The goods that are used up (canned_food, fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, */ \
