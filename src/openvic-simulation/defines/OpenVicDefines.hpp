@@ -291,6 +291,16 @@ namespace OpenVic {
 	RATE(STRENGTH_RECOVERY, strength_recovery, Rate(5, 1000), 0, 1) \
 	RATE(RECOVERY_MIN_SUPPLY, recovery_min_supply, Rate(1, 4), 0, 1) \
 	RATE(STRENGTH_RECOVERY_MIN_SUPPLY, strength_recovery_min_supply, Rate(1, 2), 0, 1) \
+	/* The manpower (docs/RECRUITMENT.md): at war the maximum is MANPOWER_WAR_BONUS bigger; an army over the maximum fights with the attack and */ \
+	/* the defence times 1 - OVER_MANPOWER_PENALTY x the share over it, not below OVER_MANPOWER_MIN_MULT; the new men of the regiments come out of */ \
+	/* the free manpower and cost REINFORCE_GOODS_SHARE of the build cost of the regiment for its share of the strength; the armies of the start */ \
+	/* over the maximum start weaker, at the maximum (START_MANPOWER_FIT); an AI country over it at peace disbands its weakest regiments */ \
+	RATE(MANPOWER_WAR_BONUS, manpower_war_bonus, Rate(10, 100), 0, 10) \
+	RATE(OVER_MANPOWER_PENALTY, over_manpower_penalty, Rate(1, 1), 0, 100) \
+	RATE(OVER_MANPOWER_MIN_MULT, over_manpower_min_mult, Rate(25, 100), 0, 1) \
+	RATE(REINFORCE_GOODS_SHARE, reinforce_goods_share, Rate(1, 1), 0, 100) \
+	INT(START_MANPOWER_FIT, start_manpower_fit, 1, 0, 1) \
+	INT(AI_DISBAND_OVER_MANPOWER, ai_disband_over_manpower, 1, 0, 1) \
 	RATE(NAVAL_STRENGTH_DAMAGE, naval_strength_damage, Rate(2, 100), 0, 100) \
 	RATE(NAVAL_ORGANISATION_DAMAGE, naval_organisation_damage, Rate(8, 100), 0, 100) \
 	INT(NAVAL_EVASION_DIVISOR, naval_evasion_divisor, 10, 1, 1000) \
@@ -432,6 +442,18 @@ namespace OpenVic {
 	INT(BATTLE_WIDTH_BASE, battle_width_base, 15, 1, 120) \
 	RATE(TERRAIN_DEFENCE_PER_POINT, terrain_defence_per_point, Rate(10, 100), 0, 10) \
 	RATE(RIVER_BORDER_MIN_SHARE, river_border_min_share, Rate(25, 100), 0, 1) \
+	/* The attacker loses more (it walks into the fire): its losses of men and of organisation are times these */ \
+	RATE(BATTLE_ATTACKER_STRENGTH_LOSS_MULT, battle_attacker_strength_loss_mult, Rate(5, 2), 0, 100) \
+	RATE(BATTLE_ATTACKER_ORGANISATION_LOSS_MULT, battle_attacker_organisation_loss_mult, Rate(115, 100), 0, 100) \
+	/* An attack from several provinces at once: every direction after the first gives the attackers BATTLE_FLANK_WIDTH more of the width and */ \
+	/* BATTLE_FLANK_ATTACK more of the damage, up to BATTLE_FLANK_MAX_DIRECTIONS directions */ \
+	RATE(BATTLE_FLANK_WIDTH, battle_flank_width, Rate(1, 3), 0, 10) \
+	RATE(BATTLE_FLANK_ATTACK, battle_flank_attack, Rate(5, 100), 0, 10) \
+	INT(BATTLE_FLANK_MAX_DIRECTIONS, battle_flank_max_directions, 3, 1, 10) \
+	/* A division of the front with less than BATTLE_ROTATE_ORGANISATION of its organisation goes to the reserve when the reserve has a division */ \
+	/* with at least BATTLE_ROTATE_RESERVE_ORGANISATION of it (that one takes its place) */ \
+	RATE(BATTLE_ROTATE_ORGANISATION, battle_rotate_organisation, Rate(30, 100), 0, 1) \
+	RATE(BATTLE_ROTATE_RESERVE_ORGANISATION, battle_rotate_reserve_organisation, Rate(60, 100), 0, 1) \
 	/* The breakthrough (R = the breakthrough of the attackers in the battle / the protection of the defenders): R of BREAK_RATIO_DAY in one day, or */ \
 	/* R of BREAK_RATIO_WEEK for BREAK_WEEK_DAYS days in a row, makes the defence retreat; a division with no organisation left retreats by itself */ \
 	FIXED(BREAK_RATIO_DAY, break_ratio_day, fixed_point_t(3), 0, 1000) \
@@ -441,6 +463,10 @@ namespace OpenVic {
 	RATE(ATTRITION_NO_SUPPLY, attrition_no_supply, Rate(3, 1000), 0, 1) \
 	RATE(ATTRITION_FLOOR_STRENGTH, attrition_floor_strength, Rate(1, 5), 0, 1) \
 	RATE(ATTRITION_FRIENDLY_MULTIPLIER, attrition_friendly_multiplier, Rate(1, 2), 0, 1) \
+	/* The attrition of an overloaded province (at war, or at peace on the land of others): ATTRITION_OVERLOAD a day for every share of the load over the supply limit of */ \
+	/* the province (the low limit of the mountains, the marshes, the jungle is their attrition), not more than ATTRITION_OVERLOAD_MAX a day */ \
+	RATE(ATTRITION_OVERLOAD, attrition_overload, Rate(5, 1000), 0, 1) \
+	RATE(ATTRITION_OVERLOAD_MAX, attrition_overload_max, Rate(15, 1000), 0, 1) \
 	INT(BLOCKADE_SUPPLY_DIVISOR, blockade_supply_divisor, 2, 1, 1000) \
 	INT(MOVEMENT_SPEED_SCALE, movement_speed_scale, 3, 1, 1000) \
 	INT(PORT_STEP_DISTANCE, port_step_distance, 10, 1, 10000) \

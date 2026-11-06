@@ -341,6 +341,8 @@ namespace OpenVic {
 		void update_encirclements(InstanceManager& instance_manager);
 		void update_sieges(InstanceManager& instance_manager);
 		void update_scores(InstanceManager& instance_manager);
+		// The manpower of the countries (docs/RECRUITMENT.md): the penalty of an army over it, the armies of the start fitted to it
+		void update_manpower(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
 		void update_attrition(InstanceManager& instance_manager);
 		void update_naval_combat(InstanceManager& instance_manager);

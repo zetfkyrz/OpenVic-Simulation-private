@@ -580,6 +580,16 @@ namespace OpenVic {
 		memory::vector<technology_unlock_level_t> SPAN_PROPERTY(unit_variant_unlock_levels);
 
 	public:
+		// The manpower (docs/RECRUITMENT.md, WarManager::update_manpower, every day): the attack and the defence of the armies over the manpower are
+		// multiplied by this; the armies of the start were fitted to the manpower; the player was told of the penalty
+		fixed_point_t manpower_combat_multiplier = fixed_point_t::_1;
+		bool start_manpower_fitted = false;
+		bool over_manpower_notified = false;
+		// The new men of yesterday (WarManager::update_army_recovery, for the interface): what the regiments wanted, what they got, and what held them
+		// back (0 nothing, 1 the free manpower, 2 the goods)
+		std::int64_t reinforce_wanted_men = 0;
+		std::int64_t reinforce_given_men = 0;
+		std::int32_t reinforce_limit = 0;
 		CountryInstance(
 			CountryDefinition const& new_country_definition,
 			SharedCountryValues& new_shared_country_values,

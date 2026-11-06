@@ -890,6 +890,10 @@ bool Pop::try_recruit_understrength() {
 	return true;
 }
 
+void Pop::add_recruit() {
+	++regiment_count;
+}
+
 void Pop::release_recruit() {
 	if (regiment_count > 0) {
 		--regiment_count;

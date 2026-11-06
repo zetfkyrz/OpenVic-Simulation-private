@@ -23,6 +23,8 @@ namespace OpenVic {
 		// The reserve of supplies of the unit in days (docs/PLAN_ARMY_SUPPLY_FRONTS.md): it is used while the supplies do not arrive, and is
 		// filled while they do. Negative at first: on the first day it is full (the units of the start and the new ones come supplied)
 		fixed_point_t PROPERTY_RW(supply_reserve, fixed_point_t(-1));
+		// The strength lost (in battles, by attrition) that has not been taken off the pops yet (UnitInstanceManager::apply_losses)
+		fixed_point_t PROPERTY_RW(unapplied_losses);
 
 	protected:
 		UnitInstance(

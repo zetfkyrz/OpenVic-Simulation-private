@@ -103,8 +103,12 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				hasher.add(static_cast<std::uint64_t>(division.id));
 				hasher.add(static_cast<std::uint64_t>(division.template_id));
 			}
+			hasher.add(army.get_supply_load_ratio());
 			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
 				hasher.add(static_cast<std::uint64_t>(regiment.get_division_id()));
+				if (regiment.get_unapplied_losses() != fixed_point_t::_0) {
+					hasher.add(regiment.get_unapplied_losses());
+				}
 				if (regiment.get_weapon() != nullptr) {
 					hasher.add(static_cast<std::uint64_t>(regiment.get_weapon()->index + 1));
 				}
@@ -125,6 +129,8 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_balance_before_investment_average());
 		hasher.add(country.get_prestige_untracked());
 		hasher.add(country.get_army_supply_level());
+		hasher.add(country.manpower_combat_multiplier);
+		hasher.add(static_cast<std::uint64_t>((country.start_manpower_fitted ? 1 : 0) + (country.over_manpower_notified ? 2 : 0)));
 		for (ArmyGroup const& army_group : country.get_army_groups()) {
 			hasher.add(static_cast<std::uint64_t>(army_group.id));
 			hasher.add(static_cast<std::uint64_t>(army_group.marshal_id));

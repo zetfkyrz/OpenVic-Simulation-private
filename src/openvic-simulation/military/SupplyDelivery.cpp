@@ -147,6 +147,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 			}
 			army.set_supply_delivery(fixed_point_t::_1);
 			army.set_supply_send_multiplier(fixed_point_t::_1);
+			army.set_supply_load_ratio(fixed_point_t::_0);
 			ProvinceInstance& location = army.get_location();
 			if (!location.province_definition.is_water() && army.get_unit_count() > 0) {
 				provinces.push_back(&location);
@@ -202,10 +203,13 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 			const fixed_point_t share = load <= fixed_point_t::_0
 				? fixed_point_t::_1
 				: std::clamp(limit / load, fixed_point_t::_0, fixed_point_t::_1);
+			const fixed_point_t load_ratio = load <= fixed_point_t::_0 ? fixed_point_t::_0
+				: limit <= fixed_point_t::_0 ? fixed_point_t(100) : std::min(fixed_point_t(100), load / limit);
 			for (ArmyInstance& army : province->get_armies()) {
 				if (&army.get_country() != &country || army.get_unit_count() == 0) {
 					continue;
 				}
+				army.set_supply_load_ratio(load_ratio);
 				const supply_priority_t priority = country.get_effective_supply_priority(
 					army.is_supply_priority_custom(), army.get_supply_priority()
 				);

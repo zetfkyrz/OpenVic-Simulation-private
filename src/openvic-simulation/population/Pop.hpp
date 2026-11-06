@@ -280,7 +280,7 @@ namespace OpenVic {
 
 		// Population dynamics (monthly): people join or leave the pop, the change is recorded for the interface.
 		// The size never goes below zero. kind: 0 growth, 1 promotion (arrived by promotion), 2 demotion, 3 internal migration
-		// kind 4: migration to another country, kind 5: died of hunger (the surplus of the pop)
+		// kind 4: migration to another country, kind 5: died of hunger (the surplus of the pop), kind 6: died in the army
 		void change_size(std::int32_t delta, std::int32_t kind);
 		// The number of days of this month that the pop had less than HUNGER_LIFE_NEEDS_THRESHOLD of its life needs (reset every month)
 		std::int32_t hungry_days = 0;
@@ -292,6 +292,8 @@ namespace OpenVic {
 		//recruit or conscript
 		bool try_recruit();
 		bool try_recruit_understrength();
+		// A regiment is linked to the pop (the manpower of the country was checked)
+		void add_recruit();
 		// Frees a regiment slot when a regiment backed by this pop is disbanded
 		void release_recruit();
 	};

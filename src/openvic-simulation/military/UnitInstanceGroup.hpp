@@ -166,6 +166,9 @@ namespace OpenVic {
 		fixed_point_t PROPERTY_RW(supply_send_multiplier, fixed_point_t::_1);
 		fixed_point_t PROPERTY_RW(supply_ratio, fixed_point_t::_1);
 		fixed_point_t PROPERTY_RW(supply_reserve_average, fixed_point_t::_0);
+		// The load of the province (the supply consumption of the regiments of the country and its friends) over its supply limit with what it
+		// takes from the neighbours: above 1 the army suffers the attrition of the overload (ATTRITION_OVERLOAD)
+		fixed_point_t PROPERTY_RW(supply_load_ratio, fixed_point_t::_0);
 		// The army is below SUPPLY_ALERT_LEVEL of the supply (the message "without supplies" was given)
 		bool PROPERTY_RW_CUSTOM_NAME(supply_alert, is_supply_alert, set_supply_alert, false);
 		// The divisions of the army (see military/Division.hpp); empty for a country without the technology of the organisation of the army
@@ -320,12 +323,24 @@ namespace OpenVic {
 		std::uint32_t template_id = 0;
 	};
 
-	// The manpower of a country (docs/RECRUITMENT.md): the pops of soldiers in its provinces (owned and not occupied) support regiments as in Vic2
-	// (POP_SIZE_PER_REGIMENT = 3000 men a regiment); the maximum is what they support, the available what is still free of it
+	// The manpower of a country in men (docs/RECRUITMENT.md): the maximum is the size of the pops of soldiers of the allowed cultures in its provinces
+	// (owned and not occupied) times the multiplier (1 + MANPOWER_WAR_BONUS at war); in the army are the men of its regiments (strength times
+	// TEMPLATE_MEN_PER_STRENGTH) and of its recruitment orders; free is the maximum less both (below zero when the army is bigger: the penalty)
 	struct Manpower {
-		std::uint32_t max_regiments = 0;
-		std::uint32_t available_regiments = 0;
-		std::int32_t men_per_regiment = 0;
+		std::int64_t pop_men = 0; // the pops of soldiers
+		fixed_point_t multiplier = fixed_point_t::_1;
+		std::int64_t max_men = 0;
+		std::int64_t army_men = 0; // the regiments as they are now
+		std::int64_t army_full_men = 0; // the regiments at full strength
+		std::int64_t queued_men = 0;
+		std::int64_t free_men = 0;
+		std::uint32_t regiments = 0;
+		std::int32_t men_per_regiment = 0; // POP_SIZE_PER_REGIMENT
+		std::uint32_t max_regiments = 0; // max_men / men_per_regiment
+		std::uint32_t available_regiments = 0; // free_men / men_per_regiment (0 when nothing is free)
+		// The share of the army over the maximum (0 when it is within it) and the multiplier of the attack and the defence it gives
+		fixed_point_t over_share;
+		fixed_point_t combat_multiplier = fixed_point_t::_1;
 	};
 
 	struct UnitInstanceManager {
@@ -342,6 +357,8 @@ namespace OpenVic {
 	public:
 		// The ids of the divisions (0 is no division)
 		std::uint32_t next_division_id = 1;
+		// The men who died in the armies since the start (taken off the pops by apply_losses)
+		std::int64_t men_killed_total = 0;
 
 	private:
 
@@ -404,10 +421,11 @@ namespace OpenVic {
 		// The nearest port the country's navy can dock in, from the province (nullptr if there is none)
 		ProvinceInstance* find_nearest_port(CountryInstance const& country, ProvinceInstance& from, MapInstance& map_instance);
 
-		// Empty if the regiment can be recruited from the pop, otherwise the reason it cannot (shown to the player)
-		static std::string_view get_recruitment_block_reason(
+		// Empty if the regiment can be recruited from the pop, otherwise the reason it cannot (shown to the player); the men come out of the free
+		// manpower of the country
+		std::string_view get_recruitment_block_reason(
 			CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
-		);
+		) const;
 		// Starts recruiting a regiment from the pop. Takes the build cost from the national stockpile, false if
 		// get_recruitment_block_reason is not empty.
 		bool start_recruitment(
@@ -432,6 +450,14 @@ namespace OpenVic {
 
 		// The manpower of the country
 		[[nodiscard]] Manpower get_manpower(CountryInstance const& country) const;
+		// The men of a regiment of the type at full strength
+		[[nodiscard]] std::int64_t get_regiment_men(RegimentType const& regiment_type) const;
+		// Takes the strength the regiment lost (unapplied_losses) off its pop, what the pop does not have off the other pops of soldiers of the
+		// country (they die: the population falls)
+		void apply_losses(RegimentInstance& regiment, CountryInstance& country);
+		void apply_all_losses();
+		// The men of the group die with it (destroyed in a battle, given up in a pocket, sunk with its transports)
+		void kill_group(UnitInstanceGroup& group);
 		// A division by a template: empty if it can be recruited in the province, otherwise the reason (the types, the manpower, the goods)
 		[[nodiscard]] std::string get_division_recruitment_block_reason(
 			CountryInstance const& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template,

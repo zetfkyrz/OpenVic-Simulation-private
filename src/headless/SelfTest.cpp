@@ -4581,19 +4581,23 @@ namespace {
 		r.check(farm != nullptr && near(farm->base_output_quantity, fixed_point_t(18) / 10, fixed_point_t(1) / 1000), "fish: the other goods are not touched (grain stays at 1.8)");
 	}
 
-	// The growth comes once a month: the world total changes on the first days of the months only
+	// The growth comes once a month: the world total (the pops, with the men who died in the armies added back: they die every day) changes on the
+	// first days of the months only
 	void test_population_monthly(Results& r, InstanceManager& im) {
-		std::int64_t before = 0;
-		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
-			before += type_safe::get(country.get_total_population());
-		}
+		const auto world = [&im]() -> std::int64_t {
+			std::int64_t total = im.get_unit_instance_manager().men_killed_total;
+			for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
+				for (Pop const& pop : province.get_pops()) {
+					total += type_safe::get(pop.get_size());
+				}
+			}
+			return total;
+		};
+		std::int64_t before = world();
 		std::size_t changes_off_month_start = 0, changes = 0;
 		for (int day = 0; day < 70; ++day) {
 			im.force_tick_and_update();
-			std::int64_t total = 0;
-			for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
-				total += type_safe::get(country.get_total_population());
-			}
+			const std::int64_t total = world();
 			if (total != before) {
 				changes++;
 				const auto day_of_month = im.get_today().get_day();
@@ -5273,6 +5277,106 @@ namespace {
 
 	// ---- the recruitment of a division by a template (docs/RECRUITMENT.md): the manpower of the pops of soldiers (a regiment is POP_SIZE_PER_REGIMENT
 	// men), all the regiments of the template at once, one division of the template when they are ready, the cancel of the whole division
+
+	// The manpower in men (docs/RECRUITMENT.md): the losses die (the pops of soldiers shrink), an army over the maximum fights weaker and gets no
+	// new men, with free men again it does
+	void test_manpower_losses(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		CountryInstance* country = nullptr;
+		RegimentInstance* regiment = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.is_at_war() || unit_manager.get_manpower(candidate).free_men <= 3000) {
+				continue;
+			}
+			for (ArmyInstance& army : candidate.get_armies()) {
+				ProvinceInstance const& location = army.get_location();
+				if (location.get_owner() != &candidate || army.is_in_combat() || army.get_transport_navy() != nullptr) {
+					continue;
+				}
+				for (RegimentInstance& candidate_regiment : army.get_regiment_instances()) {
+					if (candidate_regiment.get_pop() != nullptr && candidate_regiment.get_strength() >= candidate_regiment.get_max_strength()) {
+						regiment = &candidate_regiment;
+						break;
+					}
+				}
+				if (regiment != nullptr) {
+					break;
+				}
+			}
+			if (regiment != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO manpower: no country at peace with free men and a full regiment at home, not checked");
+			return;
+		}
+		const Manpower before = unit_manager.get_manpower(*country);
+		const std::int64_t pop_before = type_safe::get(regiment->get_pop()->get_size());
+		regiment->take_damage(fixed_point_t::_0, fixed_point_t::_1);
+		unit_manager.apply_losses(*regiment, *country);
+		const Manpower after = unit_manager.get_manpower(*country);
+		r.check(type_safe::get(regiment->get_pop()->get_size()) == pop_before - 1000 && after.pop_men == before.pop_men - 1000
+				&& after.army_men == before.army_men - 1000 && after.free_men == before.free_men,
+			"manpower: a strength point lost is 1000 men who die (the pop of the regiment and the maximum shrink, the free men stay)",
+			fmt::format("pop {} -> {}, max {} -> {}, army {} -> {}", pop_before, type_safe::get(regiment->get_pop()->get_size()), before.max_men,
+				after.max_men, before.army_men, after.army_men));
+
+		// The pops of soldiers lose 40 % of the army (put back at the end): the army is over the maximum
+		std::vector<std::pair<Pop*, std::int32_t>> taken;
+		std::int64_t to_take = after.pop_men - after.army_men * 6 / 10;
+		for (ProvinceInstance* province : country->get_owned_provinces()) {
+			for (Pop const& pop : province->get_pops()) {
+				if (to_take <= 0 || !pop.get_type().can_be_recruited) {
+					continue;
+				}
+				Pop* const mutable_pop = province->find_pop_by_id(pop.id_in_province);
+				const std::int32_t take = static_cast<std::int32_t>(std::min<std::int64_t>(to_take, type_safe::get(pop.get_size()) - 1));
+				if (take > 0) {
+					mutable_pop->change_size(-take, 0);
+					taken.emplace_back(mutable_pop, take);
+					to_take -= take;
+				}
+			}
+		}
+		const Manpower over = unit_manager.get_manpower(*country);
+		OpenVicWarDefines const& wd = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		const fixed_point_t expected = std::max(wd.over_manpower_min_mult.fixed(), fixed_point_t::_1 - wd.over_manpower_penalty.of(over.over_share));
+		r.check(over.over_share > fixed_point_t::_0 && over.combat_multiplier == expected && over.combat_multiplier < fixed_point_t::_1,
+			"manpower: an army over the maximum fights with the attack and the defence times 1 - the share over it",
+			fmt::format("over {:.3f}, multiplier {:.3f}", static_cast<double>(over.over_share), static_cast<double>(over.combat_multiplier)));
+		for (GoodDefinition const& good : im.definition_manager.get_economy_manager().get_good_definition_manager().get_good_definitions()) {
+			country->get_good_data(good).stockpile_amount += 1000;
+		}
+		// The AI may disband its weakest regiments over the maximum on the first day of a month: the regiment is looked up by its id
+		const unique_id_t regiment_id = regiment->unique_id;
+		const auto strength_now = [&unit_manager, regiment_id]() -> fixed_point_t {
+			UnitInstance* const unit = unit_manager.get_unit_instance_by_unique_id(regiment_id);
+			return unit != nullptr ? unit->get_strength() : fixed_point_t(-1);
+		};
+		const fixed_point_t strength_before = strength_now();
+		im.force_tick_and_update();
+		const fixed_point_t strength_over = strength_now();
+		r.check(country->manpower_combat_multiplier < fixed_point_t::_1 && strength_over <= strength_before,
+			"manpower: over the maximum the penalty is on the country and the regiment gets no new men",
+			fmt::format("multiplier {:.3f}, strength {:.3f} -> {:.3f}", static_cast<double>(country->manpower_combat_multiplier),
+				static_cast<double>(strength_before), static_cast<double>(strength_over)));
+		for (auto const& [pop, take] : taken) {
+			pop->change_size(take, 0);
+		}
+		im.force_tick_and_update();
+		im.force_tick_and_update();
+		const fixed_point_t strength_after = strength_now();
+		if (strength_over < fixed_point_t::_0 || strength_after < fixed_point_t::_0) {
+			fmt::println("TEST INFO manpower: the regiment was disbanded by the AI, the new men are not checked");
+			return;
+		}
+		r.check(country->manpower_combat_multiplier == fixed_point_t::_1 && strength_after > strength_over,
+			"manpower: with free men again the penalty is gone and the regiment gets new men",
+			fmt::format("multiplier {:.3f}, strength {:.3f} -> {:.3f}", static_cast<double>(country->manpower_combat_multiplier),
+				static_cast<double>(strength_over), static_cast<double>(strength_after)));
+	}
 
 	void test_division_recruitment(Results& r, InstanceManager& im) {
 		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
@@ -6499,6 +6603,20 @@ namespace {
 					}
 				}
 			}
+			// The armies of the start take all the manpower (they were fitted to it): a pop of soldiers gets the men of a few divisions
+			for (ProvinceInstance* province : a->get_owned_provinces()) {
+				Pop* soldiers = nullptr;
+				for (Pop const& pop : province->get_pops()) {
+					if (pop.get_type().can_be_recruited && Pop::is_culture_status_allowed(a->get_allowed_regiment_cultures(), pop.get_culture_status())) {
+						soldiers = province->find_pop_by_id(pop.id_in_province);
+						break;
+					}
+				}
+				if (soldiers != nullptr) {
+					soldiers->change_size(90000, 0);
+					break;
+				}
+			}
 			const bool had_manpower = im.get_unit_instance_manager().get_manpower(*a).available_regiments >= 12;
 			const std::string ai_reason = a->get_division_templates().empty() || a->get_capital() == nullptr ? std::string { "no template or capital" }
 				: im.get_unit_instance_manager().get_division_recruitment_block_reason(*a, unit_type_manager, a->get_division_templates().front(), *a->get_capital());
@@ -7044,6 +7162,7 @@ namespace {
 		test_leader_skills(r, *im);
 		test_straits_and_manual_orders(r, *im);
 		test_division_recruitment(r, *im);
+		test_manpower_losses(r, *im);
 		test_plan_status(r, *im);
 		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days

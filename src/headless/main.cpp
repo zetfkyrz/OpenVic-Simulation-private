@@ -1012,6 +1012,7 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-front : Stage a war of two neighbours (the AI plans for both), run 60 days and print the FRONT lines: the fronts, the armies on them, the provinces that changed hands.");
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
+	fmt::println(file, "    --dump-manpower : Print the MANPOWER lines at the start and after the days of -e: the manpower of the countries with the biggest armies.");
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
@@ -1223,7 +1224,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
-static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_command = false, dump_front = false, dump_theatre = false;
+static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_manpower = false, dump_command = false, dump_front = false, dump_theatre = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
 	std::string text;
@@ -1354,6 +1355,48 @@ static void run_tech_tree_dump(InstanceManager& instance_manager) {
 				}
 			}
 		}
+	}
+}
+
+// --dump-manpower (docs/RECRUITMENT.md): MANPOWER lines of the countries with the most men in the army: the pops of soldiers, the maximum, the men
+// in the army now and at full strength, the regiments, the share over the maximum, the armies in overloaded provinces; label is the moment
+static void run_manpower_dump(InstanceManager& instance_manager, std::string_view label) {
+	UnitInstanceManager const& unit_manager = instance_manager.get_unit_instance_manager();
+	std::vector<std::pair<CountryInstance const*, Manpower>> rows;
+	std::int64_t pop_total = 0, army_total = 0;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country() || country.get_armies().empty()) {
+			continue;
+		}
+		const Manpower manpower = unit_manager.get_manpower(country);
+		pop_total += manpower.pop_men;
+		army_total += manpower.army_men;
+		rows.emplace_back(&country, manpower);
+	}
+	std::sort(rows.begin(), rows.end(), [](auto const& a, auto const& b) -> bool { return a.second.army_full_men > b.second.army_full_men; });
+	std::size_t over_countries = 0;
+	for (auto const& [country, manpower] : rows) {
+		if (manpower.army_men > manpower.max_men) {
+			++over_countries;
+		}
+	}
+	fmt::println("MANPOWER_WORLD {} countries={} over_max={} pop_soldiers={} army_men={}", label, rows.size(), over_countries, pop_total, army_total);
+	for (std::size_t index = 0; index < rows.size() && index < 30; ++index) {
+		auto const& [country, manpower] = rows[index];
+		std::size_t overloaded = 0;
+		fixed_point_t worst = fixed_point_t::_0;
+		for (ArmyInstance const& army : country->get_armies()) {
+			if (army.get_supply_load_ratio() > fixed_point_t::_1) {
+				++overloaded;
+			}
+			worst = std::max(worst, army.get_supply_load_ratio());
+		}
+		fmt::println(
+			"MANPOWER {} {:<4} pop={:>8} max={:>8} army={:>8} full={:>8} regiments={:>4} free={:>8} over={:.2f} mult={:.2f} armies={} overloaded={} worst_load={:.2f}",
+			label, country->get_identifier(), manpower.pop_men, manpower.max_men, manpower.army_men, manpower.army_full_men, manpower.regiments,
+			manpower.free_men, static_cast<double>(manpower.over_share), static_cast<double>(country->manpower_combat_multiplier),
+			country->get_armies().size(), overloaded, static_cast<double>(worst)
+		);
 	}
 }
 
@@ -2569,6 +2612,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 		print_economy_report(instance_manager);
 		print_population_report(instance_manager);
+		if (dump_manpower) {
+			run_manpower_dump(instance_manager, "start");
+		}
 		if (profile_ticks) {
 			instance_manager.get_tick_profiler().set_enabled(true);
 			instance_manager.get_tick_profiler().reset();
@@ -2633,6 +2679,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		}
 	}
 
+	if (ret && dump_manpower) {
+		run_manpower_dump(*game_manager.get_instance_manager(), "end");
+	}
 	if (ret && dump_pop) { // after the days of -e, so the growth of the months is in it
 		run_pop_dump(*game_manager.get_instance_manager());
 	}
@@ -2773,6 +2822,8 @@ int main(int argc, char const* argv[]) {
 			dump_command = true;
 		} else if (strcmp(arg, "--dump-pop") == 0) {
 			dump_pop = true;
+		} else if (strcmp(arg, "--dump-manpower") == 0) {
+			dump_manpower = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
 			if (++argn >= argc) {
 				fmt::println(stderr, "Missing folder after \"--ov-data\".");

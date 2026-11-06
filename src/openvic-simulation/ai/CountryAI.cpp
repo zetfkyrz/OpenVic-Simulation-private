@@ -245,12 +245,45 @@ namespace {
 				continue;
 			}
 			for (Pop& pop : province->get_mutable_pops()) {
-				if (UnitInstanceManager::get_recruitment_block_reason(country, *regiment_type, *province, pop).empty()
+				if (unit_manager.get_recruitment_block_reason(country, *regiment_type, *province, pop).empty()
 					&& unit_manager.start_recruitment(country, *regiment_type, *province, pop)) {
 					++started;
 					break;
 				}
 			}
+		}
+	}
+
+	// At peace an army over the manpower (docs/RECRUITMENT.md) fights weaker: the weakest regiments are disbanded down to the maximum
+	void disband_over_manpower(InstanceManager& instance_manager, CountryInstance& country) {
+		if (UnitInstanceGroup::war_defines == nullptr || UnitInstanceGroup::war_defines->ai_disband_over_manpower == 0) {
+			return;
+		}
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		const Manpower manpower = unit_manager.get_manpower(country);
+		std::int64_t over = manpower.army_men - manpower.max_men;
+		if (over <= 0) {
+			return;
+		}
+		std::vector<std::pair<RegimentInstance*, ArmyInstance*>> regiments;
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.is_in_combat()) {
+				continue;
+			}
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				regiments.emplace_back(&regiment, &army);
+			}
+		}
+		std::stable_sort(regiments.begin(), regiments.end(), [](auto const& a, auto const& b) -> bool {
+			return a.first->get_strength() != b.first->get_strength() ? a.first->get_strength() < b.first->get_strength()
+				: a.first->unique_id < b.first->unique_id;
+		});
+		for (auto const& [regiment, army] : regiments) {
+			if (over <= 0) {
+				break;
+			}
+			over -= (regiment->get_strength() * UnitInstanceGroup::war_defines->template_men_per_strength).floor<std::int64_t>();
+			unit_manager.destroy_unit(*regiment, *army);
 		}
 	}
 
@@ -333,7 +366,10 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 
 		if (country.is_at_war()) {
 			recruit(instance_manager, country);
-		} else if (ai.war_chance_per_year.numerator > 0 && country.get_total_rank() > 0
+		} else {
+			disband_over_manpower(instance_manager, country);
+		}
+		if (!country.is_at_war() && ai.war_chance_per_year.numerator > 0 && country.get_total_rank() > 0
 			&& static_cast<int>(country.get_total_rank()) <= ai.max_rank_for_wars
 			// no wars in the first half year of the game
 			&& today.get_year() * 12 + today.get_month() > ai.war_free_until_year * 12 + ai.war_free_until_month

@@ -1,5 +1,7 @@
 #include "UnitInstance.hpp"
 
+#include <algorithm>
+
 using namespace OpenVic;
 
 UnitInstance::UnitInstance(
@@ -22,9 +24,10 @@ void UnitInstance::take_damage(fixed_point_t organisation_loss, fixed_point_t st
 	if (organisation < fixed_point_t::_0) {
 		organisation = fixed_point_t::_0;
 	}
-	strength -= strength_loss;
-	if (strength < fixed_point_t::_0) {
-		strength = fixed_point_t::_0;
+	if (strength_loss > fixed_point_t::_0) {
+		const fixed_point_t lost = std::min(strength, strength_loss);
+		strength -= lost;
+		unapplied_losses += lost;
 	}
 }
 

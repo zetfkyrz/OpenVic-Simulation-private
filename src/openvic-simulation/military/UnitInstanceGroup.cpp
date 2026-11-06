@@ -1228,6 +1228,7 @@ ProvinceInstance* UnitInstanceManager::find_nearest_port(
 
 void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& group) {
 	if (unit.get_branch() == LAND) {
+		apply_losses(static_cast<RegimentInstance&>(unit), group.get_country());
 		if (Pop* const pop = static_cast<RegimentInstance&>(unit).get_pop()) {
 			pop->release_recruit();
 		}
@@ -1259,7 +1260,7 @@ void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
 		for (ArmyInstance* army : carried) {
 			navy.forget_carried_army(*army);
 			army->set_transport_navy(nullptr);
-			destroy_group(*army);
+			kill_group(*army);
 		}
 	} else {
 		ArmyInstance& army = static_cast<ArmyInstance&>(group);
@@ -1277,6 +1278,7 @@ void UnitInstanceManager::destroy_group(UnitInstanceGroup& group) {
 
 	for (UnitInstance* unit : group_units) {
 		if (unit->get_branch() == LAND) {
+			apply_losses(static_cast<RegimentInstance&>(*unit), group.get_country());
 			if (Pop* const pop = static_cast<RegimentInstance&>(*unit).get_pop()) {
 				pop->release_recruit();
 			}
@@ -1387,11 +1389,19 @@ bool UnitInstanceManager::create_leader(
 	return true;
 }
 namespace {
-	// A pop that can give the soldiers of one more regiment to its country
+	// A pop whose men can serve in the regiments of its country (the manpower of the country decides how many)
 	bool pop_gives_regiment(CountryInstance const& country, Pop const& pop) {
 		return pop.get_type().can_be_recruited && Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())
-			&& pop.get_regiment_count() < pop.get_max_supported_regiments();
+			&& pop.get_size() > pop_size_t(0);
 	}
+
+	std::int64_t strength_men(const fixed_point_t strength) {
+		return (strength * UnitInstanceGroup::war_defines->template_men_per_strength).floor<std::int64_t>();
+	}
+}
+
+std::int64_t UnitInstanceManager::get_regiment_men(RegimentType const& regiment_type) const {
+	return strength_men(regiment_type.max_strength);
 }
 
 Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const {
@@ -1402,17 +1412,104 @@ Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const
 			continue;
 		}
 		for (Pop const& pop : province->get_pops()) {
-			if (!pop.get_type().can_be_recruited) {
-				continue;
-			}
-			const std::size_t supported = pop.get_max_supported_regiments();
-			manpower.max_regiments += static_cast<std::uint32_t>(supported);
 			if (pop_gives_regiment(country, pop)) {
-				manpower.available_regiments += static_cast<std::uint32_t>(supported - pop.get_regiment_count());
+				manpower.pop_men += type_safe::get(pop.get_size());
 			}
 		}
 	}
+	manpower.max_men = manpower.pop_men;
+	if (country.is_at_war()) {
+		Rate const& bonus = UnitInstanceGroup::war_defines->manpower_war_bonus;
+		manpower.multiplier += bonus.fixed();
+		manpower.max_men += bonus.of_int(manpower.pop_men);
+	}
+	for (ArmyInstance const& army : country.get_armies()) {
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			manpower.army_men += strength_men(regiment.get_strength());
+			manpower.army_full_men += strength_men(regiment.get_max_strength());
+			++manpower.regiments;
+		}
+	}
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.country == &country && order.regiment_type != nullptr) {
+			manpower.queued_men += get_regiment_men(*order.regiment_type);
+		}
+	}
+	manpower.free_men = manpower.max_men - manpower.army_men - manpower.queued_men;
+	if (manpower.men_per_regiment > 0) {
+		manpower.max_regiments = static_cast<std::uint32_t>(manpower.max_men / manpower.men_per_regiment);
+		manpower.available_regiments = static_cast<std::uint32_t>(std::max<std::int64_t>(0, manpower.free_men) / manpower.men_per_regiment);
+	}
+	const std::int64_t over = manpower.army_men - manpower.max_men;
+	if (over > 0) {
+		OpenVicWarDefines const& wd = *UnitInstanceGroup::war_defines;
+		// In ten-thousandths, so that the share of millions of men fits
+		manpower.over_share = manpower.max_men > 0
+			? fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(over * 10000 / manpower.max_men, 1000000))) / 10000
+			: fixed_point_t::_1;
+		manpower.combat_multiplier = std::max(
+			wd.over_manpower_min_mult.fixed(), fixed_point_t::_1 - wd.over_manpower_penalty.of(manpower.over_share)
+		);
+	}
 	return manpower;
+}
+
+void UnitInstanceManager::apply_losses(RegimentInstance& regiment, CountryInstance& country) {
+	const std::int64_t men = strength_men(regiment.get_unapplied_losses());
+	if (men <= 0) {
+		return;
+	}
+	// The whole men are taken off, the rest of a man waits for the next losses
+	regiment.set_unapplied_losses(
+		regiment.get_unapplied_losses() - fixed_point_t(static_cast<int32_t>(men)) / UnitInstanceGroup::war_defines->template_men_per_strength
+	);
+	std::int64_t left = men;
+	// A pop is never emptied by the losses (it keeps a man), what it does not have dies in the other pops of soldiers of the country
+	const auto take = [this, &left](Pop& pop) -> void {
+		const std::int64_t can = std::min<std::int64_t>(left, type_safe::get(pop.get_size()) - 1);
+		if (can > 0) {
+			pop.change_size(-static_cast<std::int32_t>(can), 6);
+			pop.get_location().mark_political_support_dirty();
+			left -= can;
+			men_killed_total += can;
+		}
+	};
+	if (Pop* const pop = regiment.get_pop()) {
+		take(*pop);
+	}
+	for (ProvinceInstance* province : country.get_owned_provinces()) {
+		if (left <= 0) {
+			break;
+		}
+		for (Pop const& pop : province->get_pops()) {
+			if (left <= 0) {
+				break;
+			}
+			if (pop.get_type().can_be_recruited) {
+				take(*province->find_pop_by_id(pop.id_in_province));
+			}
+		}
+	}
+}
+
+void UnitInstanceManager::apply_all_losses() {
+	for (ArmyInstance& army : armies) {
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (regiment.get_unapplied_losses() > fixed_point_t::_0) {
+				apply_losses(regiment, army.get_country());
+			}
+		}
+	}
+}
+
+void UnitInstanceManager::kill_group(UnitInstanceGroup& group) {
+	if (group.branch == LAND) {
+		for (RegimentInstance& regiment : static_cast<ArmyInstance&>(group).get_regiment_instances()) {
+			regiment.take_damage(fixed_point_t::_0, regiment.get_strength());
+		}
+	}
+	// The armies on board of a navy die with it in destroy_group
+	destroy_group(group);
 }
 
 namespace {
@@ -1446,11 +1543,14 @@ std::string UnitInstanceManager::get_division_recruitment_block_reason(
 		}
 	}
 	const Manpower manpower = get_manpower(country);
-	if (manpower.available_regiments < types.size()) {
+	std::int64_t needed_men = 0;
+	for (RegimentType const* type : types) {
+		needed_men += get_regiment_men(*type);
+	}
+	if (manpower.free_men < needed_men) {
 		return fmt::format(
-			"Не хватает людских ресурсов: нужно {} полков ({} чел.), доступно {} ({} чел.)", types.size(),
-			static_cast<std::int64_t>(types.size()) * manpower.men_per_regiment, manpower.available_regiments,
-			static_cast<std::int64_t>(manpower.available_regiments) * manpower.men_per_regiment
+			"Не хватает людских ресурсов: нужно {} полков ({} чел.), свободно {} чел.", types.size(), needed_men,
+			std::max<std::int64_t>(0, manpower.free_men)
 		);
 	}
 	std::vector<std::pair<GoodDefinition const*, fixed_point_t>> needed;
@@ -1501,20 +1601,35 @@ bool UnitInstanceManager::start_division_recruitment(
 		days = std::max(days, get_recruitment_days(country, *type));
 	}
 	const std::uint32_t division_id = next_division_id++;
-	std::size_t next_pop = 0;
+	if (pops.empty()) {
+		return false;
+	}
+	// Every regiment is linked to the pop with the most men not yet in regiments (of the province first): its losses are taken off that pop
+	const std::int64_t men_per_regiment = static_cast<std::int64_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	const auto pick_pop = [&pops, &province, men_per_regiment]() -> Pop* {
+		Pop* best = nullptr;
+		std::int64_t best_free = 0;
+		bool best_local = false;
+		for (Pop* pop : pops) {
+			const std::int64_t free = type_safe::get(pop->get_size()) - static_cast<std::int64_t>(pop->get_regiment_count()) * men_per_regiment;
+			const bool local = &pop->get_location() == &province && free > 0;
+			if (best == nullptr || (local && !best_local) || (local == best_local && free > best_free)) {
+				best = pop;
+				best_free = free;
+				best_local = local;
+			}
+		}
+		return best;
+	};
 	for (RegimentType const* type : types) {
-		while (next_pop < pops.size() && !pops[next_pop]->try_recruit()) {
-			++next_pop;
-		}
-		if (next_pop >= pops.size()) {
-			break; // cannot happen: the manpower was checked
-		}
+		Pop* const pop = pick_pop();
+		pop->add_recruit();
 		for (auto const& [good, quantity] : type->get_build_cost()) {
 			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
 			good_data.stockpile_amount -= quantity;
 			good_data.stockpile_change_yesterday -= quantity;
 		}
-		RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, pops[next_pop], days, days };
+		RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, pop, days, days };
 		order.division_id = division_id;
 		order.template_id = division_template.id;
 		recruitment_orders.push_back(order);
@@ -1531,7 +1646,7 @@ int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country
 
 std::string_view UnitInstanceManager::get_recruitment_block_reason(
 	CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
-) {
+) const {
 	if (!country.is_unit_type_unlocked(regiment_type)) {
 		return "Тип полка ещё не открыт";
 	}
@@ -1547,8 +1662,8 @@ std::string_view UnitInstanceManager::get_recruitment_block_reason(
 	if (!Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
 		return "Культура населения не допускается к службе";
 	}
-	if (pop.get_regiment_count() >= pop.get_max_supported_regiments()) {
-		return "Население не может выставить больше полков";
+	if (get_manpower(country).free_men < get_regiment_men(regiment_type)) {
+		return "Не хватает людских ресурсов";
 	}
 	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
 		if (country.get_good_data(*good).stockpile_amount < quantity) {
@@ -1565,9 +1680,7 @@ bool UnitInstanceManager::start_recruitment(
 		return false;
 	}
 
-	if (!pop.try_recruit()) {
-		return false;
-	}
+	pop.add_recruit();
 
 	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
 		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
@@ -1752,6 +1865,7 @@ bool UnitInstanceManager::upgrade_regiment(CountryInstance& country, ArmyInstanc
 	const bool mobilised = regiment.is_mobilised();
 	const std::uint32_t division_id = regiment.get_division_id();
 	const fixed_point_t supply_reserve = regiment.get_supply_reserve();
+	const fixed_point_t unapplied_losses = regiment.get_unapplied_losses();
 	const fixed_point_t strength_share = old_type.max_strength > fixed_point_t::_0 ? regiment.get_strength() / old_type.max_strength : fixed_point_t::_1;
 	const fixed_point_t organisation_share = regiment.get_max_organisation() > fixed_point_t::_0 ? regiment.get_organisation() / regiment.get_max_organisation() : fixed_point_t::_1;
 
@@ -1766,6 +1880,7 @@ bool UnitInstanceManager::upgrade_regiment(CountryInstance& country, ArmyInstanc
 	upgraded.take_damage(
 		upgraded.get_organisation() - upgraded.get_max_organisation() * organisation_share, upgraded.get_strength() - target->max_strength * strength_share
 	);
+	upgraded.set_unapplied_losses(unapplied_losses);
 	army.add_unit(upgraded);
 	army.update_gamestate();
 	return true;
@@ -1801,7 +1916,7 @@ void UnitInstanceManager::enforce_transport_capacity(NavyInstance& navy) {
 		ArmyInstance& army = navy.get_carried_armies().back().get();
 		navy.forget_carried_army(army);
 		army.set_transport_navy(nullptr);
-		destroy_group(army);
+		kill_group(army);
 	}
 }
 

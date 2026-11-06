@@ -488,7 +488,7 @@ void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t 
 			if (home != nullptr) {
 				army->set_location(*home);
 			} else {
-				instance_manager.get_unit_instance_manager().destroy_group(*army);
+				instance_manager.get_unit_instance_manager().kill_group(*army);
 			}
 		}
 	}
@@ -575,7 +575,42 @@ namespace {
 	TerrainType const* const terrain = province.get_terrain_type();
 	const fixed_point_t width_share = fixed_point_t::_1 + (terrain != nullptr ? terrain->get_combat_width_percentage_change() : fixed_point_t::_0);
 	const std::uint32_t width = static_cast<std::uint32_t>(std::max(1, (width_share * wd.battle_width_base).floor<std::int32_t>()));
-	const auto choose_front = [&front_divisions, width](BattleSideUnits& side) -> std::uint32_t {
+	// The directions of the attack: the provinces the attacking divisions come from (each after the first widens their front and their damage)
+	std::vector<ProvinceInstance const*> origins;
+	for (BattleUnit const& unit : attackers.units) {
+		ProvinceInstance const* const from = unit.origin != nullptr ? unit.origin : &province;
+		if (std::find(origins.begin(), origins.end(), from) == origins.end()) {
+			origins.push_back(from);
+		}
+	}
+	const std::int32_t extra_directions = static_cast<std::int32_t>(
+		std::min<std::size_t>(origins.size(), static_cast<std::size_t>(std::max(1, wd.battle_flank_max_directions)))
+	) - 1;
+	const std::uint32_t attacker_width = width + static_cast<std::uint32_t>(
+		(fixed_point_t(static_cast<std::int32_t>(width)) * wd.battle_flank_width.fixed() * std::max(0, extra_directions)).floor<std::int32_t>()
+	);
+	const fixed_point_t flank_attack = fixed_point_t::_1 + wd.battle_flank_attack.fixed() * std::max(0, extra_directions);
+	// The organisation of a division over its maximum
+	const auto organisation_share = [](BattleUnit const& unit) -> fixed_point_t {
+		fixed_point_t organisation = fixed_point_t::_0, max_organisation = fixed_point_t::_0;
+		for (RegimentInstance const& regiment : unit.army->get_regiment_instances()) {
+			if (regiment.get_division_id() == unit.division_id) {
+				organisation += regiment.get_organisation();
+				max_organisation += regiment.get_max_organisation();
+			}
+		}
+		return max_organisation > fixed_point_t::_0 ? organisation / max_organisation : fixed_point_t::_0;
+	};
+	const auto choose_front = [&front_divisions, &organisation_share, &wd](BattleSideUnits& side, const std::uint32_t side_width) -> std::uint32_t {
+		// A worn out division of yesterday's front goes to the reserve when a fresh one waits there
+		bool fresh_reserve = false;
+		for (BattleUnit const& unit : side.units) {
+			if (std::find(front_divisions.begin(), front_divisions.end(), unit.division_id) == front_divisions.end()
+				&& organisation_share(unit) >= wd.battle_rotate_reserve_organisation.fixed()) {
+				fresh_reserve = true;
+				break;
+			}
+		}
 		std::uint32_t used = 0;
 		for (const bool kept : { true, false }) {
 			for (BattleUnit& unit : side.units) {
@@ -583,7 +618,10 @@ namespace {
 				if (unit.front || was_front != kept) {
 					continue;
 				}
-				if (used == 0 || used + unit.stats->width <= width) {
+				if (kept && fresh_reserve && organisation_share(unit) < wd.battle_rotate_organisation.fixed()) {
+					continue;
+				}
+				if (used == 0 || used + unit.stats->width <= side_width) {
 					unit.front = true;
 					used += unit.stats->width;
 				}
@@ -591,8 +629,8 @@ namespace {
 		}
 		return used;
 	};
-	const std::uint32_t attacker_ranks = choose_front(attackers);
-	const std::uint32_t defender_ranks = choose_front(defenders);
+	const std::uint32_t attacker_ranks = choose_front(attackers, attacker_width);
+	const std::uint32_t defender_ranks = choose_front(defenders, width);
 
 	// What the regiment types of a front are, for the buffs against them
 	const auto front_types = [](BattleSideUnits const& side, std::uint32_t& regiments) {
@@ -640,7 +678,8 @@ namespace {
 			const fixed_point_t skill_defence = fixed_point_t::_1 + skill_step * static_cast<std::int32_t>(defence_level);
 			const fixed_point_t leader_attack = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.attack / wd.leader_point_divisor);
 			const fixed_point_t leader_defence = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
-			const fixed_point_t supply = unit.army->get_supply_level();
+			// The supply level and the penalty of an army over the manpower of its country (both multiply the attack and the defence)
+			const fixed_point_t supply = unit.army->get_supply_level() * unit.army->get_country().manpower_combat_multiplier;
 			fixed_point_t attack = fixed_point_t::_0, defence = fixed_point_t::_0, breakthrough = fixed_point_t::_0;
 			for (DivisionStats::TypePart const& part : unit.stats->parts) {
 				const RegimentType::OvBuff buff = type_buff(*part.type, terrain_id, enemy_types, enemy_regiments, skill_step, terrain_level);
@@ -665,7 +704,7 @@ namespace {
 					- leader_skills::scale_terrain_effect(fixed_point_t::_1 - terrain_defence, skill_step, terrain_level);
 				const fixed_point_t terrain_factor = enemy_terrain > fixed_point_t::_0 ? terrain_defence / enemy_terrain : fixed_point_t::_1;
 				unit.conditions = own_conditions * terrain_factor * conditions.night * conditions.weather
-					* (river ? conditions.river_crossing : fixed_point_t::_1);
+					* (river ? conditions.river_crossing : fixed_point_t::_1) * flank_attack;
 			} else {
 				const fixed_point_t fortification = unit.stats->fortification + fixed_point_t(static_cast<std::int32_t>(unit.army->get_dig_in_level()));
 				// The defence the terrain gives is a bonus: the skill of the general makes it bigger
@@ -696,16 +735,22 @@ namespace {
 	const fixed_point_t attacker_attack = side_attack(attackers, attacker_conditioned);
 	const fixed_point_t defender_attack = side_attack(defenders, defender_conditioned);
 	const fixed_point_t attacker_conditions = attacker_attack > fixed_point_t::_0 ? attacker_conditioned / attacker_attack : fixed_point_t::_1;
-	const auto strike = [&wd](BattleSideUnits& targets, const std::uint32_t target_ranks, const fixed_point_t attack, const fixed_point_t side_conditions) {
+	const auto strike = [&wd](
+		BattleSideUnits& targets, const std::uint32_t target_ranks, const fixed_point_t attack, const fixed_point_t side_conditions, const bool attacking
+	) {
 		for (BattleUnit& unit : targets.units) {
 			if (unit.front && target_ranks > 0) {
 				const fixed_point_t directed = attack * static_cast<std::int32_t>(unit.stats->width) / static_cast<std::int32_t>(target_ranks);
 				unit.hit = battle_formulas::battle_hit(wd, directed, side_conditions, unit.stats->density, unit.protection, unit.stats->casualties_taken);
+				if (attacking) {
+					unit.hit.strength_loss = wd.battle_attacker_strength_loss_mult.of(unit.hit.strength_loss);
+					unit.hit.organisation_loss = wd.battle_attacker_organisation_loss_mult.of(unit.hit.organisation_loss);
+				}
 			}
 		}
 	};
-	strike(defenders, defender_ranks, attacker_attack, attacker_conditions);
-	strike(attackers, attacker_ranks, defender_attack, fixed_point_t::_1);
+	strike(defenders, defender_ranks, attacker_attack, attacker_conditions, false);
+	strike(attackers, attacker_ranks, defender_attack, fixed_point_t::_1, true);
 
 	// R of the day: the breakthrough of the attacking front over the protection of the defending one (before the losses)
 	fixed_point_t breakthrough_sum = fixed_point_t::_0, protection_sum = fixed_point_t::_0;
@@ -1265,7 +1310,7 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 					if (retreat != nullptr) {
 						mover->set_location(*retreat);
 					} else {
-						unit_manager.destroy_group(*mover);
+						unit_manager.kill_group(*mover);
 					}
 				}
 			}
@@ -1530,11 +1575,32 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 	}
 }
 
+namespace {
+	// What the regiments of a country want today: the strength of each, the men and the goods of all of them
+	struct ReinforcementNeed {
+		std::vector<std::pair<RegimentInstance*, fixed_point_t>> regiments;
+		std::int64_t men = 0;
+		std::vector<std::pair<GoodDefinition const*, fixed_point_t>> goods;
+	};
+
+	void add_good_need(std::vector<std::pair<GoodDefinition const*, fixed_point_t>>& goods, GoodDefinition const* good, const fixed_point_t quantity) {
+		for (auto& entry : goods) {
+			if (entry.first == good) {
+				entry.second += quantity;
+				return;
+			}
+		}
+		goods.emplace_back(good, quantity);
+	}
+}
+
 void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& wd = get_war_defines();
 	const fixed_point_t organisation_recovery = wd.organisation_recovery.fixed();
 	const fixed_point_t strength_recovery = wd.strength_recovery.fixed();
 	std::vector<ArmyInstance*> surrendered;
+	std::unordered_map<CountryInstance*, ReinforcementNeed> needs;
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
 		for (ArmyInstance& army : province.get_armies()) {
@@ -1568,17 +1634,78 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			if (army.get_country().is_at_war()) {
 				supply = std::max(army.get_supply_ratio(), wd.recovery_min_supply.fixed());
 			}
+			const bool new_men = friendly && supply >= wd.strength_recovery_min_supply.fixed();
+			// The technologies (reinforce_rate) make the new men come faster
+			fixed_point_t reinforce_speed = strength_recovery;
+			if (new_men && cache.get_reinforce_rate() != nullptr) {
+				reinforce_speed *= std::max(fixed_point_t::_0, fixed_point_t::_1 + army.get_country().get_modifier_effect_value(*cache.get_reinforce_rate()));
+			}
+			ReinforcementNeed* need = nullptr;
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
-				regiment.recover(
-					regiment.get_max_organisation() * organisation_recovery * supply,
-					friendly && supply >= wd.strength_recovery_min_supply.fixed() ? regiment.get_max_strength() * strength_recovery : fixed_point_t::_0
-				);
+				regiment.recover(regiment.get_max_organisation() * organisation_recovery * supply, fixed_point_t::_0);
+				const fixed_point_t gain = new_men
+					? std::min(regiment.get_max_strength() * reinforce_speed, regiment.get_max_strength() - regiment.get_strength())
+					: fixed_point_t::_0;
+				if (gain <= fixed_point_t::_0) {
+					continue;
+				}
+				if (need == nullptr) {
+					need = &needs[&army.get_country()];
+				}
+				need->regiments.emplace_back(&regiment, gain);
+				need->men += (gain * wd.template_men_per_strength).ceil<std::int64_t>();
+				if (regiment.get_max_strength() > fixed_point_t::_0) {
+					const fixed_point_t share = wd.reinforce_goods_share.of(gain / regiment.get_max_strength());
+					for (auto const& [good, quantity] : regiment.unit_type.get_build_cost()) {
+						add_good_need(need->goods, good, quantity * share);
+					}
+				}
 			}
 		}
 	}
+
+	// The new men come out of the free manpower of the country and cost the goods of the regiments for their share of the strength: when the
+	// country has not enough of one, every regiment gets the same share of what it wants (the order of the regiments does not matter)
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		country.reinforce_wanted_men = 0;
+		country.reinforce_given_men = 0;
+		country.reinforce_limit = 0;
+	}
+	for (auto& [country, need] : needs) {
+		fixed_point_t ratio = fixed_point_t::_1;
+		country->reinforce_wanted_men = need.men;
+		if (!country->is_rebel_country()) {
+			const std::int64_t free_men = std::max<std::int64_t>(0, unit_manager.get_manpower(*country).free_men);
+			if (free_men < need.men) {
+				ratio = fixed_point_t(static_cast<int32_t>(free_men * 10000 / need.men)) / 10000;
+				country->reinforce_limit = 1;
+			}
+			for (auto const& [good, quantity] : need.goods) {
+				const fixed_point_t stockpile = std::max(fixed_point_t::_0, country->get_good_data(*good).stockpile_amount);
+				if (quantity > fixed_point_t::_0 && stockpile < quantity * ratio) {
+					ratio = stockpile / quantity;
+					country->reinforce_limit = 2;
+				}
+			}
+			if (ratio <= fixed_point_t::_0) {
+				continue;
+			}
+			for (auto const& [good, quantity] : need.goods) {
+				CountryInstance::good_data_t& good_data = country->get_good_data(*good);
+				good_data.stockpile_amount -= quantity * ratio;
+				good_data.stockpile_change_yesterday -= quantity * ratio;
+			}
+		}
+		for (auto const& [regiment, gain] : need.regiments) {
+			regiment->recover(fixed_point_t::_0, gain * ratio);
+		}
+		country->reinforce_given_men = ratio >= fixed_point_t::_1 ? need.men
+			: (fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(need.men, 1000000000))) * ratio).floor<std::int64_t>();
+	}
 	for (ArmyInstance* army : surrendered) {
 		instance_manager.get_notification_log().add(instance_manager.get_today(), &army->get_country(), "army_surrendered", army->get_name());
-		instance_manager.get_unit_instance_manager().destroy_group(*army);
+		instance_manager.get_unit_instance_manager().kill_group(*army);
 	}
 }
 
@@ -1837,8 +1964,9 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 			}
 
 			const bool friendly = owner == &country || (owner != nullptr && country.has_alliance_with(*owner));
-			// Only countries at war need supplies, a blockade of the ports cuts them
-			fixed_point_t supply = country.is_at_war() ? country.get_army_supply_ratio() : fixed_point_t::_1;
+			// Only countries at war need supplies (the supply level of the army: its reserves keep it while the supplies do not arrive), a
+			// blockade of the ports cuts them
+			fixed_point_t supply = country.is_at_war() ? army.get_supply_level() : fixed_point_t::_1;
 			supply -= get_blockade_share(country) / wd.blockade_supply_divisor;
 			if (supply < fixed_point_t::_0) {
 				supply = fixed_point_t::_0;
@@ -1850,6 +1978,10 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 			}
 			if (supply < fixed_point_t::_1) {
 				rate += supply_attrition * (fixed_point_t::_1 - supply) * (friendly ? wd.attrition_friendly_multiplier.fixed() : fixed_point_t::_1);
+			}
+			// More regiments than the province feeds (at war, or on the land of others: at peace at home the regiments are in their barracks)
+			if (army.get_supply_load_ratio() > fixed_point_t::_1 && (country.is_at_war() || !friendly)) {
+				rate += std::min(wd.attrition_overload_max.fixed(), wd.attrition_overload.of(army.get_supply_load_ratio() - fixed_point_t::_1));
 			}
 			if (rate <= fixed_point_t::_0) {
 				continue;
@@ -1935,8 +2067,50 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 	}
 }
 
+void WarManager::update_manpower(InstanceManager& instance_manager) {
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	OpenVicWarDefines const& wd = get_war_defines();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (country.is_rebel_country() || country.get_armies().empty()) {
+			country.manpower_combat_multiplier = fixed_point_t::_1;
+			country.over_manpower_notified = false;
+			country.start_manpower_fitted = true;
+			continue;
+		}
+		Manpower manpower = unit_manager.get_manpower(country);
+		// The armies of the start that the pops of soldiers cannot man start weaker, at the maximum (not a loss: no one dies)
+		if (!country.start_manpower_fitted) {
+			country.start_manpower_fitted = true;
+			if (wd.start_manpower_fit != 0 && manpower.army_men > manpower.max_men && manpower.army_men > 0) {
+				const fixed_point_t share = fixed_point_t(static_cast<int32_t>(manpower.max_men * 10000 / manpower.army_men)) / 10000;
+				for (ArmyInstance& army : country.get_armies()) {
+					for (RegimentInstance& regiment : army.get_regiment_instances()) {
+						const fixed_point_t losses = regiment.get_unapplied_losses();
+						regiment.take_damage(fixed_point_t::_0, regiment.get_strength() - regiment.get_strength() * share);
+						regiment.set_unapplied_losses(losses);
+					}
+				}
+				manpower = unit_manager.get_manpower(country);
+			}
+		}
+		country.manpower_combat_multiplier = manpower.combat_multiplier;
+		if (manpower.combat_multiplier < fixed_point_t::_1) {
+			if (!country.over_manpower_notified) {
+				country.over_manpower_notified = true;
+				instance_manager.get_notification_log().add(
+					instance_manager.get_today(), &country, "over_manpower",
+					fmt::format("{}", (manpower.over_share * 100).floor<std::int32_t>())
+				);
+			}
+		} else {
+			country.over_manpower_notified = false;
+		}
+	}
+}
+
 void WarManager::tick(InstanceManager& instance_manager) {
 	fought_today.clear();
+	update_manpower(instance_manager);
 	// The ways by sea of the armies (P4d): the ones in their boarding port sail, the ones at sea land
 	instance_manager.get_unit_instance_manager().update_sea_transfers(instance_manager.get_map_instance());
 
@@ -2003,8 +2177,11 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_sieges(instance_manager);
 	update_encirclements(instance_manager);
 	update_scores(instance_manager);
+	// The men lost in the battles and by the attrition die: they are taken off the pops (the new men of today come out of what is left)
+	instance_manager.get_unit_instance_manager().apply_all_losses();
 	update_army_recovery(instance_manager);
 	update_attrition(instance_manager);
+	instance_manager.get_unit_instance_manager().apply_all_losses();
 	update_leaders(instance_manager);
 	update_ai_peace(instance_manager);
 	update_auto_plan(instance_manager);
