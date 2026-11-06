@@ -2555,6 +2555,29 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	// The first day: the stockpile of the start, START_SUPPLY_STOCKPILE_DAYS of the need of the units
 	const bool give_start_stockpile = !start_supply_stockpile_given;
 	start_supply_stockpile_given = true;
+
+	// Grain for the canned food that the stockpile does not have (CANNED_FOOD_GRAIN_SUBSTITUTE grain for a can: twice as much is eaten for the
+	// same food): what the grain of the stockpile has left after its own needs; the government buys the grain for the missing cans too
+	GoodDefinition const* const canned_food = good_definition_manager != nullptr ? good_definition_manager->get_good_definition_by_identifier("canned_food") : nullptr;
+	GoodDefinition const* const grain = good_definition_manager != nullptr ? good_definition_manager->get_good_definition_by_identifier("grain") : nullptr;
+	fixed_point_t cans_from_grain = fixed_point_t::_0;
+	const fixed_point_t grain_per_can = openvic_economy_defines->canned_food_grain_substitute;
+	if (canned_food != nullptr && grain != nullptr && grain_per_can > fixed_point_t::_0 && !give_start_stockpile) {
+		good_data_t& cans = goods_data.at_index(canned_food->index);
+		good_data_t& grain_data = goods_data.at_index(grain->index);
+		const fixed_point_t missing = std::max(fixed_point_t::_0, cans.army_due - cans.stockpile_amount);
+		if (missing > fixed_point_t::_0) {
+			const fixed_point_t grain_free = std::max(fixed_point_t::_0, grain_data.stockpile_amount - grain_data.army_due - grain_data.navy_due);
+			const fixed_point_t grain_used = std::min(missing * grain_per_can, grain_free);
+			cans_from_grain = grain_used / grain_per_can;
+			grain_data.stockpile_amount -= grain_used;
+			grain_data.stockpile_change_yesterday -= grain_used;
+			grain_data.government_needs += missing * grain_per_can * DAYS_OF_SUPPLY;
+			grain_data.max_government_consumption += missing * grain_per_can * DAYS_OF_SUPPLY;
+		}
+	}
+	canned_food_from_grain_yesterday = cans_from_grain;
+
 	for (auto [good_instance, good_data] : goods_data) {
 		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
 		const fixed_point_t due = good_data.army_due + good_data.navy_due;
@@ -2565,13 +2588,16 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 		// The supplies of the day are used up
 		if (due > fixed_point_t::_0) {
 			const fixed_point_t consumed = std::min(due, good_data.stockpile_amount);
-			supplied_share[static_cast<std::size_t>(type_safe::get(good_instance.index))] = consumed / due;
+			// The cans the grain stood in for (the armies only)
+			const fixed_point_t substituted = canned_food != nullptr && good_instance.index == canned_food->index
+				? std::min(cans_from_grain, good_data.army_due - std::min(good_data.army_due, consumed)) : fixed_point_t::_0;
+			supplied_share[static_cast<std::size_t>(type_safe::get(good_instance.index))] = (consumed + substituted) / due;
 			good_data.stockpile_amount -= consumed;
 			good_data.stockpile_change_yesterday -= consumed;
 
 			// What the units got of what they needed
 			army_needed_total += good_data.army_due;
-			army_supplied_total += consumed * good_data.army_due / due;
+			army_supplied_total += consumed * good_data.army_due / due + substituted;
 			navy_needed_total += good_data.navy_due;
 			navy_supplied_total += consumed * good_data.navy_due / due;
 		}

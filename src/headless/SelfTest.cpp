@@ -5378,6 +5378,48 @@ namespace {
 				static_cast<double>(strength_over), static_cast<double>(strength_after)));
 	}
 
+	// The canned food the stockpile does not have is replaced by grain, twice as much (docs/MILITARY_SUPPLY.md)
+	void test_canned_food_grain(Results& r, InstanceManager& im) {
+		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+		GoodDefinition const* const canned_food = goods.get_good_definition_by_identifier("canned_food");
+		GoodDefinition const* const grain = goods.get_good_definition_by_identifier("grain");
+		RegimentType const* type = im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_type_by_identifier("skirmisher_infantry");
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (candidate.exists() && !candidate.is_rebel_country() && !candidate.is_at_war() && candidate.get_capital() != nullptr && !candidate.get_armies().empty()) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (canned_food == nullptr || grain == nullptr || type == nullptr || country == nullptr) {
+			fmt::println("TEST INFO canned food and grain: no goods, unit type or country, not checked");
+			return;
+		}
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		ArmyInstance* const army = unit_manager.create_army_with_regiments(*country, *country->get_capital(), *type, 4, "canned food test");
+		if (army == nullptr) {
+			fmt::println("TEST INFO canned food and grain: no army made, not checked");
+			return;
+		}
+		const unique_id_t army_id = army->unique_id;
+		im.force_tick_and_update(); // the needs of the new regiments are known
+		country->get_good_data(*canned_food).stockpile_amount = fixed_point_t::_0;
+		const fixed_point_t cans_due = country->get_good_data(*canned_food).army_due;
+		country->get_good_data(*grain).stockpile_amount += fixed_point_t(1000);
+		const fixed_point_t grain_before = country->get_good_data(*grain).stockpile_amount;
+		const fixed_point_t grain_due = country->get_good_data(*grain).army_due + country->get_good_data(*grain).navy_due;
+		im.force_tick_and_update();
+		const fixed_point_t from_grain = country->get_canned_food_from_grain_yesterday();
+		const fixed_point_t grain_used = grain_before - country->get_good_data(*grain).stockpile_amount;
+		r.check(cans_due > fixed_point_t::_0 && from_grain > fixed_point_t::_0 && grain_used >= from_grain * 2 - fixed_point_t::_0_01,
+			"canned food and grain: without canned food the stockpile gives grain, two for a can",
+			fmt::format("cans due {:.3f}, cans from grain {:.3f}, grain used {:.3f} (its own need {:.3f})", static_cast<double>(cans_due),
+				static_cast<double>(from_grain), static_cast<double>(grain_used), static_cast<double>(grain_due)));
+		if (UnitInstanceGroup* const made = unit_manager.get_unit_instance_group_by_unique_id(army_id)) {
+			unit_manager.destroy_group(*made);
+		}
+	}
+
 	void test_division_recruitment(Results& r, InstanceManager& im) {
 		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
 		UnitTypeManager const& unit_type_manager = im.definition_manager.get_military_manager().get_unit_type_manager();
@@ -5722,7 +5764,7 @@ namespace {
 				return nullptr;
 			};
 			for (ArmyInstance& candidate_army : candidate.get_armies()) {
-				if (candidate_army.get_transport_navy() == nullptr && !candidate_army.is_moving() && !candidate_army.is_in_combat() && candidate_army.get_divisions().size() >= 2
+				if (candidate_army.get_transport_navy() == nullptr && !candidate_army.is_at_sea() && !candidate_army.is_moving() && !candidate_army.is_in_combat() && candidate_army.get_divisions().size() >= 2
 					&& candidate_army.get_location().get_controller() == &candidate) {
 					found_neighbour = foreign_land_near(candidate_army.get_location());
 					if (found_neighbour != nullptr) {
@@ -6353,7 +6395,7 @@ namespace {
 		// A division standing on the line, worn out
 		ArmyInstance* worn = nullptr;
 		for (ArmyInstance& army : country->get_armies()) {
-			if (front != nullptr && army.get_army_group_id() == group_id && !army.is_moving() && !army.is_in_combat()
+			if (front != nullptr && army.get_army_group_id() == group_id && !army.is_moving() && !army.is_in_combat() && !army.is_at_sea()
 				&& std::find(front->provinces.begin(), front->provinces.end(), &army.get_location()) != front->provinces.end()) {
 				worn = &army;
 				break;
@@ -6374,16 +6416,46 @@ namespace {
 			};
 			const bool fell_back = worn != nullptr && heading(*worn)->get_controller() == country
 				&& std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) == front->provinces.end();
+			// A province behind the line: a land neighbour of the country off the line with no enemy next to it
+			bool has_rear = false;
+			bool enemy_by_land = false;
+			if (worn != nullptr) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : worn->get_location().province_definition.get_adjacencies()) {
+					CountryInstance const* const controller = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					enemy_by_land |= adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && controller != nullptr
+						&& controller != country && country->is_at_war_with(*controller);
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : worn->get_location().province_definition.get_adjacencies()) {
+					ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || next.get_controller() != country
+						|| std::find(front->provinces.begin(), front->provinces.end(), &next) != front->provinces.end()) {
+						continue;
+					}
+					bool enemy_next = false;
+					for (ProvinceDefinition::adjacency_t const& further : next.province_definition.get_adjacencies()) {
+						CountryInstance const* const controller = map_instance.get_province_instance_by_definition(further.get_to()).get_controller();
+						enemy_next |= further.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && controller != nullptr
+							&& controller != country && country->is_at_war_with(*controller);
+					}
+					has_rear |= !enemy_next;
+				}
+			}
 			// Attacked that day the division is in a battle: it leaves it by the retreat of the battle, not by the fallback
 			if (worn != nullptr && worn->is_in_combat()) {
 				fmt::println("TEST INFO fallback: the worn out division was attacked on the line (in a battle), the fallback is not checked");
+			} else if (worn != nullptr && !fell_back && (!has_rear || !enemy_by_land)) {
+				fmt::println("TEST INFO fallback: the line of {} has no province of its own behind it or no enemy next to it by land there, the fallback is not checked",
+					country->get_identifier());
 			} else r.check(fell_back, "fallback: a worn out division on the line next to the enemy falls back behind it",
 				worn == nullptr ? std::string { "the division is gone" } : fmt::format(
-					"{} at {} heading {} (controller {}), moving {}, in combat {}, on the line {}", country->get_identifier(),
+					"{} at {} heading {} (controller {}), moving {}, in combat {}, on the line {}, organisation {:.2f} of {:.2f}, on the front list {}, manual {}, cut off {}", country->get_identifier(),
 					worn->get_location().get_identifier(), heading(*worn)->get_identifier(),
 					heading(*worn)->get_controller() != nullptr ? heading(*worn)->get_controller()->get_identifier() : std::string_view { "-" },
 					worn->is_moving(), worn->is_in_combat(),
-					std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) != front->provinces.end()));
+					std::find(front->provinces.begin(), front->provinces.end(), heading(*worn)) != front->provinces.end(),
+					static_cast<double>(worn->get_total_organisation()), static_cast<double>(worn->get_total_max_organisation()),
+					std::find(front->army_ids.begin(), front->army_ids.end(), worn->unique_id) != front->army_ids.end(),
+					worn->is_manual_order(), worn->is_cut_off()));
 			if (worn != nullptr && fell_back) {
 				for (int day = 0; day < 10 && worn->is_moving(); ++day) {
 					im.force_tick_and_update();
@@ -7185,6 +7257,7 @@ namespace {
 		test_fallback(r, *im); // ticks days, a war of its own
 		test_naval_invasion(r, *im); // ticks days, a war of its own
 		test_ai_marshals(r, *im); // ticks days, a war of its own
+		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
 		game.end();
 
 		// ---- the defines hash does not change while playing

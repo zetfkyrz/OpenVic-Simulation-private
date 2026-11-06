@@ -516,6 +516,8 @@ namespace OpenVic {
 		bool division_templates_made = false;
 		// The stockpile of the start (START_SUPPLY_STOCKPILE_DAYS of the supply of the units) was given
 		bool start_supply_stockpile_given = false;
+		// The canned food of yesterday that the grain stood in for (CANNED_FOOD_GRAIN_SUBSTITUTE), for the interface
+		fixed_point_t PROPERTY(canned_food_from_grain_yesterday);
 		// The unlocks of the country (military/Unlocks.hpp): sorted keys such as equipment:rifle_2, formation:<id>, support_company:<id>, and
 		// the modifiers that unlocks give (limits of the templates...); both are in the state hash
 		memory::vector<memory::string> unlock_keys;

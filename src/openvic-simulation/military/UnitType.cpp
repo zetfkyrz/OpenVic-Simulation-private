@@ -170,6 +170,37 @@ void UnitType::scale_good(GoodDefinition const& good, const fixed_point_t share)
 	}
 }
 
+void UnitType::replace_good(GoodDefinition const& from, GoodDefinition const& to) {
+	const auto move_amount = [&from, &to](fixed_point_map_t<GoodDefinition const*>& goods) -> void {
+		auto it = goods.find(&from);
+		if (it == goods.end()) {
+			return;
+		}
+		const fixed_point_t quantity = it->second;
+		goods.erase(it);
+		if (auto target = goods.find(&to); target != goods.end()) {
+			target.value() += quantity;
+		} else {
+			goods.emplace(&to, quantity);
+		}
+	};
+	move_amount(build_cost);
+	move_amount(supply_cost);
+	for (supply_item_t& item : supply_items) {
+		if (item.good == &from) {
+			item.good = &to;
+		}
+	}
+}
+
+void UnitTypeManager::replace_vic2_regiment_good(GoodDefinition const& from, GoodDefinition const& to) {
+	for (RegimentType const& regiment_type : get_regiment_types()) {
+		if (!regiment_type.ov.is_ov) {
+			const_cast<RegimentType&>(regiment_type).replace_good(from, to); // the registry owns the types non-const
+		}
+	}
+}
+
 void UnitTypeManager::scale_regiment_good(GoodDefinition const& good, const fixed_point_t share) {
 	for (RegimentType const& regiment_type : get_regiment_types()) {
 		const_cast<RegimentType&>(regiment_type).scale_good(good, share); // the registry owns the types non-const

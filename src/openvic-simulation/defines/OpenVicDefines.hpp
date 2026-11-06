@@ -560,6 +560,9 @@ namespace OpenVic {
 	/* wine, liquor...; fuel, coal) take the consumable share, the equipment (arms, ammunition, artillery, clothes, wool, convoys) the durable one. */ \
 	/* An infantry regiment (10 rifles, 10 cans to build): 0.1 rifles and 10 cans a month (1 and 100 percent: 0.033 and 3.33 percent a day) */ \
 	INT(SUPPLY_DAYS_PER_MONTH, supply_days_per_month, 30, 1, 365) \
+	/* The canned food the national stockpile does not have is replaced by grain, this many grain for a can (the grain feeds half as well; */ \
+	/* the government buys the grain for it), 0: no replacement */ \
+	FIXED(CANNED_FOOD_GRAIN_SUBSTITUTE, canned_food_grain_substitute, fixed_point_t(2), 0, 100) \
 	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 100), 0, 10) \
 	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(100, 100), 0, 10) \
 	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 100), 0, 10) \

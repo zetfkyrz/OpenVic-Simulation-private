@@ -97,7 +97,9 @@ namespace OpenVic {
 		//     several provinces, worn out divisions go to the reserve, the terrain for the attacker
 		// 59: a regiment uses every good of its construction cost as supply, the food and the drink 100 % a month (ARMY_SUPPLY_CONSUMABLE_SHARE), the
 		//     maximum of the manpower is 10 % bigger (MANPOWER_BASE_BONUS)
-		inline constexpr int SIMULATION_VERSION = 59;
+		// 60: the regiments of the start (the types of Vic2, line infantry, the first artillery) eat grain instead of canned food, the canned food the
+		//     stockpile does not have is replaced by twice as much grain (CANNED_FOOD_GRAIN_SUBSTITUTE); a division at sea is off the line of its front
+		inline constexpr int SIMULATION_VERSION = 60;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

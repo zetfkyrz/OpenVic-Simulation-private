@@ -1302,6 +1302,10 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 			continue;
 		}
 		ArmyInstance* const army = static_cast<ArmyInstance*>(group);
+		// A division at sea (its way by sea, P4d) is not on the line: it sails on to where it was sent
+		if (army->is_at_sea()) {
+			continue;
+		}
 		// A division that stands on the land of an enemy (it won the battle there) stays to take it; one that is cut off breaks out by itself
 		CountryInstance const* const here = group->get_location().get_controller();
 		if ((!group->is_moving() && here != nullptr && here != &country && country.is_at_war_with(*here)) || army->is_cut_off()) {

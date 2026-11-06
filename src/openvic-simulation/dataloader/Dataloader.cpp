@@ -610,6 +610,16 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 			}
 		}
 	}
+	{
+		// The regiment types of Vic2 are the armies of 1836: their soldiers eat grain, the world has almost no canned food then
+		// (docs/MILITARY_SUPPLY.md; the types of OpenVic say what they eat in their files)
+		GoodDefinitionManager const& goods = definition_manager.get_economy_manager().get_good_definition_manager();
+		GoodDefinition const* const canned_food = goods.get_good_definition_by_identifier("canned_food");
+		GoodDefinition const* const grain = goods.get_good_definition_by_identifier("grain");
+		if (canned_food != nullptr && grain != nullptr) {
+			unit_type_manager.replace_vic2_regiment_good(*canned_food, *grain);
+		}
+	}
 
 	if (!unit_type_manager.generate_modifiers(definition_manager.get_modifier_manager())) {
 		spdlog::critical_s("Failed to generate unit-based modifiers!");
