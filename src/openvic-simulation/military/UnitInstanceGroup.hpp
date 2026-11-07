@@ -19,6 +19,7 @@
 #include "openvic-simulation/military/UnitBranchedGetterMacro.hpp" //below other imports that undef the macros
 
 namespace OpenVic {
+	struct BuildingType;
 	struct ProvinceInstance;
 	struct CountryInstance;
 	struct MapInstance;
@@ -180,6 +181,10 @@ namespace OpenVic {
 		unique_id_t PROPERTY_RW(parent_army_id, 0);
 		// The army of a group moves by a manual order (it is off the order of the marshal, without the bonus of the planning, until it joins it again)
 		bool PROPERTY_RW_CUSTOM_NAME(manual_order, is_manual_order, set_manual_order, false);
+		// The stance (docs/WAR_ASSUMPTIONS.md, section 10): 0 normal, 1 entrench, 2 raid, 3 rest
+		std::uint8_t PROPERTY_RW(stance, 0);
+		// The army it follows (0: none): every day it goes where that army stands
+		unique_id_t PROPERTY_RW(follow_army_id, 0);
 		// The army is cut off from every source of the supply (P8, WarManager::update_encirclements: no supply, no new men); encircled: its pocket touches the
 		// land of an enemy too (it loses organisation and gives itself up); how many days it has had no organisation in a pocket
 		bool PROPERTY_RW_CUSTOM_NAME(cut_off, is_cut_off, set_cut_off, false);
@@ -242,6 +247,7 @@ namespace OpenVic {
 		// Called daily: an army that stays still gains a dig in level every days_per_level days (up to cap),
 		// moving or fighting resets it
 		void advance_dig_in(const int32_t days_per_level, const int32_t cap);
+		static constexpr std::uint8_t STANCE_NORMAL = 0, STANCE_ENTRENCH = 1, STANCE_RAID = 2, STANCE_REST = 3;
 		void reset_dig_in();
 
 		// TODO - do these work fine when units is empty?
@@ -396,6 +402,8 @@ namespace OpenVic {
 	public:
 		// The ids of the divisions (0 is no division)
 		std::uint32_t next_division_id = 1;
+		// The building of the naval base (the order "to the port" looks for one), set by the InstanceManager
+		BuildingType const* unit_type_manager_naval_base = nullptr;
 		// The men who died in the armies since the start (taken off the pops by apply_losses)
 		std::int64_t men_killed_total = 0;
 		// The month of today (year * 12 + month - 1), set at the start of tick: the monthly limit of the recruitment counts in it
@@ -472,6 +480,10 @@ namespace OpenVic {
 		void update_sea_transfers(MapInstance& map_instance);
 		// The nearest port the country's navy can dock in, from the province (nullptr if there is none)
 		ProvinceInstance* find_nearest_port(CountryInstance const& country, ProvinceInstance& from, MapInstance& map_instance);
+		// The nearest province over the land with a naval base of the country (owned and held), nullptr if there is none (the order "to the port")
+		ProvinceInstance* find_nearest_army_port(ArmyInstance const& army, MapInstance& map_instance) const;
+		// The armies that follow another one go where it stands (every day)
+		void update_follows(MapInstance& map_instance);
 
 		// Empty if the regiment can be recruited from the pop, otherwise the reason it cannot (shown to the player); the men come out of the free
 		// manpower of the country

@@ -420,6 +420,9 @@ bool GameActionManager::VariantVisitor::operator() (move_army_argument_t const& 
 	// A manual order takes the army off its fronts so that they do not send it back; an army of a field marshal is off his order (and without the bonus of
 	// the planning) until it joins it again
 	take_off_fronts(instance_manager, *group);
+	if (group->branch == unit_branch_t::LAND) {
+		static_cast<ArmyInstance&>(*group).set_follow_army_id(0);
+	}
 
 	return instance_manager.get_unit_instance_manager().order_move(*group, *province, instance_manager.get_map_instance());
 }
@@ -943,6 +946,59 @@ bool GameActionManager::VariantVisitor::operator() (cancel_recruitment_argument_
 }
 
 // The priority of a recruitment order (of its whole division): the waiting orders of the higher priority start first (docs/RECRUITMENT.md)
+namespace {
+	ArmyInstance* find_land_army(InstanceManager& instance_manager, const unique_id_t army_id) {
+		UnitInstanceGroup* const group = instance_manager.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id);
+		return group != nullptr && group->branch == unit_branch_t::LAND ? static_cast<ArmyInstance*>(group) : nullptr;
+	}
+}
+
+// The stance of an army (docs/WAR_ASSUMPTIONS.md, section 10): 0 normal, 1 entrench, 2 raid, 3 rest
+bool GameActionManager::VariantVisitor::operator() (set_army_stance_argument_t const& argument) const {
+	const auto [army_id, stance] = argument;
+	ArmyInstance* const army = find_land_army(instance_manager, army_id);
+	if (army == nullptr || stance > ArmyInstance::STANCE_REST) {
+		return false;
+	}
+	army->set_stance(static_cast<std::uint8_t>(stance));
+	return true;
+}
+
+// The army follows another one of the country or of an ally (0: it stops following); it is off the orders of its field marshal
+bool GameActionManager::VariantVisitor::operator() (follow_army_argument_t const& argument) const {
+	const auto [army_id, target_id] = argument;
+	ArmyInstance* const army = find_land_army(instance_manager, army_id);
+	if (army == nullptr) {
+		return false;
+	}
+	if (target_id != 0) {
+		ArmyInstance const* const target = find_land_army(instance_manager, target_id);
+		if (target == nullptr || target == army
+			|| (&target->get_country() != &army->get_country() && !army->get_country().has_alliance_with(target->get_country()))) {
+			return false;
+		}
+		take_off_fronts(instance_manager, *army);
+	}
+	army->set_follow_army_id(target_id);
+	instance_manager.get_unit_instance_manager().update_follows(instance_manager.get_map_instance());
+	return true;
+}
+
+// The army goes over the land to the nearest naval base of its country
+bool GameActionManager::VariantVisitor::operator() (army_to_port_argument_t const& argument) const {
+	ArmyInstance* const army = find_land_army(instance_manager, type_safe::get(argument));
+	if (army == nullptr) {
+		return false;
+	}
+	ProvinceInstance* const port = instance_manager.get_unit_instance_manager().find_nearest_army_port(*army, instance_manager.get_map_instance());
+	if (port == nullptr) {
+		return false;
+	}
+	take_off_fronts(instance_manager, *army);
+	army->set_follow_army_id(0);
+	return instance_manager.get_unit_instance_manager().order_move(*army, *port, instance_manager.get_map_instance());
+}
+
 bool GameActionManager::VariantVisitor::operator() (separate_peace_argument_t const& argument) const {
 	// A country that does not lead its side leaves the war (docs/WAR_ASSUMPTIONS.md, "Союзники и отдельный мир")
 	const auto [country_index, war_id] = argument;

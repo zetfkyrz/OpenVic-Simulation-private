@@ -690,8 +690,11 @@ namespace {
 			const fixed_point_t skill_defence = fixed_point_t::_1 + skill_step * static_cast<std::int32_t>(defence_level);
 			const fixed_point_t leader_attack = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.attack / wd.leader_point_divisor);
 			const fixed_point_t leader_defence = std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + bonus.defence / wd.leader_point_divisor);
-			// The supply level and the penalty of an army over the manpower of its country (both multiply the attack and the defence)
+			// The supply level and the penalty of an army over the manpower of its country (both multiply the attack and the defence); a resting or
+			// raiding army defends worse
 			const fixed_point_t supply = unit.army->get_supply_level() * unit.army->get_country().manpower_combat_multiplier;
+			const fixed_point_t stance_defence = unit.army->get_stance() == ArmyInstance::STANCE_REST || unit.army->get_stance() == ArmyInstance::STANCE_RAID
+				? wd.stance_loose_defence.fixed() : fixed_point_t::_1;
 			fixed_point_t attack = fixed_point_t::_0, defence = fixed_point_t::_0, breakthrough = fixed_point_t::_0;
 			for (DivisionStats::TypePart const& part : unit.stats->parts) {
 				const RegimentType::OvBuff buff = type_buff(*part.type, terrain_id, enemy_types, enemy_regiments, skill_step, terrain_level);
@@ -723,7 +726,7 @@ namespace {
 				const fixed_point_t own_terrain_defence = fixed_point_t::_1
 					+ leader_skills::scale_terrain_effect(terrain_defence - fixed_point_t::_1, skill_step, terrain_level);
 				unit.protection = battle_formulas::defender_protection(
-					wd, defence * leader_defence * skill_defence * supply, fortification, own_terrain_defence
+					wd, defence * leader_defence * skill_defence * supply * stance_defence, fortification, own_terrain_defence
 				);
 			}
 		}
@@ -1672,8 +1675,9 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			}
 			ReinforcementNeed* need = nullptr;
 			ReinforcementNeed* mobilised_need = nullptr;
+			const std::int32_t rest = army.get_stance() == ArmyInstance::STANCE_REST ? std::max(1, wd.stance_rest_recovery) : 1;
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
-				regiment.recover(regiment.get_max_organisation() * organisation_recovery * supply, fixed_point_t::_0);
+				regiment.recover(regiment.get_max_organisation() * organisation_recovery * supply * rest, fixed_point_t::_0);
 				const fixed_point_t gain = new_men
 					? std::min(regiment.get_max_strength() * reinforce_speed, regiment.get_max_strength() - regiment.get_strength())
 					: fixed_point_t::_0;
@@ -2101,8 +2105,11 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 				continue;
 			}
 
-			// Modifiers of the country (technology, ...) and the general change the attrition
+			// Modifiers of the country (technology, ...) and the general change the attrition; a raiding army forages on the land of an enemy
 			fixed_point_t multiplier = fixed_point_t::_1;
+			if (army.get_stance() == ArmyInstance::STANCE_RAID && owner != nullptr && country.is_at_war_with(*owner)) {
+				rate = wd.stance_raid_attrition.of(rate);
+			}
 			if (cache.get_land_attrition() != nullptr) {
 				multiplier += country.get_modifier_effect_value(*cache.get_land_attrition());
 			}
@@ -2367,6 +2374,23 @@ bool WarManager::separate_peace(InstanceManager& instance_manager, const std::ui
 	return true;
 }
 
+void WarManager::update_raids(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
+	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
+		fixed_point_t multiplier = fixed_point_t::_1;
+		CountryInstance const* const owner = province.get_owner();
+		if (owner != nullptr && !province.province_definition.is_water()) {
+			for (ArmyInstance const& army : province.get_armies()) {
+				if (army.get_stance() == ArmyInstance::STANCE_RAID && army.get_country().is_at_war_with(*owner) && !army.is_moving()) {
+					multiplier = wd.stance_raid_output.fixed();
+					break;
+				}
+			}
+		}
+		province.set_raid_output_multiplier(multiplier);
+	}
+}
+
 void WarManager::update_navy_range(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& wd = get_war_defines();
 	MapInstance& map_instance = instance_manager.get_map_instance();
@@ -2576,6 +2600,9 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	}
 
 	update_naval_combat(instance_manager);
+	// The armies that follow others, the raids of the day (docs/WAR_ASSUMPTIONS.md, section 10)
+	instance_manager.get_unit_instance_manager().update_follows(instance_manager.get_map_instance());
+	update_raids(instance_manager);
 	// The fleets far from their bases (the flag is set again every day)
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		for (NavyInstance& navy : country.get_navies()) {

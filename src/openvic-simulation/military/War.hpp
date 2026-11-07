@@ -350,6 +350,8 @@ namespace OpenVic {
 		void update_war_exhaustion(InstanceManager& instance_manager);
 		// The range of the fleets (docs/WAR_ASSUMPTIONS.md, section 9): far from the naval bases of the country and its allies they wear out
 		void update_navy_range(InstanceManager& instance_manager);
+		// The provinces raided by the armies of an enemy (the multiplier of the output of their RGO)
+		void update_raids(InstanceManager& instance_manager);
 		// The justifications of the day, the casus belli that expire, the monthly change of the infamy (badboy of the modifiers)
 		void update_justifications(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);

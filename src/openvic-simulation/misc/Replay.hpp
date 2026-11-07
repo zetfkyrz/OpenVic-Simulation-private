@@ -117,7 +117,9 @@ namespace OpenVic {
 		// 68: the navy: a blockade cuts the sea trade (the ports blockaded give no capacity) and the taxes (BLOCKADE_TAX_PENALTY), only warships blockade;
 		//     the traits of the admiral in a naval battle, the light ships screen the capital ones; the range of the fleets (NAVY_RANGE_STEPS from a
 		//     naval base); the AI fleets at war blockade, attack weaker fleets and repair in port
-		inline constexpr int SIMULATION_VERSION = 68;
+		// 69: the orders of the armies: the stances (entrench, raid, rest), follow another army, to the port (game actions set_army_stance, follow_army,
+		//     army_to_port)
+		inline constexpr int SIMULATION_VERSION = 69;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

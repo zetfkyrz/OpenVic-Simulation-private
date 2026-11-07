@@ -528,6 +528,16 @@ namespace OpenVic {
 	/* The blockade (docs/WAR_ASSUMPTIONS.md, section 9): a blockaded port gives no capacity to the sea trade of its country (the month after), the tax */ \
 	/* efficiency is times 1 - BLOCKADE_TAX_PENALTY x the share of the ports blockaded (the tariffs fall with the imports by sea); only warships blockade */ \
 	RATE(BLOCKADE_TAX_PENALTY, blockade_tax_penalty, Rate(30, 100), 0, 1) \
+	/* The stances of an army (docs/WAR_ASSUMPTIONS.md, section 10): entrench — the dig in grows STANCE_ENTRENCH_SPEED times faster and */ \
+	/* STANCE_ENTRENCH_EXTRA_LEVELS deeper; rest — the organisation recovers STANCE_REST_RECOVERY times faster, no dig in, the defence times */ \
+	/* STANCE_LOOSE_DEFENCE; raid — on the land of an enemy the army forages (its attrition times STANCE_RAID_ATTRITION) and the RGO of the province */ \
+	/* gives STANCE_RAID_OUTPUT of its output, the defence times STANCE_LOOSE_DEFENCE */ \
+	INT(STANCE_ENTRENCH_SPEED, stance_entrench_speed, 2, 1, 100) \
+	INT(STANCE_ENTRENCH_EXTRA_LEVELS, stance_entrench_extra_levels, 1, 0, 100) \
+	INT(STANCE_REST_RECOVERY, stance_rest_recovery, 2, 1, 100) \
+	RATE(STANCE_LOOSE_DEFENCE, stance_loose_defence, Rate(80, 100), 0, 1) \
+	RATE(STANCE_RAID_ATTRITION, stance_raid_attrition, Rate(50, 100), 0, 1) \
+	RATE(STANCE_RAID_OUTPUT, stance_raid_output, Rate(50, 100), 0, 1) \
 	/* The roles of the ships in a naval battle: while a side has light ships (not capital, not transports) its capital ships take NAVAL_SCREENED_DAMAGE */ \
 	/* of their damage and the light ones the rest; the traits of the admiral work as the ones of a general (LEADER_POINT_DIVISOR) */ \
 	RATE(NAVAL_SCREENED_DAMAGE, naval_screened_damage, Rate(50, 100), 0, 1) \

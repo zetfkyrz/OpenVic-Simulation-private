@@ -132,6 +132,8 @@ namespace OpenVic {
 		memory::vector<std::reference_wrapper<NavyInstance>> SPAN_PROPERTY(navies);
 		// The number of land regiments currently in the province, including those being transported by navies
 		size_t PROPERTY(land_regiment_count, 0);
+		// An enemy army raids the province (docs/WAR_ASSUMPTIONS.md, section 10): its RGO gives this share of its output (set by the war every day)
+		fixed_point_t PROPERTY_RW(raid_output_multiplier, fixed_point_t::_1);
 		Timespan PROPERTY(occupation_duration);
 
 	public:

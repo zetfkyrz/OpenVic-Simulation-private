@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <fmt/std.h>
 
@@ -729,10 +730,18 @@ void UnitInstanceManager::update_gamestate() {
 void UnitInstanceManager::tick(const Date today) {
 	for (ArmyInstance& army : armies) {
 		army.tick();
-		army.advance_dig_in(
-			static_cast<int32_t>(military_defines.get_dig_in_increase_each_days().to_int()),
-			army.get_country().get_dig_in_cap()
-		);
+		// The stance (docs/WAR_ASSUMPTIONS.md, section 10): an entrenched army digs in faster and deeper, a resting one does not dig in
+		std::int32_t days_per_level = static_cast<int32_t>(military_defines.get_dig_in_increase_each_days().to_int());
+		std::int32_t cap = army.get_country().get_dig_in_cap();
+		if (army.get_stance() == ArmyInstance::STANCE_ENTRENCH && UnitInstanceGroup::war_defines != nullptr) {
+			days_per_level = std::max(1, days_per_level / std::max(1, UnitInstanceGroup::war_defines->stance_entrench_speed));
+			cap += UnitInstanceGroup::war_defines->stance_entrench_extra_levels;
+		}
+		if (army.get_stance() == ArmyInstance::STANCE_REST) {
+			army.reset_dig_in();
+		} else {
+			army.advance_dig_in(days_per_level, cap);
+		}
 	}
 
 	// (the orders that waited for the monthly limit started at the beginning of the day, InstanceManager::tick)
@@ -1254,6 +1263,54 @@ ProvinceInstance* UnitInstanceManager::find_nearest_port(
 		}
 	}
 	return nullptr;
+}
+
+ProvinceInstance* UnitInstanceManager::find_nearest_army_port(ArmyInstance const& army, MapInstance& map_instance) const {
+	CountryInstance const& country = army.get_country();
+	BuildingType const* const naval_base = unit_type_manager_naval_base;
+	std::vector<ProvinceInstance*> queue { const_cast<ProvinceInstance*>(&army.get_location()) };
+	std::unordered_set<ProvinceInstance const*> seen { &army.get_location() };
+	for (std::size_t head = 0; head < queue.size(); ++head) {
+		ProvinceInstance* const current = queue[head];
+		if (current->get_owner() == &country && current->get_controller() == &country && current->province_definition.has_port()
+			&& (naval_base == nullptr || !naval_base->province_building_index.has_value()
+				|| type_safe::get(current->get_buildings()[naval_base->province_building_index.value()].get_level()) > 0)) {
+			return current;
+		}
+		for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+			if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
+				continue;
+			}
+			ProvinceInstance& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+			if (UnitInstanceGroup::can_country_enter(country, next) && seen.insert(&next).second) {
+				queue.push_back(&next);
+			}
+		}
+	}
+	return nullptr;
+}
+
+void UnitInstanceManager::update_follows(MapInstance& map_instance) {
+	std::vector<ArmyInstance*> followers;
+	for (ArmyInstance& army : armies) {
+		if (army.get_follow_army_id() != 0) {
+			followers.push_back(&army);
+		}
+	}
+	for (ArmyInstance* army : followers) {
+		UnitInstanceGroup* const target = get_unit_instance_group_by_unique_id(army->get_follow_army_id());
+		CountryInstance const& country = army->get_country();
+		if (target == nullptr || target->branch != LAND || target == army
+			|| (&target->get_country() != &country && !country.has_alliance_with(target->get_country()))) {
+			army->set_follow_army_id(0);
+			continue;
+		}
+		ProvinceInstance& where = target->get_location();
+		const bool heading_there = army->is_moving() ? &army->get_path().back().get() == &where : &army->get_location() == &where;
+		if (!heading_there && !army->is_in_combat() && !static_cast<ArmyInstance*>(target)->is_at_sea()) {
+			order_move(*army, where, map_instance);
+		}
+	}
 }
 
 void UnitInstanceManager::destroy_unit(UnitInstance& unit, UnitInstanceGroup& group) {

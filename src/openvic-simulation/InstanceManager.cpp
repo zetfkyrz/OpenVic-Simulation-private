@@ -168,6 +168,7 @@ InstanceManager::InstanceManager(
 		definition_manager.get_modifier_manager().get_modifier_effect_cache(), definition_manager.get_define_manager().get_country_defines(),
 		definition_manager.get_military_manager().get_unit_type_manager()
 	);
+	unit_instance_manager.unit_type_manager_naval_base = definition_manager.get_economy_manager().get_building_type_manager().get_port_building_type();
 	ArtisanalProducer::set_openvic_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);

@@ -5500,6 +5500,70 @@ namespace {
 		relations.set_country_alliance(attacker, ally, false);
 	}
 
+	// The orders of the armies (docs/WAR_ASSUMPTIONS.md, section 10): an entrenched army digs in faster, an army follows another one, to the port
+	void test_army_orders(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		CountryInstance* country = nullptr;
+		ArmyInstance* first = nullptr;
+		ArmyInstance* second = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.is_at_war()) {
+				continue;
+			}
+			first = second = nullptr;
+			for (ArmyInstance& army : candidate.get_armies()) {
+				if (army.empty() || army.is_moving() || army.is_in_combat() || army.get_transport_navy() != nullptr || army.is_at_sea()
+					|| army.get_location().get_owner() != &candidate) {
+					continue;
+				}
+				if (first == nullptr) {
+					first = &army;
+				} else if (&army.get_location() != &first->get_location()) {
+					second = &army;
+					break;
+				}
+			}
+			if (second != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO army orders: no country with two armies at home in two provinces, not checked");
+			return;
+		}
+		const std::int32_t days_per_level = static_cast<std::int32_t>(
+			im.definition_manager.get_define_manager().get_military_defines().get_dig_in_increase_each_days().to_int()
+		);
+		first->set_stance(ArmyInstance::STANCE_ENTRENCH);
+		first->reset_dig_in();
+		const unique_id_t first_id = first->unique_id;
+		const unique_id_t second_id = second->unique_id;
+		const std::int32_t days = std::max(1, days_per_level / 2);
+		for (std::int32_t day = 0; day < days; ++day) {
+			im.force_tick_and_update();
+		}
+		first = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(first_id));
+		second = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(second_id));
+		if (first == nullptr || second == nullptr) {
+			fmt::println("TEST INFO army orders: the armies are gone, not checked");
+			return;
+		}
+		r.check(first->get_dig_in_level() >= 1 || country->get_dig_in_cap() + 1 <= 0,
+			"army orders: an entrenched army digs in twice as fast",
+			fmt::format("{} days, level {}, days a level {}", days, first->get_dig_in_level(), days_per_level));
+		first->set_stance(ArmyInstance::STANCE_NORMAL);
+		first->set_follow_army_id(second->unique_id);
+		unit_manager.update_follows(im.get_map_instance());
+		r.check(first->is_moving() && &first->get_path().back().get() == &second->get_location(),
+			"army orders: an army that follows another goes where it stands");
+		first->set_follow_army_id(0);
+		first->clear_path();
+		ProvinceInstance* const port = unit_manager.find_nearest_army_port(*first, im.get_map_instance());
+		r.check(port == nullptr || (port->get_owner() == country && port->province_definition.has_port()),
+			"army orders: the nearest port of an army is a port of its country");
+	}
+
 	// The canned food the stockpile does not have is replaced by grain, twice as much (docs/MILITARY_SUPPLY.md)
 	void test_canned_food_grain(Results& r, InstanceManager& im) {
 		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
@@ -7672,6 +7736,7 @@ namespace {
 		test_ai_marshals(r, *im); // ticks days, a war of its own
 		test_mobilisation_regions(r, *im);
 		test_allies_and_separate_peace(r, *im);
+		test_army_orders(r, *im);
 		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
 		game.end();
 

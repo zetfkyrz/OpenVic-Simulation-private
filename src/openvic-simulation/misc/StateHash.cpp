@@ -104,6 +104,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				hasher.add(static_cast<std::uint64_t>(division.template_id));
 			}
 			hasher.add(army.get_supply_load_ratio());
+			if (army.get_stance() != 0 || army.get_follow_army_id() != 0) {
+				hasher.add(static_cast<std::uint64_t>(army.get_stance()) * 1000003ULL + army.get_follow_army_id());
+			}
 			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
 				hasher.add(static_cast<std::uint64_t>(regiment.get_division_id()));
 				// Only the mobilised ones (the hash of a game without the mobilisation is the one of the version 60)

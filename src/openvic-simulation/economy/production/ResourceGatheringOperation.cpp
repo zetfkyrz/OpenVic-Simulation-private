@@ -406,6 +406,8 @@ fixed_point_t ResourceGatheringOperation::produce() {
 	if (building_level > 0 && economy_defines != nullptr) {
 		output_multiplier += economy_defines->rgo_building_output_per_level.fixed() * building_level;
 	}
+	// An enemy army raids the province (docs/WAR_ASSUMPTIONS.md, section 10)
+	output_multiplier *= location.get_raid_output_multiplier();
 
 	fixed_point_t throughput_from_workers = 0;
 	fixed_point_t output_from_workers = 1;
