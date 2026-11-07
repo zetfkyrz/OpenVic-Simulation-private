@@ -11,6 +11,7 @@
 #include "openvic-simulation/defines/Define.hpp"
 #include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
+#include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -94,10 +95,9 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 		return false;
 	}
 
-	// Receiver response policy.
-	// TODO: replace with real AI/human decision making based on cache.acceptance, relations, opinions, etc.
-	// For now every receiver accepts every action that is allowed to be committed.
-	const bool receiver_accepts = true;
+	// Receiver response policy: an action with an acceptance of its own (call_ally) is refused at 0 or below; the others are always accepted
+	// TODO: real AI/human decision making for the other actions (relations, opinions...)
+	const bool receiver_accepts = cache.acceptance > 0;
 	if (!receiver_accepts) {
 		return false;
 	}
@@ -153,14 +153,27 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 	result &= add_diplomatic_action(
 		"call_ally",
 		{
-			.commit = [](Argument& arg) {},
+			// The ally joins the war of the sender (where he leads his side, else his first) on his side (docs/WAR_ASSUMPTIONS.md)
+			.commit =
+				[](Argument& arg) {
+					WarManager& war_manager = arg.instance_manager.get_war_manager();
+					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
+					if (war != nullptr) {
+						war_manager.join_war(arg.instance_manager, war->id, *arg.receiver, war->is_attacker(*arg.sender));
+					}
+				},
 			.allowed =
 				[](Argument const& arg) {
-					return false;
+					WarManager const& war_manager = arg.instance_manager.get_war_manager();
+					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
+					return war != nullptr && arg.sender->has_alliance_with(*arg.receiver)
+						&& war_manager.can_join_war(*war, war->is_attacker(*arg.sender), *arg.receiver);
 				},
 			.get_acceptance =
 				[](Argument const& arg) {
-					return 1;
+					WarManager const& war_manager = arg.instance_manager.get_war_manager();
+					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
+					return war != nullptr && war_manager.would_join_war(*war, *arg.receiver) ? 1 : 0;
 				},
 		}
 	);

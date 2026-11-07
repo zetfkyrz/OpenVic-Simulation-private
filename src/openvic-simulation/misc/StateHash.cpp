@@ -260,6 +260,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	}
 
 	hasher.add(instance_manager.get_war_manager().get_wars().size());
+	for (War const& war : instance_manager.get_war_manager().get_wars()) {
+		hasher.add(static_cast<std::uint64_t>(war.id) * 1000 + war.attackers.size() * 31 + war.defenders.size());
+	}
 	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
 		hasher.add(static_cast<std::uint64_t>(front.id));
 		hasher.add(static_cast<std::uint64_t>(front.group_id));

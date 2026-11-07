@@ -943,6 +943,12 @@ bool GameActionManager::VariantVisitor::operator() (cancel_recruitment_argument_
 }
 
 // The priority of a recruitment order (of its whole division): the waiting orders of the higher priority start first (docs/RECRUITMENT.md)
+bool GameActionManager::VariantVisitor::operator() (separate_peace_argument_t const& argument) const {
+	// A country that does not lead its side leaves the war (docs/WAR_ASSUMPTIONS.md, "Союзники и отдельный мир")
+	const auto [country_index, war_id] = argument;
+	return instance_manager.get_war_manager().separate_peace(instance_manager, war_id, war_action_country(instance_manager, country_index));
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_recruitment_priority_argument_t const& argument) const {
 	const auto [country_index, order_id, priority] = argument;
 	return instance_manager.get_unit_instance_manager().set_recruitment_priority(

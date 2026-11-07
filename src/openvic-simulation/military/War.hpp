@@ -343,6 +343,9 @@ namespace OpenVic {
 		void update_scores(InstanceManager& instance_manager);
 		// The manpower of the countries (docs/RECRUITMENT.md): the penalty of an army over it, the armies of the start fitted to it
 		void update_manpower(InstanceManager& instance_manager);
+		// After a peace: the occupied provinces go back to their owners unless the occupier still fights the owner, the armies with no right to stand
+		// where they are go home
+		void restore_after_peace(InstanceManager& instance_manager);
 		// The war exhaustion of the countries (the losses, the occupation and the blockade of the day, the monthly change of the modifiers)
 		void update_war_exhaustion(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
@@ -459,6 +462,18 @@ namespace OpenVic {
 		War* find_war_between(CountryInstance const& first, CountryInstance const& second);
 		// The war ends without a peace treaty (the countries are at peace again; the tests, the end of a country)
 		void end_war(InstanceManager& instance_manager, std::uint32_t war_id);
+
+		// Allies in a war that goes on (docs/WAR_ASSUMPTIONS.md, "Союзники и отдельный мир"): the war of the country an ally is called into (where it
+		// leads its side, else its first), whether the ally can join it (not in it, not allied to the other side) and wants to (an AI country: not in
+		// another war, not too tired), joining it on the side of the caller
+		War const* get_war_to_call_into(CountryInstance const& caller) const;
+		bool can_join_war(War const& war, bool attacker_side, CountryInstance const& country) const;
+		bool would_join_war(War const& war, CountryInstance const& country) const;
+		bool join_war(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& country, bool attacker_side);
+		// The separate peace: a country that does not lead its side leaves the war with a white peace if the leader of the other side agrees (the player
+		// always does; an AI leader when the country holds nothing of his side or he would take a white peace from the whole side). Empty: it can
+		std::string_view get_separate_peace_block_reason(InstanceManager const& instance_manager, War const& war, CountryInstance const& country) const;
+		bool separate_peace(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& country);
 
 		std::span<const Front> get_fronts() const {
 			return fronts;

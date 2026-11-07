@@ -458,6 +458,10 @@ void WarManager::end_war(InstanceManager& instance_manager, const std::uint32_t 
 		instance_manager.get_notification_log().add(today, war.attackers.front(), "peace_signed", "", war.defenders.front());
 	}
 
+	restore_after_peace(instance_manager);
+}
+
+void WarManager::restore_after_peace(InstanceManager& instance_manager) {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 
 	// Occupied provinces return to their owners unless the occupier still fights the owner
@@ -2119,6 +2123,114 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 		}
 		assign_free(country.get_navies(), country.get_leaders<unit_branch_t::NAVAL>());
 	}
+}
+
+War const* WarManager::get_war_to_call_into(CountryInstance const& caller) const {
+	War const* first = nullptr;
+	for (War const& war : wars) {
+		if (!war.has_participant(caller)) {
+			continue;
+		}
+		memory::vector<CountryInstance*> const& side = war.get_side(war.is_attacker(caller));
+		if (!side.empty() && side.front() == &caller) {
+			return &war;
+		}
+		if (first == nullptr) {
+			first = &war;
+		}
+	}
+	return first;
+}
+
+bool WarManager::can_join_war(War const& war, const bool attacker_side, CountryInstance const& country) const {
+	if (!country.exists() || country.is_rebel_country() || war.has_participant(country)) {
+		return false;
+	}
+	for (CountryInstance const* enemy : war.get_side(!attacker_side)) {
+		if (country.has_alliance_with(*enemy)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool WarManager::would_join_war(War const& war, CountryInstance const& country) const {
+	if (!country.is_ai()) {
+		return true; // the player called by the AI: he is told and leaves the war by a separate peace if he does not want it
+	}
+	// An AI country does not open a second war and does not join while it is tired
+	for (War const& other : wars) {
+		if (&other != &war && other.has_participant(country)) {
+			return false;
+		}
+	}
+	return country.get_war_exhaustion() <= get_war_defines().call_ally_max_exhaustion;
+}
+
+bool WarManager::join_war(InstanceManager& instance_manager, const std::uint32_t war_id, CountryInstance& country, const bool attacker_side) {
+	War* const war = find_war(war_id);
+	if (war == nullptr || !can_join_war(*war, attacker_side, country)) {
+		return false;
+	}
+	(attacker_side ? war->attackers : war->defenders).push_back(&country);
+	for (CountryInstance* enemy : war->get_side(!attacker_side)) {
+		country.set_at_war_with(*enemy, true);
+	}
+	CountryInstance* const leader = war->get_side(attacker_side).front();
+	instance_manager.get_notification_log().add(instance_manager.get_today(), leader, "ally_joined_war", country.get_identifier(), &country);
+	instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "joined_war", leader->get_identifier(), leader);
+	SPDLOG_INFO("War {}: {} joins the side of {}", war_id, country.get_identifier(), leader->get_identifier());
+	return true;
+}
+
+std::string_view WarManager::get_separate_peace_block_reason(
+	InstanceManager const& instance_manager, War const& war, CountryInstance const& country
+) const {
+	if (!war.has_participant(country)) {
+		return "Страна не участвует в этой войне";
+	}
+	const bool attacker_side = war.is_attacker(country);
+	memory::vector<CountryInstance*> const& side = war.get_side(attacker_side);
+	memory::vector<CountryInstance*> const& other_side = war.get_side(!attacker_side);
+	if (side.empty() || side.front() == &country || other_side.empty()) {
+		return "Лидер стороны заключает мир за всю сторону — отдельный мир только для союзников";
+	}
+	CountryInstance const* const other_leader = other_side.front();
+	if (!other_leader->is_ai()) {
+		return {};
+	}
+	// The AI leader lets go a country that holds nothing of his side, or one whose whole side he would give a white peace
+	bool holds_enemy_land = false;
+	for (CountryInstance const* enemy : other_side) {
+		for (ProvinceInstance const* province : enemy->get_owned_provinces()) {
+			holds_enemy_land |= province->get_controller() == &country;
+		}
+	}
+	if (!holds_enemy_land || would_accept_peace(instance_manager, war, attacker_side, peace_type_t::WHITE_PEACE)) {
+		return {};
+	}
+	return "Противник не отпускает: страна держит его земли, а его сторона побеждает";
+}
+
+bool WarManager::separate_peace(InstanceManager& instance_manager, const std::uint32_t war_id, CountryInstance& country) {
+	War* const war = find_war(war_id);
+	if (war == nullptr || !get_separate_peace_block_reason(instance_manager, *war, country).empty()) {
+		return false;
+	}
+	const bool attacker_side = war->is_attacker(country);
+	memory::vector<CountryInstance*>& side = attacker_side ? war->attackers : war->defenders;
+	std::erase(side, &country);
+	const Date today = instance_manager.get_today();
+	for (CountryInstance* enemy : war->get_side(!attacker_side)) {
+		truces.push_back({ &country, enemy, today + Timespan::from_days(get_war_defines().truce_days) });
+		if (find_war_between(country, *enemy) == nullptr) {
+			country.set_at_war_with(*enemy, false);
+		}
+	}
+	instance_manager.get_notification_log().add(today, &country, "separate_peace", "", war->get_side(!attacker_side).front());
+	SPDLOG_INFO("War {}: {} makes a separate peace", war_id, country.get_identifier());
+	restore_after_peace(instance_manager);
+	return true;
 }
 
 void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {

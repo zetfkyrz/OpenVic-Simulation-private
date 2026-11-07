@@ -108,7 +108,9 @@ namespace OpenVic {
 		//     its land that is not national); an army at most 2 % over the manpower has no penalty
 		// 64: the war exhaustion grows at war (the dead of the day for the manpower, the occupation, the blockade) and falls at peace (the war_exhaustion
 		//     of the modifiers): it takes output (the modifier of Vic2) and makes the tired side give in sooner
-		inline constexpr int SIMULATION_VERSION = 64;
+		// 65: the allies in a war that goes on (call_ally: the ally joins the war of the caller; the AI calls its free allies), the separate peace of a
+		//     country that does not lead its side (game action separate_peace; a tired AI country asks for it)
+		inline constexpr int SIMULATION_VERSION = 65;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

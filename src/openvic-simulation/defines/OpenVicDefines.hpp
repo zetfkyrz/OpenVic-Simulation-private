@@ -301,6 +301,10 @@ namespace OpenVic {
 	/* the enemy and WAR_EXHAUSTION_BLOCKADE_PER_DAY for the share of its ports blockaded (the total_occupation, total_blockaded of Vic2); every month */ \
 	/* the war_exhaustion of the modifiers (at peace -1); at most max_war_exhaustion (100 at war, 50 at peace) */ \
 	FIXED(WAR_EXHAUSTION_PER_LOSS_SHARE, war_exhaustion_per_loss_share, fixed_point_t(100), 0, 10000) \
+	/* An AI ally joins a war it is called into while its war exhaustion is at most CALL_ALLY_MAX_EXHAUSTION (and it fights no other war); an AI country */ \
+	/* that does not lead its side asks for a separate peace once its war exhaustion is SEPARATE_PEACE_AI_TIREDNESS of its maximum */ \
+	FIXED(CALL_ALLY_MAX_EXHAUSTION, call_ally_max_exhaustion, fixed_point_t(25), 0, 1000) \
+	RATE(SEPARATE_PEACE_AI_TIREDNESS, separate_peace_ai_tiredness, Rate(50, 100), 0, 1) \
 	FIXED(WAR_EXHAUSTION_OCCUPATION_PER_DAY, war_exhaustion_occupation_per_day, fixed_point_t(5) / 100, 0, 100) \
 	FIXED(WAR_EXHAUSTION_BLOCKADE_PER_DAY, war_exhaustion_blockade_per_day, fixed_point_t(1) / 2, 0, 100) \
 	RATE(MANPOWER_BASE_BONUS, manpower_base_bonus, Rate(10, 100), 0, 10) \

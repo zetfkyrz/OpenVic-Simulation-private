@@ -5429,6 +5429,57 @@ namespace {
 				non_national_too_big, non_national_pops));
 	}
 
+	// The allies in a war that goes on and the separate peace (docs/WAR_ASSUMPTIONS.md, "Союзники и отдельный мир")
+	void test_allies_and_separate_peace(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		std::vector<CountryInstance*> free;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			if (country.exists() && !country.is_rebel_country() && !country.is_at_war() && !country.get_owned_provinces().empty()) {
+				free.push_back(&country);
+			}
+		}
+		CountryInstance* attacker = nullptr;
+		CountryInstance* defender = nullptr;
+		CountryInstance* ally = nullptr;
+		for (std::size_t i = 0; i + 2 < free.size() && ally == nullptr; ++i) {
+			for (std::size_t j = i + 1; j < free.size() && ally == nullptr; ++j) {
+				if (free[i]->has_alliance_with(*free[j]) || war_manager.has_truce(*free[i], *free[j], im.get_today())) {
+					continue;
+				}
+				for (std::size_t k = 0; k < free.size(); ++k) {
+					if (k != i && k != j && !free[k]->has_alliance_with(*free[j]) && !free[k]->has_alliance_with(*free[i])
+						&& !war_manager.has_truce(*free[k], *free[j], im.get_today())) {
+						attacker = free[i];
+						defender = free[j];
+						ally = free[k];
+						break;
+					}
+				}
+			}
+		}
+		if (ally == nullptr || !war_manager.declare_war(im, *attacker, *defender)) {
+			fmt::println("TEST INFO allies: no three free countries, not checked");
+			return;
+		}
+		War* war = war_manager.find_war_between(*attacker, *defender);
+		const std::uint32_t war_id = war != nullptr ? war->id : 0;
+		relations.set_country_alliance(attacker, ally, true);
+		const bool joined = war != nullptr && war_manager.join_war(im, war_id, *ally, true);
+		r.check(joined && ally->is_at_war_with(*defender) && war_manager.get_war_by_id(war_id)->is_attacker(*ally),
+			"allies: a called ally joins the war that goes on, on the side of the caller");
+		const std::string_view leader_reason = war_manager.get_separate_peace_block_reason(im, *war_manager.get_war_by_id(war_id), *attacker);
+		const std::string_view ally_reason = war_manager.get_separate_peace_block_reason(im, *war_manager.get_war_by_id(war_id), *ally);
+		const bool left = ally_reason.empty() && war_manager.separate_peace(im, war_id, *ally);
+		War const* const after = war_manager.get_war_by_id(war_id);
+		r.check(!leader_reason.empty() && left && !ally->is_at_war_with(*defender) && after != nullptr && !after->has_participant(*ally)
+				&& attacker->is_at_war_with(*defender) && war_manager.has_truce(*ally, *defender, im.get_today()),
+			"allies: an ally that does not lead its side leaves the war with a separate peace (the leader cannot), the war goes on",
+			fmt::format("leader: \"{}\", ally: \"{}\"", leader_reason, ally_reason));
+		war_manager.end_war(im, war_id);
+		relations.set_country_alliance(attacker, ally, false);
+	}
+
 	// The canned food the stockpile does not have is replaced by grain, twice as much (docs/MILITARY_SUPPLY.md)
 	void test_canned_food_grain(Results& r, InstanceManager& im) {
 		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
@@ -7600,6 +7651,7 @@ namespace {
 		test_naval_invasion(r, *im); // ticks days, a war of its own
 		test_ai_marshals(r, *im); // ticks days, a war of its own
 		test_mobilisation_regions(r, *im);
+		test_allies_and_separate_peace(r, *im);
 		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
 		game.end();
 

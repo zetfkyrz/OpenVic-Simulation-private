@@ -266,6 +266,42 @@ namespace {
 		}
 	}
 
+	// The allies in a war (docs/WAR_ASSUMPTIONS.md, "Союзники и отдельный мир"): the leader of a side calls its AI allies that are free into its war;
+	// a tired country that does not lead its side asks for a separate peace
+	void war_allies(InstanceManager& instance_manager, CountryInstance& country) {
+		WarManager& war_manager = instance_manager.get_war_manager();
+		if (War const* const war = war_manager.get_war_to_call_into(country); war != nullptr) {
+			const bool attacker_side = war->is_attacker(country);
+			const std::uint32_t war_id = war->id;
+			if (war->get_side(attacker_side).front() == &country) {
+				for (CountryInstance& ally : instance_manager.get_country_instance_manager().get_country_instances()) {
+					War const* const current = war_manager.get_war_by_id(war_id);
+					if (current == nullptr) {
+						break;
+					}
+					if (&ally != &country && ally.is_ai() && country.has_alliance_with(ally) && war_manager.can_join_war(*current, attacker_side, ally)
+						&& war_manager.would_join_war(*current, ally)) {
+						war_manager.join_war(instance_manager, war_id, ally, attacker_side);
+					}
+				}
+			}
+		}
+		if (country.get_war_exhaustion_max() <= fixed_point_t::_0
+			|| country.get_war_exhaustion() < war_manager.get_war_defines().separate_peace_ai_tiredness.of(country.get_war_exhaustion_max())) {
+			return;
+		}
+		std::vector<std::uint32_t> war_ids;
+		for (War const* war : war_manager.get_wars_of(country)) {
+			war_ids.push_back(war->id);
+		}
+		for (const std::uint32_t war_id : war_ids) {
+			War const* const war = war_manager.get_war_by_id(war_id);
+			if (war != nullptr && war_manager.get_separate_peace_block_reason(instance_manager, *war, country).empty()) {
+				war_manager.separate_peace(instance_manager, war_id, country);
+			}
+		}
+	}
+
 	// At peace an army over the manpower (docs/RECRUITMENT.md) fights weaker: the weakest regiments are disbanded down to the maximum
 	void disband_over_manpower(InstanceManager& instance_manager, CountryInstance& country) {
 		if (UnitInstanceGroup::war_defines == nullptr || UnitInstanceGroup::war_defines->ai_disband_over_manpower == 0) {
@@ -400,6 +436,9 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 		choose_ai_production_types(instance_manager, country);
 		colonise(instance_manager, country);
 
+		if (country.is_at_war()) {
+			war_allies(instance_manager, country);
+		}
 		if (country.is_at_war()) {
 			mobilise_if_weaker(instance_manager, country);
 			recruit(instance_manager, country);
