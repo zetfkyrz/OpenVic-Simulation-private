@@ -2028,8 +2028,9 @@ static void run_front_dump(InstanceManager& instance_manager) {
 						static_cast<double>(need));
 				}
 			}
-			fmt::println("FRONT_SUPPLY day={} country={} arrived={:.2f} level={:.2f} short={}", day, side->get_identifier(),
+			fmt::println("FRONT_SUPPLY day={} country={} arrived={:.2f} level={:.2f} war_exhaustion={:.1f}/{:.0f} short={}", day, side->get_identifier(),
 				static_cast<double>(side->get_army_supply_ratio()), static_cast<double>(side->get_army_supply_level()),
+				static_cast<double>(side->get_war_exhaustion()), static_cast<double>(side->get_war_exhaustion_max()),
 				short_goods.empty() ? std::string { "-" } : short_goods);
 		}
 		fmt::println(

@@ -1502,6 +1502,7 @@ void UnitInstanceManager::apply_losses(RegimentInstance& regiment, CountryInstan
 	regiment.set_unapplied_losses(
 		regiment.get_unapplied_losses() - fixed_point_t(static_cast<int32_t>(men)) / UnitInstanceGroup::war_defines->template_men_per_strength
 	);
+	country.war_losses_today += men;
 	std::int64_t left = men;
 	// A pop is never emptied by the losses (it keeps a man), what it does not have dies in the other pops of soldiers of the country (of a
 	// mobilised regiment: in the other poor pops of the mobilisation)

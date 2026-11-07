@@ -279,13 +279,18 @@ bool WarManager::would_accept_peace(
 	const fixed_point_t proposer_score = war.get_score(proposer_is_attacker);
 	const fixed_point_t other_score = war.get_score(!proposer_is_attacker);
 	OpenVicPeaceDefines const& pd = get_peace_defines();
+	// A tired side gives in sooner: the war exhaustion of the leader of the side that is asked times PEACE_WAR_EXHAUSTION_FACTOR of Vic2 widens
+	// the gap of the white peace and lowers the score it surrenders at
+	memory::vector<CountryInstance*> const& asked_side = war.get_side(!proposer_is_attacker);
+	const fixed_point_t tiredness = asked_side.empty() ? fixed_point_t::_0
+		: asked_side.front()->get_war_exhaustion() * instance_manager.definition_manager.get_define_manager().get_ai_defines().get_peace_war_exhaustion_factor();
 
 	switch (peace_type) {
 	case peace_type_t::WHITE_PEACE:
-		// The side that is clearly winning refuses, unless the war has dragged on for years
-		return other_score - proposer_score < pd.white_peace_score_gap || days > pd.white_peace_war_days;
+		// The side that is clearly winning refuses, unless the war has dragged on for years or it is tired of it
+		return other_score - proposer_score < fixed_point_t(pd.white_peace_score_gap) + tiredness || days > pd.white_peace_war_days;
 	case peace_type_t::TAKE_STATES: {
-		if (proposer_score >= pd.surrender_score) {
+		if (proposer_score >= fixed_point_t(pd.surrender_score) - tiredness) {
 			return true;
 		}
 		// Surrender when the capital of the leader has fallen
@@ -2116,6 +2121,53 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 	}
 }
 
+void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	UnitInstanceManager const& unit_manager = instance_manager.get_unit_instance_manager();
+	const bool month_start = instance_manager.get_today().is_month_start();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country()) {
+			country.war_losses_today = 0;
+			continue;
+		}
+		fixed_point_t delta = fixed_point_t::_0;
+		if (country.is_at_war()) {
+			// The dead of the day for the manpower of the country (the technologies with war_exhaustion make it smaller)
+			if (country.war_losses_today > 0) {
+				const std::int64_t max_men = std::max<std::int64_t>(1, unit_manager.get_manpower(country).max_men);
+				fixed_point_t battles = fixed_point_t::_1;
+				if (cache.get_war_exhaustion_from_battles() != nullptr) {
+					battles = std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_modifier_effect_value(*cache.get_war_exhaustion_from_battles()));
+				}
+				const fixed_point_t lost_share = fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(country.war_losses_today * 10000 / max_men, 10000))) / 10000;
+				delta += wd.war_exhaustion_per_loss_share * lost_share * battles;
+			}
+			// The population under the enemy and the blockade
+			std::int64_t population = 0, occupied = 0;
+			for (ProvinceInstance const* province : country.get_owned_provinces()) {
+				const std::int64_t size = static_cast<std::int64_t>(type_safe::get(province->get_total_population()));
+				population += size;
+				if (province->get_controller() != &country) {
+					occupied += size;
+				}
+			}
+			if (occupied > 0 && population > 0) {
+				delta += wd.war_exhaustion_occupation_per_day
+					* (fixed_point_t(static_cast<int32_t>(occupied * 10000 / population)) / 10000);
+			}
+			delta += wd.war_exhaustion_blockade_per_day * get_blockade_share(country);
+		}
+		if (month_start && cache.get_war_exhaustion_monthly() != nullptr) {
+			delta += country.get_modifier_effect_value(*cache.get_war_exhaustion_monthly());
+		}
+		if (delta != fixed_point_t::_0) {
+			country.change_war_exhaustion(delta);
+		}
+		country.war_losses_today = 0;
+	}
+}
+
 void WarManager::update_manpower(InstanceManager& instance_manager) {
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	OpenVicWarDefines const& wd = get_war_defines();
@@ -2238,6 +2290,7 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_army_recovery(instance_manager);
 	update_attrition(instance_manager);
 	instance_manager.get_unit_instance_manager().apply_all_losses();
+	update_war_exhaustion(instance_manager);
 	update_leaders(instance_manager);
 	update_ai_peace(instance_manager);
 	update_auto_plan(instance_manager);

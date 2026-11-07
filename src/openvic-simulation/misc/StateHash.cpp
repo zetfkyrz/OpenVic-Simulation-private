@@ -146,6 +146,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_prestige_untracked());
 		hasher.add(country.get_army_supply_level());
 		hasher.add(country.manpower_combat_multiplier);
+		hasher.add(country.get_war_exhaustion());
 		hasher.add(static_cast<std::uint64_t>((country.start_manpower_fitted ? 1 : 0) + (country.over_manpower_notified ? 2 : 0)));
 		// The mobilisation and the monthly limit of the recruitment (docs/RECRUITMENT.md), only when they are in use
 		if (country.is_mobilised() || country.mobilisation_war_seen || country.mobilisation_peace_days != 0

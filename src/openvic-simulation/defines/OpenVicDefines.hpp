@@ -296,6 +296,13 @@ namespace OpenVic {
 	/* the defence times 1 - OVER_MANPOWER_PENALTY x the share over it, not below OVER_MANPOWER_MIN_MULT; the new men of the regiments come out of */ \
 	/* the free manpower and cost REINFORCE_GOODS_SHARE of the build cost of the regiment for its share of the strength; the armies of the start */ \
 	/* over the maximum start weaker, at the maximum (START_MANPOWER_FIT); an AI country over it at peace disbands its weakest regiments */ \
+	/* The war exhaustion (docs/WAR_ASSUMPTIONS.md): every day at war a country gets WAR_EXHAUSTION_PER_LOSS_SHARE points for the share of its manpower */ \
+	/* that died that day (times 1 + war_exhaustion of the technologies), WAR_EXHAUSTION_OCCUPATION_PER_DAY for the share of its population under */ \
+	/* the enemy and WAR_EXHAUSTION_BLOCKADE_PER_DAY for the share of its ports blockaded (the total_occupation, total_blockaded of Vic2); every month */ \
+	/* the war_exhaustion of the modifiers (at peace -1); at most max_war_exhaustion (100 at war, 50 at peace) */ \
+	FIXED(WAR_EXHAUSTION_PER_LOSS_SHARE, war_exhaustion_per_loss_share, fixed_point_t(100), 0, 10000) \
+	FIXED(WAR_EXHAUSTION_OCCUPATION_PER_DAY, war_exhaustion_occupation_per_day, fixed_point_t(5) / 100, 0, 100) \
+	FIXED(WAR_EXHAUSTION_BLOCKADE_PER_DAY, war_exhaustion_blockade_per_day, fixed_point_t(1) / 2, 0, 100) \
 	RATE(MANPOWER_BASE_BONUS, manpower_base_bonus, Rate(10, 100), 0, 10) \
 	RATE(MANPOWER_WAR_BONUS, manpower_war_bonus, Rate(10, 100), 0, 10) \
 	RATE(OVER_MANPOWER_PENALTY, over_manpower_penalty, Rate(1, 1), 0, 100) \

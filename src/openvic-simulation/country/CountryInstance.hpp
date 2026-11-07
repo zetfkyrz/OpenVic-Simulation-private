@@ -587,6 +587,8 @@ namespace OpenVic {
 		fixed_point_t manpower_combat_multiplier = fixed_point_t::_1;
 		bool start_manpower_fitted = false;
 		bool over_manpower_notified = false;
+		// The men the armies of the country lost today (battles, attrition, destroyed armies): the war exhaustion of the day (WarManager)
+		std::int64_t war_losses_today = 0;
 		// The new men of yesterday (WarManager::update_army_recovery, for the interface): what the regiments wanted, what they got, and what held them
 		// back (bits: 1 the free manpower, 2 the goods)
 		std::int64_t reinforce_wanted_men = 0;

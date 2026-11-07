@@ -106,7 +106,9 @@ namespace OpenVic {
 		//     the wool and the cattle is 10 % bigger, the fish 2.2 times
 		// 63: the mobilisation pool: the land that is not national gives a hundredth of the share, a region at most 25 % of its population (0.25 % of
 		//     its land that is not national); an army at most 2 % over the manpower has no penalty
-		inline constexpr int SIMULATION_VERSION = 63;
+		// 64: the war exhaustion grows at war (the dead of the day for the manpower, the occupation, the blockade) and falls at peace (the war_exhaustion
+		//     of the modifiers): it takes output (the modifier of Vic2) and makes the tired side give in sooner
+		inline constexpr int SIMULATION_VERSION = 64;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

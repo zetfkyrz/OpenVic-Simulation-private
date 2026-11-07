@@ -343,6 +343,8 @@ namespace OpenVic {
 		void update_scores(InstanceManager& instance_manager);
 		// The manpower of the countries (docs/RECRUITMENT.md): the penalty of an army over it, the armies of the start fitted to it
 		void update_manpower(InstanceManager& instance_manager);
+		// The war exhaustion of the countries (the losses, the occupation and the blockade of the day, the monthly change of the modifiers)
+		void update_war_exhaustion(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
 		void update_attrition(InstanceManager& instance_manager);
 		void update_naval_combat(InstanceManager& instance_manager);
