@@ -1184,7 +1184,7 @@ bool GameActionManager::VariantVisitor::operator() (declare_war_goal_argument_t 
 			return false;
 		}
 	}
-	return instance_manager.get_war_manager().declare_war(instance_manager, attacker, defender, goal);
+	return instance_manager.get_war_manager().declare_war_as_country(instance_manager, attacker, defender, goal);
 }
 
 bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t const& argument) const {

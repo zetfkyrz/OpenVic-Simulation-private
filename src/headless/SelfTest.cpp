@@ -5458,10 +5458,30 @@ namespace {
 				}
 			}
 		}
-		if (ally == nullptr || !war_manager.declare_war(im, *attacker, *defender)) {
+		if (ally == nullptr) {
 			fmt::println("TEST INFO allies: no three free countries, not checked");
 			return;
 		}
+		// The justification: a casus belli and infamy at its end, the war with it uses it up (docs/WAR_ASSUMPTIONS.md, "Обоснование войны")
+		OpenVicWarDefines const& wd = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		const bool started = war_manager.start_justification(*attacker, *defender, im.get_today());
+		r.check(started && attacker->justify_target == defender && attacker->justify_days_left == wd.justify_war_days
+				&& !war_manager.get_justify_block_reason(*attacker, *ally, im.get_today()).empty(),
+			"justification: it starts against a country, one at a time");
+		const fixed_point_t infamy_before = attacker->get_infamy_untracked();
+		attacker->justify_days_left = 1;
+		im.force_tick_and_update();
+		const bool has_cb = attacker->has_casus_belli_against(*defender, im.get_today());
+		r.check(has_cb && attacker->justify_target != defender && attacker->get_infamy_untracked() >= infamy_before + wd.justify_war_infamy - fixed_point_t(1) / 2,
+			"justification: at its end the country has a casus belli and the infamy of it",
+			fmt::format("infamy {:.2f} -> {:.2f}", static_cast<double>(infamy_before), static_cast<double>(attacker->get_infamy_untracked())));
+		const fixed_point_t exhaustion_before = attacker->get_war_exhaustion();
+		if (attacker->is_at_war() || defender->is_at_war() || ally->is_at_war() || !war_manager.declare_war_as_country(im, *attacker, *defender, WarGoal {})) {
+			fmt::println("TEST INFO allies: the countries went to war meanwhile, not checked");
+			return;
+		}
+		r.check(!attacker->has_casus_belli_against(*defender, im.get_today()) && attacker->get_war_exhaustion() == exhaustion_before,
+			"justification: a war with the casus belli uses it up and gives no war exhaustion");
 		War* war = war_manager.find_war_between(*attacker, *defender);
 		const std::uint32_t war_id = war != nullptr ? war->id : 0;
 		relations.set_country_alliance(attacker, ally, true);

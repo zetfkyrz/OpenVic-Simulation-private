@@ -348,6 +348,8 @@ namespace OpenVic {
 		void restore_after_peace(InstanceManager& instance_manager);
 		// The war exhaustion of the countries (the losses, the occupation and the blockade of the day, the monthly change of the modifiers)
 		void update_war_exhaustion(InstanceManager& instance_manager);
+		// The justifications of the day, the casus belli that expire, the monthly change of the infamy (badboy of the modifiers)
+		void update_justifications(InstanceManager& instance_manager);
 		void update_army_recovery(InstanceManager& instance_manager);
 		void update_attrition(InstanceManager& instance_manager);
 		void update_naval_combat(InstanceManager& instance_manager);
@@ -467,6 +469,11 @@ namespace OpenVic {
 		// leads its side, else its first), whether the ally can join it (not in it, not allied to the other side) and wants to (an AI country: not in
 		// another war, not too tired), joining it on the side of the caller
 		War const* get_war_to_call_into(CountryInstance const& caller) const;
+		// The justification of a war (docs/WAR_ASSUMPTIONS.md, "Обоснование войны"): empty if the country can start justifying a war against the target
+		std::string_view get_justify_block_reason(CountryInstance const& country, CountryInstance const& target, Date today) const;
+		bool start_justification(CountryInstance& country, CountryInstance& target, Date today);
+		// A war declared by a country (the player, the AI): with a casus belli it is used up, without one the country gets infamy and war exhaustion
+		bool declare_war_as_country(InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender, WarGoal const& goal);
 		bool can_join_war(War const& war, bool attacker_side, CountryInstance const& country) const;
 		bool would_join_war(War const& war, CountryInstance const& country) const;
 		bool join_war(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& country, bool attacker_side);

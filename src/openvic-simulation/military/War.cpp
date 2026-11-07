@@ -2125,6 +2125,84 @@ void WarManager::update_leaders(InstanceManager& instance_manager) {
 	}
 }
 
+std::string_view WarManager::get_justify_block_reason(CountryInstance const& country, CountryInstance const& target, const Date today) const {
+	if (&country == &target || !target.exists() || target.is_rebel_country()) {
+		return "Нельзя обосновать войну против этой страны";
+	}
+	if (country.is_at_war_with(target)) {
+		return "Уже воюем";
+	}
+	if (country.has_alliance_with(target)) {
+		return "Союзник";
+	}
+	if (country.has_casus_belli_against(target, today)) {
+		return "Повод для войны уже есть";
+	}
+	if (country.justify_target != nullptr) {
+		return "Уже обосновываем войну против другой страны (одно обоснование за раз)";
+	}
+	return {};
+}
+
+bool WarManager::start_justification(CountryInstance& country, CountryInstance& target, const Date today) {
+	if (!get_justify_block_reason(country, target, today).empty()) {
+		return false;
+	}
+	country.justify_target = &target;
+	country.justify_days_left = get_war_defines().justify_war_days;
+	return true;
+}
+
+bool WarManager::declare_war_as_country(
+	InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender, WarGoal const& goal
+) {
+	const Date today = instance_manager.get_today();
+	const bool justified = attacker.has_casus_belli_against(defender, today);
+	if (!declare_war(instance_manager, attacker, defender, goal)) {
+		return false;
+	}
+	if (justified) {
+		std::erase_if(attacker.casus_belli, [&defender](auto const& entry) -> bool { return entry.first == &defender; });
+	} else {
+		attacker.change_infamy(get_war_defines().no_cb_war_infamy);
+		attacker.change_war_exhaustion(get_war_defines().no_cb_war_exhaustion);
+	}
+	if (attacker.justify_target == &defender) {
+		attacker.justify_target = nullptr;
+		attacker.justify_days_left = 0;
+	}
+	return true;
+}
+
+void WarManager::update_justifications(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	const Date today = instance_manager.get_today();
+	const bool month_start = today.is_month_start();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (country.justify_target != nullptr) {
+			CountryInstance& target = *country.justify_target;
+			if (!target.exists() || country.has_alliance_with(target) || country.is_at_war_with(target)) {
+				country.justify_target = nullptr;
+				country.justify_days_left = 0;
+			} else if (--country.justify_days_left <= 0) {
+				country.casus_belli.emplace_back(&target, today + Timespan::from_days(wd.casus_belli_days));
+				country.change_infamy(wd.justify_war_infamy);
+				instance_manager.get_notification_log().add(today, &country, "casus_belli_ready", target.get_identifier(), &target);
+				country.justify_target = nullptr;
+				country.justify_days_left = 0;
+			}
+		}
+		std::erase_if(country.casus_belli, [today](auto const& entry) -> bool { return entry.second < today || !entry.first->exists(); });
+		if (month_start && cache.get_badboy() != nullptr && country.exists()) {
+			const fixed_point_t change = country.get_modifier_effect_value(*cache.get_badboy());
+			if (change != fixed_point_t::_0) {
+				country.change_infamy(change);
+			}
+		}
+	}
+}
+
 War const* WarManager::get_war_to_call_into(CountryInstance const& caller) const {
 	War const* first = nullptr;
 	for (War const& war : wars) {
@@ -2403,6 +2481,7 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_attrition(instance_manager);
 	instance_manager.get_unit_instance_manager().apply_all_losses();
 	update_war_exhaustion(instance_manager);
+	update_justifications(instance_manager);
 	update_leaders(instance_manager);
 	update_ai_peace(instance_manager);
 	update_auto_plan(instance_manager);

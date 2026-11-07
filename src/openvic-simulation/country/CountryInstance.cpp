@@ -712,6 +712,10 @@ void CountryInstance::set_tariff_rate_slider_value(const fixed_point_t new_value
 	tariff_rate_slider_value.set_value(new_value);
 }
 
+void CountryInstance::change_infamy(const fixed_point_t delta) {
+	infamy.set(std::max(fixed_point_t::_0, infamy.get_untracked() + delta));
+}
+
 void CountryInstance::change_war_exhaustion(fixed_point_t delta) {
 	war_exhaustion = std::clamp(war_exhaustion + delta, fixed_point_t::_0, war_exhaustion_max);
 }

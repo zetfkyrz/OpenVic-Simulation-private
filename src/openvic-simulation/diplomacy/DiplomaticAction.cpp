@@ -258,7 +258,7 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 		{
 			.commit =
 				[](Argument& arg) {
-					arg.instance_manager.get_war_manager().declare_war(arg.instance_manager, *arg.sender, *arg.receiver);
+					arg.instance_manager.get_war_manager().declare_war_as_country(arg.instance_manager, *arg.sender, *arg.receiver, WarGoal {});
 				},
 			.allowed =
 				[](Argument const& arg) {
@@ -426,7 +426,16 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 	result &= add_diplomatic_action(
 		"justify_war",
 		{
-			.commit = [](Argument& arg) {},
+			// JUSTIFY_WAR_DAYS days, then a casus belli against the receiver (docs/WAR_ASSUMPTIONS.md, "Обоснование войны")
+			.commit =
+				[](Argument& arg) {
+					arg.instance_manager.get_war_manager().start_justification(*arg.sender, *arg.receiver, arg.instance_manager.get_today());
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return arg.instance_manager.get_war_manager()
+						.get_justify_block_reason(*arg.sender, *arg.receiver, arg.instance_manager.get_today()).empty();
+				},
 		}
 	);
 	result &= add_diplomatic_action(

@@ -414,7 +414,12 @@ namespace {
 			goal.type = WarGoal::type_t::CONQUER_STATE;
 			goal.state_province = border_province->get_state() != nullptr && border_province->get_state()->get_capital() != nullptr
 				? border_province->get_state()->get_capital() : border_province;
-			if (war_manager.declare_war(instance_manager, country, *target, goal)) {
+			// The AI justifies the war first (docs/WAR_ASSUMPTIONS.md, "Обоснование войны") and declares it when the casus belli is there
+			if (!country.has_casus_belli_against(*target, today)) {
+				if (war_manager.start_justification(country, *target, today)) {
+					SPDLOG_INFO("AI: {} justifies a war against {}", country.get_identifier(), target->get_identifier());
+				}
+			} else if (war_manager.declare_war_as_country(instance_manager, country, *target, goal)) {
 				SPDLOG_INFO("AI: {} declares war on {}", country.get_identifier(), target->get_identifier());
 			}
 		}
@@ -449,9 +454,10 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			&& static_cast<int>(country.get_total_rank()) <= ai.max_rank_for_wars
 			// no wars in the first half year of the game
 			&& today.get_year() * 12 + today.get_month() > ai.war_free_until_year * 12 + ai.war_free_until_month
-			// the chance of a month: the yearly chance spread over 12 months, the dice has 100 sides
-			&& dice(country, today, static_cast<std::uint64_t>(ai.war_decision_salt)) * 12 * (Rate::DENOMINATOR / 100)
-				< ai.war_chance_per_year.numerator) {
+			// the chance of a month: the yearly chance spread over 12 months, the dice has 100 sides; a justified war is declared without the dice
+			&& (!country.casus_belli.empty()
+				|| dice(country, today, static_cast<std::uint64_t>(ai.war_decision_salt)) * 12 * (Rate::DENOMINATOR / 100)
+				< ai.war_chance_per_year.numerator)) {
 			look_for_war(instance_manager, country);
 		}
 	}

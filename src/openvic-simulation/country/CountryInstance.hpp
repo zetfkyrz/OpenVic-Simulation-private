@@ -589,6 +589,18 @@ namespace OpenVic {
 		bool over_manpower_notified = false;
 		// The men the armies of the country lost today (battles, attrition, destroyed armies): the war exhaustion of the day (WarManager)
 		std::int64_t war_losses_today = 0;
+		// The justification of a war (docs/WAR_ASSUMPTIONS.md, "Обоснование войны"): the country it is justified against and the days left; the casus
+		// belli the country has: the target and the last day it is valid
+		CountryInstance* justify_target = nullptr;
+		std::int32_t justify_days_left = 0;
+		memory::vector<std::pair<CountryInstance*, Date>> casus_belli;
+		[[nodiscard]] bool has_casus_belli_against(CountryInstance const& target, Date today) const {
+			return std::any_of(casus_belli.begin(), casus_belli.end(), [&target, today](auto const& entry) -> bool {
+				return entry.first == &target && entry.second >= today;
+			});
+		}
+		// The infamy changes (never below 0)
+		void change_infamy(fixed_point_t delta);
 		// The new men of yesterday (WarManager::update_army_recovery, for the interface): what the regiments wanted, what they got, and what held them
 		// back (bits: 1 the free manpower, 2 the goods)
 		std::int64_t reinforce_wanted_men = 0;

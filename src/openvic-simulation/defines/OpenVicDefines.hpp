@@ -304,6 +304,13 @@ namespace OpenVic {
 	/* An AI ally joins a war it is called into while its war exhaustion is at most CALL_ALLY_MAX_EXHAUSTION (and it fights no other war); an AI country */ \
 	/* that does not lead its side asks for a separate peace once its war exhaustion is SEPARATE_PEACE_AI_TIREDNESS of its maximum */ \
 	FIXED(CALL_ALLY_MAX_EXHAUSTION, call_ally_max_exhaustion, fixed_point_t(25), 0, 1000) \
+	/* The justification of a war: JUSTIFY_WAR_DAYS days against a country, then JUSTIFY_WAR_INFAMY infamy and a casus belli for CASUS_BELLI_DAYS days; */ \
+	/* a war with it costs nothing (it is used up), a war without it NO_CB_WAR_INFAMY infamy and NO_CB_WAR_EXHAUSTION war exhaustion at once */ \
+	INT(JUSTIFY_WAR_DAYS, justify_war_days, 120, 1, 3650) \
+	FIXED(JUSTIFY_WAR_INFAMY, justify_war_infamy, fixed_point_t(2), 0, 100) \
+	INT(CASUS_BELLI_DAYS, casus_belli_days, 365, 1, 36500) \
+	FIXED(NO_CB_WAR_INFAMY, no_cb_war_infamy, fixed_point_t(5), 0, 100) \
+	FIXED(NO_CB_WAR_EXHAUSTION, no_cb_war_exhaustion, fixed_point_t(10), 0, 100) \
 	RATE(SEPARATE_PEACE_AI_TIREDNESS, separate_peace_ai_tiredness, Rate(50, 100), 0, 1) \
 	FIXED(WAR_EXHAUSTION_OCCUPATION_PER_DAY, war_exhaustion_occupation_per_day, fixed_point_t(5) / 100, 0, 100) \
 	FIXED(WAR_EXHAUSTION_BLOCKADE_PER_DAY, war_exhaustion_blockade_per_day, fixed_point_t(1) / 2, 0, 100) \

@@ -110,7 +110,9 @@ namespace OpenVic {
 		//     of the modifiers): it takes output (the modifier of Vic2) and makes the tired side give in sooner
 		// 65: the allies in a war that goes on (call_ally: the ally joins the war of the caller; the AI calls its free allies), the separate peace of a
 		//     country that does not lead its side (game action separate_peace; a tired AI country asks for it)
-		inline constexpr int SIMULATION_VERSION = 65;
+		// 66: the justification of a war (JUSTIFY_WAR_DAYS, then a casus belli; a war without one costs infamy and war exhaustion), the AI justifies
+		//     before it declares, the infamy changes every month (badboy of the modifiers)
+		inline constexpr int SIMULATION_VERSION = 66;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
