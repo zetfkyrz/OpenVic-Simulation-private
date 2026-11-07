@@ -341,7 +341,7 @@ namespace OpenVic {
 	struct Mobilisation {
 		std::int64_t pop_men = 0; // the men of the poor pops the pool is made of
 		fixed_point_t share; // MOBILISATION_POP_SHARE + mobilisation_size, times 1 + mobilisation_size_pct
-		std::int64_t pool_men = 0; // pop_men x share
+		std::int64_t pool_men = 0; // pop_men x share (less on the land that is not national, at most a share of every region, get_mobilisation_men)
 		std::uint32_t pool_regiments = 0; // pool_men / men_per_regiment, at least MIN_MOBILIZE_LIMIT (0 without poor pops)
 		std::int32_t men_per_regiment = 0;
 		std::uint32_t regiments = 0; // the mobilised regiments in the armies
@@ -512,6 +512,8 @@ namespace OpenVic {
 		// The pops a mobilisation takes the men from: poor (the strata "poor" of Vic2), not soldiers, not slaves, with men
 		[[nodiscard]] static bool is_mobilisation_pop_type(PopType const& pop_type);
 		[[nodiscard]] static bool is_mobilisation_pop(CountryInstance const& country, Pop const& pop);
+		// The men every poor pop of the pool gives at the share: less on the land that is not national, each region at most a share of its population
+		[[nodiscard]] std::vector<std::pair<Pop*, std::int64_t>> get_mobilisation_men(CountryInstance const& country, fixed_point_t share) const;
 		// The mobilisation pool and the mobilised regiments of the country
 		[[nodiscard]] Mobilisation get_mobilisation(CountryInstance const& country) const;
 		// Days a province of the country takes to raise its mobilised regiments (MOBILISATION_DAYS, faster with the railroad)

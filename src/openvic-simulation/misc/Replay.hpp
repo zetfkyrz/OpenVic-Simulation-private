@@ -104,7 +104,9 @@ namespace OpenVic {
 		//     recruitment (RECRUIT_MAX_REGIMENTS_PER_MONTH, the orders over it wait) and the priorities of the orders (set_recruitment_priority)
 		// 62: the rations: the Vic2 regiment types and the first OpenVic ones eat 8 grain and 2 fish (ARMY_RATION_FISH_SHARE), the output of the grain,
 		//     the wool and the cattle is 10 % bigger, the fish 2.2 times
-		inline constexpr int SIMULATION_VERSION = 62;
+		// 63: the mobilisation pool: the land that is not national gives a hundredth of the share, a region at most 25 % of its population (0.25 % of
+		//     its land that is not national); an army at most 2 % over the manpower has no penalty
+		inline constexpr int SIMULATION_VERSION = 63;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

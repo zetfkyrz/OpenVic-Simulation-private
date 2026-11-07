@@ -314,6 +314,12 @@ namespace OpenVic {
 	/* base that is mobilised (impact = MOBILISATION_ECONOMY_IMPACT_BASE + mobilisation_economy_impact of the modifiers), not below */ \
 	/* MOBILISATION_OUTPUT_MIN_MULT. A country that was at war while mobilised demobilises DEMOBILISE_DAYS after its last war ends */ \
 	RATE(MOBILISATION_POP_SHARE, mobilisation_pop_share, Rate(3, 100), 0, 1) \
+	/* The land that is not national (not a core of the country: colonies, conquests) gives MOBILISATION_NON_NATIONAL_FACTOR of the share; a region */ \
+	/* (a state) gives at most MOBILISATION_REGION_MAX of its population, of its land that is not national MOBILISATION_REGION_MAX_NON_NATIONAL (the */ \
+	/* reforms and the technologies will change them; decision of the owner 2026-11-07) */ \
+	RATE(MOBILISATION_NON_NATIONAL_FACTOR, mobilisation_non_national_factor, Rate(1, 100), 0, 1) \
+	RATE(MOBILISATION_REGION_MAX, mobilisation_region_max, Rate(25, 100), 0, 1) \
+	RATE(MOBILISATION_REGION_MAX_NON_NATIONAL, mobilisation_region_max_non_national, Rate(25, 10000), 0, 1) \
 	INT(MOBILISATION_DAYS, mobilisation_days, 30, 1, 3650) \
 	RATE(MOBILISATION_REFERENCE_SPEED, mobilisation_reference_speed, Rate(12, 100), 0.001, 1000) \
 	RATE(MOBILISATION_ECONOMY_IMPACT_BASE, mobilisation_economy_impact_base, Rate(0, 1), 0, 100) \

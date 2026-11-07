@@ -16,6 +16,7 @@
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/Deployment.hpp"
 #include "openvic-simulation/military/Division.hpp"
 #include "openvic-simulation/military/LeaderTrait.hpp"
@@ -2289,6 +2290,55 @@ std::int32_t UnitInstanceManager::get_mobilisation_days(CountryInstance const& c
 	return std::clamp<std::int32_t>(days.ceil<std::int32_t>(), 1, 3650);
 }
 
+std::vector<std::pair<Pop*, std::int64_t>> UnitInstanceManager::get_mobilisation_men(CountryInstance const& country, const fixed_point_t share) const {
+	OpenVicWarDefines const& wd = *UnitInstanceGroup::war_defines;
+	struct RegionSum {
+		std::int64_t men = 0;
+		std::int64_t cap = 0;
+	};
+	std::vector<std::pair<Pop*, std::int64_t>> result;
+	std::vector<State const*> result_states;
+	std::vector<std::pair<State const*, RegionSum>> regions;
+	const auto region_of = [&regions](State const* state) -> RegionSum& {
+		for (auto& entry : regions) {
+			if (entry.first == state) {
+				return entry.second;
+			}
+		}
+		return regions.emplace_back(state, RegionSum {}).second;
+	};
+	for (ProvinceInstance* province : country.get_owned_provinces()) {
+		if (province->get_controller() != &country) {
+			continue;
+		}
+		// The national land (the cores of the country) gives the share, the rest MOBILISATION_NON_NATIONAL_FACTOR of it; a region gives at most
+		// MOBILISATION_REGION_MAX of its population (MOBILISATION_REGION_MAX_NON_NATIONAL of the population of its land that is not national)
+		const bool national = province->is_owner_core();
+		const fixed_point_t province_share = national ? share : wd.mobilisation_non_national_factor.of(share);
+		RegionSum& region = region_of(province->get_state());
+		region.cap += (national ? wd.mobilisation_region_max : wd.mobilisation_region_max_non_national)
+			.of_int(static_cast<std::int64_t>(type_safe::get(province->get_total_population())));
+		for (Pop const& pop : province->get_pops()) {
+			if (!is_mobilisation_pop(country, pop)) {
+				continue;
+			}
+			// A pop that gives no man still takes the regiments of the minimum of the mobilisation (MIN_MOBILIZE_LIMIT) by the largest remainder
+			const std::int64_t men = (static_cast<std::int64_t>(province_share.get_raw_value()) * type_safe::get(pop.get_size())) >> fixed_point_t::PRECISION;
+			region.men += men;
+			result.emplace_back(province->find_pop_by_id(pop.id_in_province), men);
+			result_states.push_back(province->get_state());
+		}
+	}
+	// The regions over their cap give the same share of what their pops would give
+	for (std::size_t i = 0; i < result.size(); ++i) {
+		RegionSum const& region = region_of(result_states[i]);
+		if (region.men > region.cap) {
+			result[i].second = region.cap > 0 ? result[i].second * region.cap / region.men : 0;
+		}
+	}
+	return result;
+}
+
 Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& country) const {
 	Mobilisation mobilisation;
 	OpenVicWarDefines const& wd = *UnitInstanceGroup::war_defines;
@@ -2329,8 +2379,9 @@ Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& countr
 		mobilisation.days_max = first_province ? days : std::max(mobilisation.days_max, days);
 		first_province = false;
 	}
-	mobilisation.pool_men = static_cast<std::int64_t>((static_cast<std::int64_t>(mobilisation.share.get_raw_value()) * mobilisation.pop_men)
-		>> fixed_point_t::PRECISION);
+	for (auto const& [pop, men] : get_mobilisation_men(country, mobilisation.share)) {
+		mobilisation.pool_men += men;
+	}
 	if (mobilisation.pop_men > 0 && mobilisation.men_per_regiment > 0) {
 		const std::uint32_t min_regiments = country_defines != nullptr ? static_cast<std::uint32_t>(country_defines->get_min_mobilize_limit()) : 0;
 		mobilisation.pool_regiments = std::max(
@@ -2454,20 +2505,10 @@ bool UnitInstanceManager::mobilise(CountryInstance& country) {
 	std::vector<Quota> quotas;
 	const std::int64_t men_per_regiment = std::max<std::int64_t>(1, mobilisation.men_per_regiment);
 	std::uint32_t assigned = 0;
-	for (ProvinceInstance* province : country.get_owned_provinces()) {
-		if (province->get_controller() != &country) {
-			continue;
-		}
-		for (Pop const& pop : province->get_pops()) {
-			if (!is_mobilisation_pop(country, pop)) {
-				continue;
-			}
-			const std::int64_t men = (static_cast<std::int64_t>(mobilisation.share.get_raw_value()) * type_safe::get(pop.get_size()))
-				>> fixed_point_t::PRECISION;
-			Quota quota { province->find_pop_by_id(pop.id_in_province), men, static_cast<std::uint32_t>(men / men_per_regiment) };
-			assigned += quota.regiments;
-			quotas.push_back(quota);
-		}
+	for (auto const& [pop, men] : get_mobilisation_men(country, mobilisation.share)) {
+		Quota quota { pop, men, static_cast<std::uint32_t>(men / men_per_regiment) };
+		assigned += quota.regiments;
+		quotas.push_back(quota);
 	}
 	if (quotas.empty()) {
 		return false;

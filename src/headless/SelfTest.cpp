@@ -5385,6 +5385,50 @@ namespace {
 				static_cast<double>(strength_over), static_cast<double>(strength_after)));
 	}
 
+	// The mobilisation pool: the land that is not national gives a hundredth of the share, no region gives more than its cap (docs/RECRUITMENT.md)
+	void test_mobilisation_regions(Results& r, InstanceManager& im) {
+		UnitInstanceManager const& unit_manager = im.get_unit_instance_manager();
+		OpenVicWarDefines const& wd = im.definition_manager.get_define_manager().get_openvic_defines().war;
+		std::size_t countries = 0, over_cap = 0, non_national_pops = 0, non_national_too_big = 0;
+		const fixed_point_t share = fixed_point_t(1) / 10;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			if (!country.exists() || country.is_rebel_country() || country.get_owned_provinces().empty()) {
+				continue;
+			}
+			++countries;
+			std::vector<std::pair<State const*, std::int64_t>> regions;
+			for (auto const& [pop, men] : unit_manager.get_mobilisation_men(country, share)) {
+				ProvinceInstance const& province = pop->get_location();
+				auto it = std::find_if(regions.begin(), regions.end(), [&province](auto const& entry) -> bool { return entry.first == province.get_state(); });
+				if (it == regions.end()) {
+					regions.emplace_back(province.get_state(), men);
+				} else {
+					it->second += men;
+				}
+				if (!province.is_owner_core()) {
+					++non_national_pops;
+					non_national_too_big += men > type_safe::get(pop->get_size()) / 1000 + 1; // the share 0.1 times the hundredth
+				}
+			}
+			for (auto const& [state, men] : regions) {
+				std::int64_t cap = 0;
+				if (state != nullptr) {
+					for (ProvinceInstance const& province : state->get_provinces()) {
+						if (province.get_owner() == &country && province.get_controller() == &country) {
+							cap += (province.is_owner_core() ? wd.mobilisation_region_max : wd.mobilisation_region_max_non_national)
+								.of_int(static_cast<std::int64_t>(type_safe::get(province.get_total_population())));
+						}
+					}
+				}
+				over_cap += state != nullptr && men > cap + 1;
+			}
+		}
+		r.check(countries > 0 && over_cap == 0 && non_national_too_big == 0,
+			"mobilisation: the land that is not national gives a hundredth, no region gives more than its cap",
+			fmt::format("{} countries, {} regions over the cap, {} of {} pops of the land that is not national give too many", countries, over_cap,
+				non_national_too_big, non_national_pops));
+	}
+
 	// The canned food the stockpile does not have is replaced by grain, twice as much (docs/MILITARY_SUPPLY.md)
 	void test_canned_food_grain(Results& r, InstanceManager& im) {
 		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
@@ -7555,6 +7599,7 @@ namespace {
 		test_fallback(r, *im); // ticks days, a war of its own
 		test_naval_invasion(r, *im); // ticks days, a war of its own
 		test_ai_marshals(r, *im); // ticks days, a war of its own
+		test_mobilisation_regions(r, *im);
 		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
 		game.end();
 
