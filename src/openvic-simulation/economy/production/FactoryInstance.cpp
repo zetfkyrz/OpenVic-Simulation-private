@@ -767,7 +767,11 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	const fixed_point_t tariff_rate = owner->effective_tariff_rate.get_untracked();
 	const fixed_point_t tariff_multiplier = tariff_rate > fixed_point_t::_0 ? fixed_point_t::_1 + tariff_rate : fixed_point_t::_1;
 
-	const fixed_point_t output = production_type->base_output_quantity * level_value * production_fraction * efficiency;
+	fixed_point_t output = production_type->base_output_quantity * level_value * production_fraction * efficiency;
+	// The men of the poor pops that are mobilised are away from the work (docs/RECRUITMENT.md, "Мобилизация"): 1 when the country is not mobilised
+	if (owner->mobilisation_output_multiplier != fixed_point_t::_1) {
+		output *= owner->mobilisation_output_multiplier;
+	}
 	produced_quantity_pending = output;
 	consumed_value_pending = consumed_value;
 

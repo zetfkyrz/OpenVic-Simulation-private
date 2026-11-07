@@ -305,13 +305,12 @@ bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t cons
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
 
-	if (new_is_mobilised && !country.has_unlock(UNLOCK_MECHANIC_MOBILISATION)) {
-		return false;
+	// The mobilisation raises the regiments of the poor pops, the demobilisation sends them home (docs/RECRUITMENT.md, "Мобилизация")
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	if (new_is_mobilised) {
+		return unit_manager.mobilise(country);
 	}
-
-	const bool old_mobilise = country.is_mobilised();
-	country.set_mobilised(new_is_mobilised);
-	return old_mobilise != country.is_mobilised();
+	return unit_manager.demobilise(country);
 }
 
 bool GameActionManager::VariantVisitor::operator() (start_land_unit_recruitment_argument_t const& argument) const {
@@ -940,6 +939,14 @@ bool GameActionManager::VariantVisitor::operator() (cancel_recruitment_argument_
 	const auto [country_index, order_id] = argument;
 	return instance_manager.get_unit_instance_manager().cancel_recruitment(
 		war_action_country(instance_manager, country_index), order_id
+	);
+}
+
+// The priority of a recruitment order (of its whole division): the waiting orders of the higher priority start first (docs/RECRUITMENT.md)
+bool GameActionManager::VariantVisitor::operator() (set_recruitment_priority_argument_t const& argument) const {
+	const auto [country_index, order_id, priority] = argument;
+	return instance_manager.get_unit_instance_manager().set_recruitment_priority(
+		war_action_country(instance_manager, country_index), order_id, priority
 	);
 }
 

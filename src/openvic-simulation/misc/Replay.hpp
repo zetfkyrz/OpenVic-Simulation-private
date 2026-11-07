@@ -99,7 +99,10 @@ namespace OpenVic {
 		//     maximum of the manpower is 10 % bigger (MANPOWER_BASE_BONUS)
 		// 60: the regiments of the start (the types of Vic2, line infantry, the first artillery) eat grain instead of canned food, the canned food the
 		//     stockpile does not have is replaced by twice as much grain (CANNED_FOOD_GRAIN_SUBSTITUTE); a division at sea is off the line of its front
-		inline constexpr int SIMULATION_VERSION = 60;
+		// 61: the mobilisation (the poor pops raise mobilised regiments out of the manpower of the soldiers, the output of the economy falls while
+		//     they are away, the demobilisation sends them home, after a war by itself; the AI mobilises when it is weaker), the monthly limit of the
+		//     recruitment (RECRUIT_MAX_REGIMENTS_PER_MONTH, the orders over it wait) and the priorities of the orders (set_recruitment_priority)
+		inline constexpr int SIMULATION_VERSION = 61;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

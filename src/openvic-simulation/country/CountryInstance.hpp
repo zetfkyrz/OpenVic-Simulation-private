@@ -592,6 +592,19 @@ namespace OpenVic {
 		std::int64_t reinforce_wanted_men = 0;
 		std::int64_t reinforce_given_men = 0;
 		std::int32_t reinforce_limit = 0;
+		// The same for the mobilised regiments (their new men come out of the mobilisation pool)
+		std::int64_t mobilised_reinforce_wanted_men = 0;
+		std::int64_t mobilised_reinforce_given_men = 0;
+		std::int32_t mobilised_reinforce_limit = 0;
+		// The mobilisation (docs/RECRUITMENT.md, UnitInstanceManager::update_mobilisation, every day): the country was at war while mobilised (it
+		// demobilises DEMOBILISE_DAYS after its last war ends), the days of peace since, the multiplier of the output of its RGOs and factories
+		// (the men are away, 1 when it is not mobilised)
+		bool mobilisation_war_seen = false;
+		std::int32_t mobilisation_peace_days = 0;
+		fixed_point_t mobilisation_output_multiplier = fixed_point_t::_1;
+		// The monthly limit of the recruitment (ov_war.RECRUIT_MAX_REGIMENTS_PER_MONTH): the month (year * 12 + month - 1) and the regiments started in it
+		std::int32_t recruit_month = -1;
+		std::uint32_t recruited_this_month = 0;
 		CountryInstance(
 			CountryDefinition const& new_country_definition,
 			SharedCountryValues& new_shared_country_values,

@@ -303,6 +303,26 @@ namespace OpenVic {
 	RATE(REINFORCE_GOODS_SHARE, reinforce_goods_share, Rate(1, 1), 0, 100) \
 	INT(START_MANPOWER_FIT, start_manpower_fit, 1, 0, 1) \
 	INT(AI_DISBAND_OVER_MANPOWER, ai_disband_over_manpower, 1, 0, 1) \
+	/* The mobilisation (docs/RECRUITMENT.md, "Мобилизация"): the second pool of men is the poor pops that are not soldiers nor slaves (farmers, */ \
+	/* labourers, craftsmen) of the allowed cultures in the own, not occupied provinces times MOBILISATION_POP_SHARE + the mobilisation_size of */ \
+	/* the modifiers (the national values of Vic2 give 0.02-0.06), times 1 + mobilisation_size_pct, at least MIN_MOBILIZE_LIMIT (Vic2) */ \
+	/* regiments. A province raises its regiments in MOBILISATION_DAYS x MOBILISATION_REFERENCE_SPEED / speed days, the speed is */ \
+	/* MOBILIZATION_SPEED_BASE x (1 + MOBILIZATION_SPEED_RAILS_MULT x the railroad level 0..1) (Vic2) x (1 + mobilisation_speed_pct) x */ \
+	/* mobilisation_speed_mult. While the men are away the RGOs and the factories of the country make 1 - impact x the share of the pool */ \
+	/* base that is mobilised (impact = MOBILISATION_ECONOMY_IMPACT_BASE + mobilisation_economy_impact of the modifiers), not below */ \
+	/* MOBILISATION_OUTPUT_MIN_MULT. A country that was at war while mobilised demobilises DEMOBILISE_DAYS after its last war ends */ \
+	RATE(MOBILISATION_POP_SHARE, mobilisation_pop_share, Rate(3, 100), 0, 1) \
+	INT(MOBILISATION_DAYS, mobilisation_days, 30, 1, 3650) \
+	RATE(MOBILISATION_REFERENCE_SPEED, mobilisation_reference_speed, Rate(12, 100), 0.001, 1000) \
+	RATE(MOBILISATION_ECONOMY_IMPACT_BASE, mobilisation_economy_impact_base, Rate(0, 1), 0, 100) \
+	RATE(MOBILISATION_OUTPUT_MIN_MULT, mobilisation_output_min_mult, Rate(50, 100), 0, 1) \
+	INT(DEMOBILISE_DAYS, demobilise_days, 30, 0, 3650) \
+	/* The AI mobilises at war when its regiments (not mobilised) are fewer than AI_MOBILISE_RATIO x the regiments of its enemies; 0 turns it off */ \
+	INT(AI_MOBILISE, ai_mobilise, 1, 0, 1) \
+	RATE(AI_MOBILISE_RATIO, ai_mobilise_ratio, Rate(1, 1), 0, 100) \
+	/* At most RECRUIT_MAX_REGIMENTS_PER_MONTH regiments a month start their recruitment in a country (0: no limit); the orders over it wait */ \
+	/* in the queue and start in the next months by their priority (higher first, then the older) */ \
+	INT(RECRUIT_MAX_REGIMENTS_PER_MONTH, recruit_max_regiments_per_month, 0, 0, 100000) \
 	RATE(NAVAL_STRENGTH_DAMAGE, naval_strength_damage, Rate(2, 100), 0, 100) \
 	RATE(NAVAL_ORGANISATION_DAMAGE, naval_organisation_damage, Rate(8, 100), 0, 100) \
 	INT(NAVAL_EVASION_DIVISOR, naval_evasion_divisor, 10, 1, 1000) \

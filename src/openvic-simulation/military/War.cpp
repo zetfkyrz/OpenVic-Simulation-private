@@ -1600,6 +1600,8 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 	const fixed_point_t strength_recovery = wd.strength_recovery.fixed();
 	std::vector<ArmyInstance*> surrendered;
 	std::unordered_map<CountryInstance*, ReinforcementNeed> needs;
+	// The mobilised regiments get their new men from the mobilisation pool, not from the manpower of the soldiers
+	std::unordered_map<CountryInstance*, ReinforcementNeed> mobilised_needs;
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
@@ -1641,6 +1643,7 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 				reinforce_speed *= std::max(fixed_point_t::_0, fixed_point_t::_1 + army.get_country().get_modifier_effect_value(*cache.get_reinforce_rate()));
 			}
 			ReinforcementNeed* need = nullptr;
+			ReinforcementNeed* mobilised_need = nullptr;
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
 				regiment.recover(regiment.get_max_organisation() * organisation_recovery * supply, fixed_point_t::_0);
 				const fixed_point_t gain = new_men
@@ -1649,15 +1652,20 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 				if (gain <= fixed_point_t::_0) {
 					continue;
 				}
-				if (need == nullptr) {
+				if (regiment.is_mobilised()) {
+					if (mobilised_need == nullptr) {
+						mobilised_need = &mobilised_needs[&army.get_country()];
+					}
+				} else if (need == nullptr) {
 					need = &needs[&army.get_country()];
 				}
-				need->regiments.emplace_back(&regiment, gain);
-				need->men += (gain * wd.template_men_per_strength).ceil<std::int64_t>();
+				ReinforcementNeed* const regiment_need = regiment.is_mobilised() ? mobilised_need : need;
+				regiment_need->regiments.emplace_back(&regiment, gain);
+				regiment_need->men += (gain * wd.template_men_per_strength).ceil<std::int64_t>();
 				if (regiment.get_max_strength() > fixed_point_t::_0) {
 					const fixed_point_t share = wd.reinforce_goods_share.of(gain / regiment.get_max_strength());
 					for (auto const& [good, quantity] : regiment.unit_type.get_build_cost()) {
-						add_good_need(need->goods, good, quantity * share);
+						add_good_need(regiment_need->goods, good, quantity * share);
 					}
 				}
 			}
@@ -1672,22 +1680,25 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 		country.reinforce_wanted_men = 0;
 		country.reinforce_given_men = 0;
 		country.reinforce_limit = 0;
+		country.mobilised_reinforce_wanted_men = 0;
+		country.mobilised_reinforce_given_men = 0;
+		country.mobilised_reinforce_limit = 0;
 	}
-	for (auto& [country, need] : needs) {
+	// The share of the men is the same for all the regiments of the country (of its pool: the soldiers, or the mobilisation)
+	const auto reinforce = [&wd](CountryInstance* country, ReinforcementNeed const& need, const std::int64_t free_men, std::int64_t& wanted_men,
+		std::int64_t& given_men, std::int32_t& limit) -> void {
 		fixed_point_t ratio = fixed_point_t::_1;
-		country->reinforce_wanted_men = need.men;
+		wanted_men = need.men;
 		if (country->is_rebel_country()) {
 			for (auto const& [regiment, gain] : need.regiments) {
 				regiment->recover(fixed_point_t::_0, gain);
 			}
-			country->reinforce_given_men = need.men;
-			continue;
+			given_men = need.men;
+			return;
 		}
-		// The share of the men: the same for all the regiments of the country
-		const std::int64_t free_men = std::max<std::int64_t>(0, unit_manager.get_manpower(*country).free_men);
 		if (free_men < need.men) {
 			ratio = fixed_point_t(static_cast<int32_t>(free_men * 10000 / need.men)) / 10000;
-			country->reinforce_limit = 1;
+			limit |= 1;
 		}
 		// The share of every good (what the stockpile has of what all the regiments want of it); a regiment gets the smallest share of its own
 		// goods: the wine of the cavalry does not hold back the infantry
@@ -1710,7 +1721,7 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			for (auto const& [good, quantity] : regiment->unit_type.get_build_cost()) {
 				if (quantity > fixed_point_t::_0 && good_share(good) < regiment_ratio) {
 					regiment_ratio = good_share(good);
-					country->reinforce_limit |= 2;
+					limit |= 2;
 				}
 			}
 			if (regiment_ratio <= fixed_point_t::_0) {
@@ -1728,7 +1739,18 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 				}
 			}
 		}
-		country->reinforce_given_men = std::min(need.men, (given * wd.template_men_per_strength).floor<std::int64_t>());
+		given_men = std::min(need.men, (given * wd.template_men_per_strength).floor<std::int64_t>());
+	};
+	for (auto& [country, need] : needs) {
+		const std::int64_t free_men = country->is_rebel_country() ? 0 : std::max<std::int64_t>(0, unit_manager.get_manpower(*country).free_men);
+		reinforce(country, need, free_men, country->reinforce_wanted_men, country->reinforce_given_men, country->reinforce_limit);
+	}
+	// After the regular regiments of the country (they share its stockpile): one country at a time, so the order of the map does not matter
+	for (auto& [country, need] : mobilised_needs) {
+		const std::int64_t free_men = country->is_rebel_country() ? 0 : std::max<std::int64_t>(0, unit_manager.get_mobilisation(*country).free_men);
+		reinforce(
+			country, need, free_men, country->mobilised_reinforce_wanted_men, country->mobilised_reinforce_given_men, country->mobilised_reinforce_limit
+		);
 	}
 	for (ArmyInstance* army : surrendered) {
 		instance_manager.get_notification_log().add(instance_manager.get_today(), &army->get_country(), "army_surrendered", army->get_name());
@@ -2098,6 +2120,10 @@ void WarManager::update_manpower(InstanceManager& instance_manager) {
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	OpenVicWarDefines const& wd = get_war_defines();
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		// The mobilisation: the output of the economy while the men are away, the demobilisation after the war (docs/RECRUITMENT.md)
+		if (country.is_mobilised()) {
+			unit_manager.update_mobilisation(country);
+		}
 		if (country.is_rebel_country() || country.get_armies().empty()) {
 			country.manpower_combat_multiplier = fixed_point_t::_1;
 			country.over_manpower_notified = false;
@@ -2112,6 +2138,9 @@ void WarManager::update_manpower(InstanceManager& instance_manager) {
 				const fixed_point_t share = fixed_point_t(static_cast<int32_t>(manpower.max_men * 10000 / manpower.army_men)) / 10000;
 				for (ArmyInstance& army : country.get_armies()) {
 					for (RegimentInstance& regiment : army.get_regiment_instances()) {
+						if (regiment.is_mobilised()) {
+							continue;
+						}
 						const fixed_point_t losses = regiment.get_unapplied_losses();
 						regiment.take_damage(fixed_point_t::_0, regiment.get_strength() - regiment.get_strength() * share);
 						regiment.set_unapplied_losses(losses);

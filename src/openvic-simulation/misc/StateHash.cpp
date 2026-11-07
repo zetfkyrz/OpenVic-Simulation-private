@@ -106,6 +106,11 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army.get_supply_load_ratio());
 			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
 				hasher.add(static_cast<std::uint64_t>(regiment.get_division_id()));
+				// Only the mobilised ones (the hash of a game without the mobilisation is the one of the version 60)
+				if (regiment.is_mobilised()) {
+					hasher.add(static_cast<std::uint64_t>(0x4D4F42)); // "MOB"
+					hasher.add(regiment.unique_id);
+				}
 				if (regiment.get_unapplied_losses() != fixed_point_t::_0) {
 					hasher.add(regiment.get_unapplied_losses());
 				}
@@ -122,6 +127,17 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		}
 	}
 
+	// The recruitment orders of the mobilisation, the waiting ones and the ones with a priority (the others are not in the hash, as before)
+	for (RecruitmentOrder const& order : instance_manager.get_unit_instance_manager().get_recruitment_orders()) {
+		if (!order.mobilisation && !order.waiting && order.priority == 0) {
+			continue;
+		}
+		hasher.add(order.id);
+		hasher.add(static_cast<std::uint64_t>(static_cast<std::uint32_t>(order.days_left)));
+		hasher.add(static_cast<std::uint64_t>((order.mobilisation ? 1 : 0) + (order.waiting ? 2 : 0) + (order.priority << 2)));
+		hasher.add(static_cast<std::uint64_t>(type_safe::get(order.province->index)));
+	}
+
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		hasher.add(country.get_cash_stockpile().load());
 		hasher.add(country.get_investment_fund());
@@ -131,6 +147,17 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_army_supply_level());
 		hasher.add(country.manpower_combat_multiplier);
 		hasher.add(static_cast<std::uint64_t>((country.start_manpower_fitted ? 1 : 0) + (country.over_manpower_notified ? 2 : 0)));
+		// The mobilisation and the monthly limit of the recruitment (docs/RECRUITMENT.md), only when they are in use
+		if (country.is_mobilised() || country.mobilisation_war_seen || country.mobilisation_peace_days != 0
+			|| country.mobilisation_output_multiplier != fixed_point_t::_1) {
+			hasher.add(static_cast<std::uint64_t>((country.is_mobilised() ? 1 : 0) + (country.mobilisation_war_seen ? 2 : 0)));
+			hasher.add(static_cast<std::uint64_t>(country.mobilisation_peace_days));
+			hasher.add(country.mobilisation_output_multiplier);
+		}
+		if (country.recruited_this_month != 0) {
+			hasher.add(static_cast<std::uint64_t>(static_cast<std::uint32_t>(country.recruit_month)));
+			hasher.add(static_cast<std::uint64_t>(country.recruited_this_month));
+		}
 		for (ArmyGroup const& army_group : country.get_army_groups()) {
 			hasher.add(static_cast<std::uint64_t>(army_group.id));
 			hasher.add(static_cast<std::uint64_t>(army_group.marshal_id));
