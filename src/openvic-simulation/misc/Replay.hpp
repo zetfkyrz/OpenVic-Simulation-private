@@ -114,7 +114,10 @@ namespace OpenVic {
 		//     before it declares, the infamy changes every month (badboy of the modifiers)
 		// 67: the war exhaustion from the dead for the population (1 point for 0.1 %) and from the prestige of the lost battles (0.01 a regiment), at most
 		//     25 before 1850, a point takes 0.5 % of the output; the occupation and the blockade give none for now
-		inline constexpr int SIMULATION_VERSION = 67;
+		// 68: the navy: a blockade cuts the sea trade (the ports blockaded give no capacity) and the taxes (BLOCKADE_TAX_PENALTY), only warships blockade;
+		//     the traits of the admiral in a naval battle, the light ships screen the capital ones; the range of the fleets (NAVY_RANGE_STEPS from a
+		//     naval base); the AI fleets at war blockade, attack weaker fleets and repair in port
+		inline constexpr int SIMULATION_VERSION = 68;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

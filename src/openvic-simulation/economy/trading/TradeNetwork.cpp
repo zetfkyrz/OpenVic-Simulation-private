@@ -1,5 +1,7 @@
 #include "TradeNetwork.hpp"
 
+#include "openvic-simulation/military/War.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -220,7 +222,9 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 			continue;
 		}
 
-		if (has_naval_base && province.province_definition.has_port() && province.province_definition.get_port_adjacent_province() != nullptr) {
+		// A port blockaded by an enemy gives nothing to the sea trade of its country (docs/WAR_ASSUMPTIONS.md, section 9)
+		if (has_naval_base && province.province_definition.has_port() && province.province_definition.get_port_adjacent_province() != nullptr
+			&& !instance_manager.get_war_manager().is_blockaded(province)) {
 			const std::int32_t zone = zone_of_province[type_safe::get(province.province_definition.get_port_adjacent_province()->index)];
 			if (zone >= 0) {
 				const std::int32_t level = type_safe::get(

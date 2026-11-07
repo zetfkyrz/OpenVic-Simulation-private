@@ -525,6 +525,25 @@ namespace OpenVic {
 	RATE(ATTRITION_OVERLOAD, attrition_overload, Rate(5, 1000), 0, 1) \
 	RATE(ATTRITION_OVERLOAD_MAX, attrition_overload_max, Rate(15, 1000), 0, 1) \
 	INT(BLOCKADE_SUPPLY_DIVISOR, blockade_supply_divisor, 2, 1, 1000) \
+	/* The blockade (docs/WAR_ASSUMPTIONS.md, section 9): a blockaded port gives no capacity to the sea trade of its country (the month after), the tax */ \
+	/* efficiency is times 1 - BLOCKADE_TAX_PENALTY x the share of the ports blockaded (the tariffs fall with the imports by sea); only warships blockade */ \
+	RATE(BLOCKADE_TAX_PENALTY, blockade_tax_penalty, Rate(30, 100), 0, 1) \
+	/* The roles of the ships in a naval battle: while a side has light ships (not capital, not transports) its capital ships take NAVAL_SCREENED_DAMAGE */ \
+	/* of their damage and the light ones the rest; the traits of the admiral work as the ones of a general (LEADER_POINT_DIVISOR) */ \
+	RATE(NAVAL_SCREENED_DAMAGE, naval_screened_damage, Rate(50, 100), 0, 1) \
+	/* The range of a fleet: at sea more than NAVY_RANGE_STEPS sea provinces (times 1 + supply_range of the technologies) from the nearest naval base */ \
+	/* of the country or of an ally, its ships lose NAVY_OUT_OF_RANGE_ORG_LOSS of their organisation and NAVY_OUT_OF_RANGE_ATTRITION of their strength */ \
+	/* a day (not below NAVY_OUT_OF_RANGE_FLOOR of it) */ \
+	INT(NAVY_RANGE_STEPS, navy_range_steps, 12, 0, 1000) \
+	/* The fleets of the AI at war (once a month): a fleet below AI_NAVY_REPAIR_STRENGTH of its strength or AI_NAVY_REPAIR_ORGANISATION of its */ \
+	/* organisation goes to its nearest port; a fleet in good order attacks an enemy fleet within NAVY_RANGE_STEPS whose power is at most */ \
+	/* AI_NAVY_ATTACK_RATIO of its own, else it blockades the nearest enemy port within NAVY_RANGE_STEPS */ \
+	RATE(AI_NAVY_REPAIR_STRENGTH, ai_navy_repair_strength, Rate(60, 100), 0, 1) \
+	RATE(AI_NAVY_REPAIR_ORGANISATION, ai_navy_repair_organisation, Rate(50, 100), 0, 1) \
+	RATE(AI_NAVY_ATTACK_RATIO, ai_navy_attack_ratio, Rate(80, 100), 0, 10) \
+	RATE(NAVY_OUT_OF_RANGE_ORG_LOSS, navy_out_of_range_org_loss, Rate(5, 100), 0, 1) \
+	RATE(NAVY_OUT_OF_RANGE_ATTRITION, navy_out_of_range_attrition, Rate(1, 100), 0, 1) \
+	RATE(NAVY_OUT_OF_RANGE_FLOOR, navy_out_of_range_floor, Rate(25, 100), 0, 1) \
 	INT(MOVEMENT_SPEED_SCALE, movement_speed_scale, 3, 1, 1000) \
 	INT(PORT_STEP_DISTANCE, port_step_distance, 10, 1, 10000) \
 	INT(REGIMENTS_PER_TRANSPORT, regiments_per_transport, 4, 0, 1000) \

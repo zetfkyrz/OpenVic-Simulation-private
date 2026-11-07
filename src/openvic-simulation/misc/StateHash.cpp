@@ -147,6 +147,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_army_supply_level());
 		hasher.add(country.manpower_combat_multiplier);
 		hasher.add(country.get_war_exhaustion());
+		hasher.add(country.blockade_share);
 		hasher.add(country.get_prestige_untracked());
 		hasher.add(country.get_infamy_untracked());
 		hasher.add(static_cast<std::uint64_t>(country.justify_days_left) * 1000 + country.casus_belli.size()

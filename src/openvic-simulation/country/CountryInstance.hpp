@@ -589,6 +589,8 @@ namespace OpenVic {
 		bool over_manpower_notified = false;
 		// The men the armies of the country lost today (battles, attrition, destroyed armies): the war exhaustion of the day (WarManager)
 		std::int64_t war_losses_today = 0;
+		// The share of the ports of the country blockaded by an enemy (WarManager::update_blockades, every day)
+		fixed_point_t blockade_share;
 		// The prestige the country lost in battles today (the war exhaustion of the day)
 		fixed_point_t war_prestige_lost_today;
 		// The justification of a war (docs/WAR_ASSUMPTIONS.md, "Обоснование войны"): the country it is justified against and the days left; the casus

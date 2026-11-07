@@ -1415,10 +1415,14 @@ void CountryInstance::_update_budget() {
 	// TODO - make sure we properly update everything dependent on these sliders' values,
 	// as they might change if their sliders' bounds shrink past their previous values.
 
+	// A blockade takes a part of the taxes (docs/WAR_ASSUMPTIONS.md, section 9)
+	const fixed_point_t blockade_tax = UnitInstanceGroup::war_defines != nullptr
+		? fixed_point_t::_1 - UnitInstanceGroup::war_defines->blockade_tax_penalty.of(std::clamp(blockade_share, fixed_point_t::_0, fixed_point_t::_1))
+		: fixed_point_t::_1;
 	tax_efficiency.set(
-		country_defines.get_base_country_tax_efficiency()
+		(country_defines.get_base_country_tax_efficiency()
 		+ get_modifier_effect_value(*modifier_effect_cache.get_tax_efficiency())
-		+ get_modifier_effect_value(*modifier_effect_cache.get_tax_eff()) / 100
+		+ get_modifier_effect_value(*modifier_effect_cache.get_tax_eff()) / 100) * blockade_tax
 	);
 
 	TypedSpan<pop_type_index_t, const PopType> pop_types(

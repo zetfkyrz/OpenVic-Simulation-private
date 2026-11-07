@@ -256,6 +256,8 @@ namespace OpenVic {
 	template<>
 	struct UnitInstanceGroupBranched<unit_branch_t::NAVAL> : UnitInstanceGroup {
 	private:
+		// Far from the naval bases of the country and its allies today (WarManager::update_navy_range): the ships wear out
+		bool PROPERTY_RW_CUSTOM_NAME(out_of_range, is_out_of_range, set_out_of_range, false);
 		memory::vector<std::reference_wrapper<ArmyInstance>> SPAN_PROPERTY(carried_armies);
 
 	public:

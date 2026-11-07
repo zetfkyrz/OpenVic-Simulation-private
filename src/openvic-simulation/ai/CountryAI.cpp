@@ -302,6 +302,111 @@ namespace {
 		}
 	}
 
+	// The fleets of an AI country at war (docs/WAR_ASSUMPTIONS.md, section 9): worn out to the nearest port, in good order against a weaker enemy fleet
+	// nearby, else to blockade the nearest enemy port; fleets that move, fight or carry armies are left alone
+	void navies_at_war(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicWarDefines const& wd = instance_manager.get_war_manager().get_war_defines();
+		MapInstance& map_instance = instance_manager.get_map_instance();
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		const auto power_of = [](NavyInstance const& navy) -> fixed_point_t {
+			fixed_point_t power = fixed_point_t::_0;
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				if (ship.get_max_strength() > fixed_point_t::_0) {
+					power += (ship.get_ship_type().gun_power + ship.get_ship_type().torpedo_attack) * ship.get_strength() / ship.get_max_strength();
+				}
+			}
+			return power;
+		};
+		std::vector<NavyInstance*> navies;
+		for (NavyInstance& navy : country.get_navies()) {
+			if (!navy.empty() && !navy.is_moving() && !navy.is_in_combat() && navy.get_carried_armies().empty()) {
+				navies.push_back(&navy);
+			}
+		}
+		std::vector<std::int32_t> distance;
+		for (NavyInstance* navy : navies) {
+			fixed_point_t strength = fixed_point_t::_0, max_strength = fixed_point_t::_0, organisation = fixed_point_t::_0, max_organisation = fixed_point_t::_0;
+			for (ShipInstance const& ship : navy->get_ship_instances()) {
+				strength += ship.get_strength();
+				max_strength += ship.get_max_strength();
+				organisation += ship.get_organisation();
+				max_organisation += ship.get_max_organisation();
+			}
+			ProvinceInstance& location = navy->get_location();
+			const bool in_port = !location.province_definition.is_water();
+			if ((max_strength > fixed_point_t::_0 && strength < wd.ai_navy_repair_strength.of(max_strength))
+				|| (max_organisation > fixed_point_t::_0 && organisation < wd.ai_navy_repair_organisation.of(max_organisation))) {
+				if (!in_port) {
+					if (ProvinceInstance* const port = unit_manager.find_nearest_port(country, location, map_instance)) {
+						unit_manager.order_move(*navy, *port, map_instance);
+					}
+				}
+				continue;
+			}
+			// The seas within the range, by steps from the fleet (from the sea of its port when it is in one)
+			ProvinceInstance* start = &location;
+			if (in_port) {
+				ProvinceDefinition const* const sea = location.province_definition.get_port_adjacent_province();
+				if (sea == nullptr) {
+					continue;
+				}
+				start = &map_instance.get_province_instance_by_definition(*sea);
+			}
+			distance.assign(map_instance.get_province_instances().size() + 1, -1);
+			std::vector<ProvinceInstance*> queue { start };
+			distance[type_safe::get(start->index)] = 0;
+			ProvinceInstance* fleet_target = nullptr;
+			ProvinceInstance* port_target = nullptr;
+			const fixed_point_t own_power = power_of(*navy);
+			for (std::size_t head = 0; head < queue.size() && fleet_target == nullptr; ++head) {
+				ProvinceInstance& current = *queue[head];
+				// An enemy fleet weak enough, else the sea of an enemy port that is not blockaded yet
+				fixed_point_t enemy_power = fixed_point_t::_0;
+				bool enemy_here = false;
+				for (NavyInstance const& other : current.get_navies()) {
+					if (!other.empty() && other.get_country().is_at_war_with(country)) {
+						enemy_here = true;
+						enemy_power += power_of(other);
+					}
+				}
+				if (enemy_here && enemy_power <= wd.ai_navy_attack_ratio.of(own_power)) {
+					fleet_target = &current;
+					break;
+				}
+				if (port_target == nullptr && !enemy_here) {
+					for (ProvinceDefinition::adjacency_t const& adjacency : current.province_definition.get_adjacencies()) {
+						ProvinceInstance const& land = map_instance.get_province_instance_by_definition(adjacency.get_to());
+						if (!land.province_definition.is_water() && land.province_definition.has_port()
+							&& land.province_definition.get_port_adjacent_province() == &current.province_definition
+							&& land.get_owner() != nullptr && land.get_owner()->is_at_war_with(country)
+							&& !instance_manager.get_war_manager().is_blockaded(land)) {
+							port_target = &current;
+							break;
+						}
+					}
+				}
+				const std::int32_t next_distance = distance[type_safe::get(current.index)] + 1;
+				if (next_distance > wd.navy_range_steps) {
+					continue;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : current.province_definition.get_adjacencies()) {
+					if (!adjacency.get_to().is_water() || adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE) {
+						continue;
+					}
+					ProvinceInstance& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					if (distance[type_safe::get(next.index)] < 0) {
+						distance[type_safe::get(next.index)] = next_distance;
+						queue.push_back(&next);
+					}
+				}
+			}
+			ProvinceInstance* const target = fleet_target != nullptr ? fleet_target : port_target;
+			if (target != nullptr && target != &location) {
+				unit_manager.order_move(*navy, *target, map_instance);
+			}
+		}
+	}
+
 	// At peace an army over the manpower (docs/RECRUITMENT.md) fights weaker: the weakest regiments are disbanded down to the maximum
 	void disband_over_manpower(InstanceManager& instance_manager, CountryInstance& country) {
 		if (UnitInstanceGroup::war_defines == nullptr || UnitInstanceGroup::war_defines->ai_disband_over_manpower == 0) {
@@ -443,6 +548,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 
 		if (country.is_at_war()) {
 			war_allies(instance_manager, country);
+			navies_at_war(instance_manager, country);
 		}
 		if (country.is_at_war()) {
 			mobilise_if_weaker(instance_manager, country);

@@ -2028,6 +2028,18 @@ static void run_front_dump(InstanceManager& instance_manager) {
 						static_cast<double>(need));
 				}
 			}
+			{
+				// The fleets (docs/WAR_ASSUMPTIONS.md, section 9): at sea, out of the range, the ships, the blockade of the ports, the tax efficiency
+				std::size_t at_sea = 0, out_of_range = 0, ships = 0;
+				for (NavyInstance const& navy : side->get_navies()) {
+					at_sea += !navy.empty() && navy.get_location().province_definition.is_water();
+					out_of_range += navy.is_out_of_range();
+					ships += navy.get_unit_count();
+				}
+				fmt::println("FRONT_NAVY day={} country={} navies={} at_sea={} out_of_range={} ships={} blockaded={:.2f} tax_efficiency={:.3f}", day,
+					side->get_identifier(), side->get_navies().size(), at_sea, out_of_range, ships, static_cast<double>(side->blockade_share),
+					static_cast<double>(side->get_tax_efficiency_untracked()));
+			}
 			fmt::println("FRONT_SUPPLY day={} country={} arrived={:.2f} level={:.2f} war_exhaustion={:.1f}/{:.0f} short={}", day, side->get_identifier(),
 				static_cast<double>(side->get_army_supply_ratio()), static_cast<double>(side->get_army_supply_level()),
 				static_cast<double>(side->get_war_exhaustion()), static_cast<double>(side->get_war_exhaustion_max()),

@@ -58,9 +58,8 @@ namespace {
 		fixed_point_t attack, defence, morale, attrition;
 	};
 
-	LeaderBonus get_leader_bonus(ArmyInstance const& army, ModifierEffectCache const& cache) {
+	LeaderBonus get_leader_bonus(LeaderInstance const* const leader, ModifierEffectCache const& cache) {
 		LeaderBonus bonus;
-		LeaderInstance const* const leader = army.get_leader();
 		if (leader == nullptr) {
 			return bonus;
 		}
@@ -82,6 +81,10 @@ namespace {
 			}
 		}
 		return bonus;
+	}
+
+	LeaderBonus get_leader_bonus(ArmyInstance const& army, ModifierEffectCache const& cache) {
+		return get_leader_bonus(army.get_leader(), cache);
 	}
 
 	// A province next to `from` the army can retreat to, nullptr if there is none
@@ -1790,6 +1793,7 @@ namespace {
 		fixed_point_t organisation;
 		fixed_point_t max_organisation;
 		size_t ship_count = 0;
+		size_t light_ships = 0; // not capital, not transports: they screen the capital ships
 
 		fixed_point_t get_organisation_ratio() const {
 			return max_organisation > fixed_point_t::_0 ? organisation / max_organisation : fixed_point_t::_0;
@@ -1798,16 +1802,23 @@ namespace {
 
 	// Share of the maximum strength / organisation of a ship that is lost each day by a ship hit with the force
 	// of its own hull
-	void calculate_naval_side(NavalSide& side, OpenVicWarDefines const& wd) {
+	// The attack and the defence of the admiral of a fleet (his traits, as for a general)
+	fixed_point_t admiral_multiplier(NavyInstance const& navy, ModifierEffectCache const& cache, OpenVicWarDefines const& wd, const bool attack) {
+		const LeaderBonus bonus = get_leader_bonus(navy.get_leader(), cache);
+		return std::max(wd.leader_min_multiplier.fixed(), fixed_point_t::_1 + (attack ? bonus.attack : bonus.defence) / wd.leader_point_divisor);
+	}
+
+	void calculate_naval_side(NavalSide& side, OpenVicWarDefines const& wd, ModifierEffectCache const& cache) {
 		const fixed_point_t min_org_factor = wd.min_organisation_factor.fixed();
 		side.power = fixed_point_t::_0;
 		side.organisation = fixed_point_t::_0;
 		side.max_organisation = fixed_point_t::_0;
 		side.ship_count = 0;
+		side.light_ships = 0;
 
 		for (NavyInstance* navy : side.navies) {
-			// The ships that are not fully supplied shoot worse
-			const fixed_point_t supply_level = navy->get_country().get_navy_supply_level();
+			// The ships that are not fully supplied shoot worse; the admiral makes them shoot better
+			const fixed_point_t supply_level = navy->get_country().get_navy_supply_level() * admiral_multiplier(*navy, cache, wd, true);
 			for (ShipInstance& ship : navy->get_ship_instances()) {
 				if (ship.get_max_strength() <= fixed_point_t::_0 || ship.get_strength() <= fixed_point_t::_0) {
 					continue;
@@ -1823,24 +1834,41 @@ namespace {
 				side.organisation += ship.get_organisation();
 				side.max_organisation += ship.get_max_organisation();
 				side.ship_count++;
+				side.light_ships += !ship.get_ship_type().is_capital && !ship.get_ship_type().is_transport;
 			}
 		}
 	}
 
-	void apply_naval_damage(NavalSide& target, const fixed_point_t enemy_power, OpenVicWarDefines const& wd) {
+	void apply_naval_damage(NavalSide& target, const fixed_point_t enemy_power, OpenVicWarDefines const& wd, ModifierEffectCache const& cache) {
 		if (target.ship_count == 0) {
 			return;
 		}
-		const fixed_point_t average_power = enemy_power / static_cast<int32_t>(target.ship_count);
+		// The light ships screen the capital ones: these take NAVAL_SCREENED_DAMAGE of their share, the light ones the rest (the total is the same)
+		const std::int32_t ships = static_cast<std::int32_t>(target.ship_count);
+		const std::int32_t light = static_cast<std::int32_t>(target.light_ships);
+		std::int32_t capital = 0;
+		for (NavyInstance* navy : target.navies) {
+			for (ShipInstance const& ship : navy->get_ship_instances()) {
+				capital += ship.get_strength() > fixed_point_t::_0 && ship.get_ship_type().is_capital;
+			}
+		}
+		const fixed_point_t average_power = enemy_power / ships;
+		const bool screened = light > 0 && capital > 0;
+		const fixed_point_t capital_power = screened ? wd.naval_screened_damage.of(average_power) : average_power;
+		const fixed_point_t light_power = screened
+			? average_power + (average_power - capital_power) * capital / light : average_power;
 
 		for (NavyInstance* navy : target.navies) {
+			const fixed_point_t defence = admiral_multiplier(*navy, cache, wd, false);
 			for (ShipInstance& ship : navy->get_ship_instances()) {
 				if (ship.get_strength() <= fixed_point_t::_0) {
 					continue;
 				}
-				// A thin hull takes the full force, a thick one a part of it (at most 6 times the damage); evasion avoids some hits
+				const fixed_point_t ship_power = ship.get_ship_type().is_capital ? capital_power
+					: (!ship.get_ship_type().is_transport ? light_power : average_power);
+				// A thin hull takes the full force, a thick one a part of it (at most 6 times the damage); evasion avoids some hits; the admiral defends
 				const fixed_point_t hull = std::max(ship.get_ship_type().hull, fixed_point_t::_1);
-				fixed_point_t ratio = average_power / hull / (fixed_point_t::_1 + ship.get_ship_type().evasion / wd.naval_evasion_divisor);
+				fixed_point_t ratio = ship_power / hull / (fixed_point_t::_1 + ship.get_ship_type().evasion / wd.naval_evasion_divisor) / defence;
 				ratio = std::min(ratio, fixed_point_t(wd.naval_max_damage_ratio));
 				const int32_t rout_factor = ship.get_organisation() > fixed_point_t::_0 ? 1 : wd.rout_strength_multiplier;
 				ship.take_damage(
@@ -1873,6 +1901,7 @@ namespace {
 
 void WarManager::update_naval_combat(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& wd = get_war_defines();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 
@@ -1921,17 +1950,17 @@ void WarManager::update_naval_combat(InstanceManager& instance_manager) {
 			}
 		}
 
-		calculate_naval_side(side_a, wd);
-		calculate_naval_side(side_b, wd);
+		calculate_naval_side(side_a, wd, cache);
+		calculate_naval_side(side_b, wd, cache);
 		if (side_a.ship_count == 0 || side_b.ship_count == 0) {
 			continue;
 		}
 		const fixed_point_t power_a = side_a.power;
 		const fixed_point_t power_b = side_b.power;
-		apply_naval_damage(side_b, power_a, wd);
-		apply_naval_damage(side_a, power_b, wd);
-		calculate_naval_side(side_a, wd);
-		calculate_naval_side(side_b, wd);
+		apply_naval_damage(side_b, power_a, wd, cache);
+		apply_naval_damage(side_a, power_b, wd, cache);
+		calculate_naval_side(side_a, wd, cache);
+		calculate_naval_side(side_b, wd, cache);
 
 		const fixed_point_t rout_threshold = wd.rout_threshold.fixed();
 		const bool routed_a = side_a.ship_count == 0 || side_a.get_organisation_ratio() < rout_threshold;
@@ -1996,6 +2025,14 @@ void WarManager::update_blockades(InstanceManager& instance_manager) {
 			if (navy.empty()) {
 				continue;
 			}
+			// Transports do not blockade
+			bool warships = false;
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				warships |= !ship.get_ship_type().is_transport && ship.get_strength() > fixed_point_t::_0;
+			}
+			if (!warships) {
+				continue;
+			}
 			if (navy.get_country().is_at_war_with(*owner)) {
 				enemy_fleet = true;
 			} else if (&navy.get_country() == owner || navy.get_country().has_alliance_with(*owner)) {
@@ -2012,6 +2049,9 @@ void WarManager::update_blockades(InstanceManager& instance_manager) {
 		if (count.second > 0 && count.first > 0) {
 			blockade_shares[country] = fixed_point_t(count.second) / count.first;
 		}
+	}
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		country.blockade_share = get_blockade_share(country);
 	}
 }
 
@@ -2327,6 +2367,80 @@ bool WarManager::separate_peace(InstanceManager& instance_manager, const std::ui
 	return true;
 }
 
+void WarManager::update_navy_range(InstanceManager& instance_manager) {
+	OpenVicWarDefines const& wd = get_war_defines();
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
+	BuildingType const* const naval_base = instance_manager.definition_manager.get_economy_manager().get_building_type_manager().get_port_building_type();
+	if (wd.navy_range_steps <= 0 || naval_base == nullptr || !naval_base->province_building_index.has_value()) {
+		return;
+	}
+	const std::size_t province_count = map_instance.get_province_instances().size();
+	std::vector<std::int32_t> distance;
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		bool at_sea = false;
+		for (NavyInstance const& navy : country.get_navies()) {
+			at_sea |= !navy.empty() && navy.get_location().province_definition.is_water();
+		}
+		if (!at_sea) {
+			continue;
+		}
+		fixed_point_t range_mult = fixed_point_t::_1;
+		if (cache.get_supply_range() != nullptr) {
+			range_mult = std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_modifier_effect_value(*cache.get_supply_range()));
+		}
+		const std::int32_t range = (fixed_point_t(wd.navy_range_steps) * range_mult).floor<std::int32_t>();
+		// The steps over the sea from the seas of the naval bases of the country and its allies (they must hold the port)
+		distance.assign(province_count + 1, -1);
+		std::vector<ProvinceInstance const*> queue;
+		for (ProvinceInstance const& port : map_instance.get_province_instances()) {
+			CountryInstance const* const controller = port.get_controller();
+			ProvinceDefinition const* const sea = port.province_definition.get_port_adjacent_province();
+			if (sea == nullptr || controller == nullptr || (controller != &country && !country.has_alliance_with(*controller))
+				|| type_safe::get(port.get_buildings()[naval_base->province_building_index.value()].get_level()) <= 0) {
+				continue;
+			}
+			ProvinceInstance const& sea_instance = map_instance.get_province_instance_by_definition(*sea);
+			std::int32_t& d = distance[type_safe::get(sea_instance.index)];
+			if (d < 0) {
+				d = 0;
+				queue.push_back(&sea_instance);
+			}
+		}
+		for (std::size_t head = 0; head < queue.size(); ++head) {
+			ProvinceInstance const& current = *queue[head];
+			const std::int32_t next_distance = distance[type_safe::get(current.index)] + 1;
+			if (next_distance > range) {
+				continue;
+			}
+			for (ProvinceDefinition::adjacency_t const& adjacency : current.province_definition.get_adjacencies()) {
+				if (!adjacency.get_to().is_water() || adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE) {
+					continue;
+				}
+				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				std::int32_t& d = distance[type_safe::get(next.index)];
+				if (d < 0) {
+					d = next_distance;
+					queue.push_back(&next);
+				}
+			}
+		}
+		for (NavyInstance& navy : country.get_navies()) {
+			ProvinceInstance const& location = navy.get_location();
+			if (navy.empty() || !location.province_definition.is_water() || distance[type_safe::get(location.index)] >= 0) {
+				continue;
+			}
+			navy.set_out_of_range(true);
+			for (ShipInstance& ship : navy.get_ship_instances()) {
+				const fixed_point_t floor = wd.navy_out_of_range_floor.of(ship.get_max_strength());
+				const fixed_point_t loss = ship.get_strength() > floor
+					? std::min(wd.navy_out_of_range_attrition.of(ship.get_max_strength()), ship.get_strength() - floor) : fixed_point_t::_0;
+				ship.take_damage(std::min(ship.get_organisation(), wd.navy_out_of_range_org_loss.of(ship.get_max_organisation())), loss);
+			}
+		}
+	}
+}
+
 void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
 	OpenVicWarDefines const& wd = get_war_defines();
 	ModifierEffectCache const& cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
@@ -2462,6 +2576,13 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	}
 
 	update_naval_combat(instance_manager);
+	// The fleets far from their bases (the flag is set again every day)
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		for (NavyInstance& navy : country.get_navies()) {
+			navy.set_out_of_range(false);
+		}
+	}
+	update_navy_range(instance_manager);
 	// Sink the ships that lost all their men, the armies they cannot carry any more drown
 	{
 		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
