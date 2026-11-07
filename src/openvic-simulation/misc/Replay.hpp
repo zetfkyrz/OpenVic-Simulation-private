@@ -102,7 +102,9 @@ namespace OpenVic {
 		// 61: the mobilisation (the poor pops raise mobilised regiments out of the manpower of the soldiers, the output of the economy falls while
 		//     they are away, the demobilisation sends them home, after a war by itself; the AI mobilises when it is weaker), the monthly limit of the
 		//     recruitment (RECRUIT_MAX_REGIMENTS_PER_MONTH, the orders over it wait) and the priorities of the orders (set_recruitment_priority)
-		inline constexpr int SIMULATION_VERSION = 61;
+		// 62: the rations: the Vic2 regiment types and the first OpenVic ones eat 8 grain and 2 fish (ARMY_RATION_FISH_SHARE), the output of the grain,
+		//     the wool and the cattle is 10 % bigger, the fish 2.2 times
+		inline constexpr int SIMULATION_VERSION = 62;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {
