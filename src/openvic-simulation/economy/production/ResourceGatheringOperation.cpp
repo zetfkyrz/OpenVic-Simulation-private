@@ -443,6 +443,11 @@ fixed_point_t ResourceGatheringOperation::produce() {
 
 	//if province is overseas multiply by (1 + overseas penalty)
 
+	// The men of the poor pops that are mobilised are away from the work (docs/RECRUITMENT.md, "Мобилизация"): 1 when the country is not mobilised
+	if (CountryInstance const* const owner = location.get_owner(); owner != nullptr && owner->mobilisation_output_multiplier != fixed_point_t::_1) {
+		output_multiplier *= owner->mobilisation_output_multiplier;
+	}
+
 	return production_type.base_output_quantity
 		* size_modifier * size_multiplier
 		* throughput_multiplier * throughput_from_workers

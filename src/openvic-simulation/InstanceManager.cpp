@@ -164,6 +164,10 @@ InstanceManager::InstanceManager(
 	good_instance_manager.set_trade_network(&trade_network);
 	war_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines());
 	UnitInstanceGroup::set_war_defines(definition_manager.get_define_manager().get_openvic_defines().war);
+	unit_instance_manager.set_mobilisation_definitions(
+		definition_manager.get_modifier_manager().get_modifier_effect_cache(), definition_manager.get_define_manager().get_country_defines(),
+		definition_manager.get_military_manager().get_unit_type_manager()
+	);
 	ArtisanalProducer::set_openvic_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	credit_manager.set_defines(definition_manager.get_define_manager().get_openvic_defines().credit);
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
@@ -257,6 +261,12 @@ void InstanceManager::tick() {
 	{
 		OV_PROFILE_SCOPE(tick_profiler, "tick");
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger begin"); money_ledger.begin_day(*this); }
+		{
+			// The month of the limit of the recruitment and the orders that waited for it (docs/RECRUITMENT.md): first in the day, with the stockpile
+			// as the player saw it (the supply and the market of the day take and sell its goods later)
+			OV_PROFILE_SCOPE(tick_profiler, "waiting recruitment");
+			unit_instance_manager.start_waiting_orders(today);
+		}
 		{
 			// The roads of the trade: built before the first day and rebuilt at the start of every month (derived from the state of the game)
 			OV_PROFILE_SCOPE(tick_profiler, "trade network");

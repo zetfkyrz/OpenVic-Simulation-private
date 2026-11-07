@@ -300,6 +300,9 @@ namespace OpenVic {
 
 	struct MapInstance;
 	struct Deployment;
+	struct ModifierEffectCache;
+	struct CountryDefines;
+	struct PopType;
 	struct CultureManager;
 	struct LeaderTraitManager;
 	struct MilitaryDefines;
@@ -321,6 +324,40 @@ namespace OpenVic {
 		// division_id of the template template_id in a new army of the province (0: a regiment of its own)
 		std::uint32_t division_id = 0;
 		std::uint32_t template_id = 0;
+		// A regiment raised by the mobilisation (docs/RECRUITMENT.md, "Мобилизация"): from a poor pop, without goods, out of the manpower of the
+		// soldiers and of the monthly limit; it cannot be cancelled alone (the demobilisation cancels them all)
+		bool mobilisation = false;
+		// Over the monthly limit of the recruitment (ov_war.RECRUIT_MAX_REGIMENTS_PER_MONTH): the order waits, nothing is taken yet (no goods, no
+		// men; the pops of a division are picked when it starts), its days do not run
+		bool waiting = false;
+		// The priority of the order (0 normal, 1 high, 2 urgent): the waiting orders of the higher priority start first
+		std::uint32_t priority = 0;
+	};
+
+	inline constexpr std::uint32_t RECRUITMENT_PRIORITY_MAX = 2;
+
+	// The mobilisation of a country (docs/RECRUITMENT.md, "Мобилизация"): the pool is the poor pops that are not soldiers nor slaves of the allowed
+	// cultures in its provinces (owned and not occupied) times the share; the mobilised regiments are out of the manpower of the soldiers
+	struct Mobilisation {
+		std::int64_t pop_men = 0; // the men of the poor pops the pool is made of
+		fixed_point_t share; // MOBILISATION_POP_SHARE + mobilisation_size, times 1 + mobilisation_size_pct
+		std::int64_t pool_men = 0; // pop_men x share
+		std::uint32_t pool_regiments = 0; // pool_men / men_per_regiment, at least MIN_MOBILIZE_LIMIT (0 without poor pops)
+		std::int32_t men_per_regiment = 0;
+		std::uint32_t regiments = 0; // the mobilised regiments in the armies
+		std::int64_t men = 0; // their men now
+		std::int64_t full_men = 0; // their men at full strength
+		std::uint32_t pending_regiments = 0; // the mobilisation orders that are not ready yet
+		std::int64_t pending_men = 0;
+		std::int32_t days_left = 0; // the longest wait of the pending orders
+		std::int32_t days_min = 0; // for a new mobilisation: the days of the fastest and the slowest province of the pool
+		std::int32_t days_max = 0;
+		std::int64_t free_men = 0; // pool_men - men - pending_men: the men for the reinforcement of the mobilised regiments
+		fixed_point_t economy_impact; // MOBILISATION_ECONOMY_IMPACT_BASE + mobilisation_economy_impact of the modifiers (not below 0)
+		fixed_point_t taken_share; // (men + pending_men) / pop_men
+		fixed_point_t output_multiplier = fixed_point_t::_1; // of the RGOs and the factories while mobilised
+		// The output multiplier a mobilisation of the whole pool would give (for the button)
+		fixed_point_t planned_output_multiplier = fixed_point_t::_1;
 	};
 
 	// The manpower of a country in men (docs/RECRUITMENT.md): the maximum is the size of the pops of soldiers of the allowed cultures in its provinces
@@ -359,6 +396,8 @@ namespace OpenVic {
 		std::uint32_t next_division_id = 1;
 		// The men who died in the armies since the start (taken off the pops by apply_losses)
 		std::int64_t men_killed_total = 0;
+		// The month of today (year * 12 + month - 1), set at the start of tick: the monthly limit of the recruitment counts in it
+		std::int32_t current_month = -1;
 
 	private:
 
@@ -380,6 +419,17 @@ namespace OpenVic {
 		OV_UNIT_BRANCHED_GETTER(get_unit_instance_groups, armies, navies);
 
 		memory::vector<RecruitmentOrder> PROPERTY(recruitment_orders);
+
+		// The definitions the mobilisation reads (set by the InstanceManager, they outlive all instances)
+		ModifierEffectCache const* modifier_effect_cache = nullptr;
+		CountryDefines const* country_defines = nullptr;
+		UnitTypeManager const* unit_type_manager = nullptr;
+
+		// The recruitment that waits for the monthly limit: the regiments the country may still start this month (-1: no limit)
+		[[nodiscard]] std::int64_t get_recruit_limit_left(CountryInstance const& country) const;
+		void count_recruited(CountryInstance& country, std::uint32_t regiments) const;
+		// Takes the goods and the men of a waiting order (of all the regiments of its division) and starts its days; false if they are missing
+		bool start_waiting_order(std::size_t index);
 
 		Pop* recruit_pop_in(ProvinceInstance& province, const bool is_rebel) const;
 		template<unit_branch_t Branch>
@@ -448,8 +498,42 @@ namespace OpenVic {
 		// Days the regiment takes to recruit for the country
 		static int32_t get_recruitment_days(CountryInstance const& country, UnitType const& unit_type);
 
-		// The manpower of the country
+		// The manpower of the country (the soldiers: the mobilised regiments are not in it)
 		[[nodiscard]] Manpower get_manpower(CountryInstance const& country) const;
+
+		void set_mobilisation_definitions(
+			ModifierEffectCache const& new_modifier_effect_cache, CountryDefines const& new_country_defines,
+			UnitTypeManager const& new_unit_type_manager
+		) {
+			modifier_effect_cache = &new_modifier_effect_cache;
+			country_defines = &new_country_defines;
+			unit_type_manager = &new_unit_type_manager;
+		}
+		// The pops a mobilisation takes the men from: poor (the strata "poor" of Vic2), not soldiers, not slaves, with men
+		[[nodiscard]] static bool is_mobilisation_pop_type(PopType const& pop_type);
+		[[nodiscard]] static bool is_mobilisation_pop(CountryInstance const& country, Pop const& pop);
+		// The mobilisation pool and the mobilised regiments of the country
+		[[nodiscard]] Mobilisation get_mobilisation(CountryInstance const& country) const;
+		// Days a province of the country takes to raise its mobilised regiments (MOBILISATION_DAYS, faster with the railroad)
+		[[nodiscard]] std::int32_t get_mobilisation_days(CountryInstance const& country, ProvinceInstance const& province) const;
+		// Empty if the country can mobilise (demobilise), otherwise the reason (Russian text for the player)
+		[[nodiscard]] std::string_view get_mobilise_block_reason(CountryInstance const& country) const;
+		[[nodiscard]] std::string_view get_demobilise_block_reason(CountryInstance const& country) const;
+		// The mobilisation: orders of mobilised regiments (the types of the first template of the country, else the infantry) linked to the poor pops of
+		// the pool, ready in the days of their provinces; no goods. The demobilisation disbands every mobilised regiment and cancels the orders: the men
+		// go back to their pops, nobody dies
+		bool mobilise(CountryInstance& country);
+		bool demobilise(CountryInstance& country);
+		// Every day: the output multiplier of the economy, the demobilisation DEMOBILISE_DAYS after the last war (one thread)
+		void update_mobilisation(CountryInstance& country);
+		// Sets the priority of an order (of all the regiments of its division); false if nothing changed
+		bool set_recruitment_priority(CountryInstance& country, unique_id_t order_id, std::uint32_t priority);
+		// Every day, first in InstanceManager::tick: the month of the limit, the waiting orders that may start (by their priority)
+		void start_waiting_orders(const Date today);
+		// The regiments the country may still start this month: -1 without a limit
+		[[nodiscard]] std::int64_t get_recruitment_limit_left(CountryInstance const& country) const {
+			return get_recruit_limit_left(country);
+		}
 		// The men of a regiment of the type at full strength
 		[[nodiscard]] std::int64_t get_regiment_men(RegimentType const& regiment_type) const;
 		// Takes the strength the regiment lost (unapplied_losses) off its pop, what the pop does not have off the other pops of soldiers of the

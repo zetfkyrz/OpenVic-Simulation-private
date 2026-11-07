@@ -7,7 +7,11 @@
 #include <fmt/std.h>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/defines/CountryDefines.hpp"
 #include "openvic-simulation/defines/MilitaryDefines.hpp"
+#include "openvic-simulation/military/UnitModifiers.hpp"
+#include "openvic-simulation/military/Unlocks.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/economy/BuildingInstance.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
@@ -730,9 +734,12 @@ void UnitInstanceManager::tick(const Date today) {
 		);
 	}
 
+	// (the orders that waited for the monthly limit started at the beginning of the day, InstanceManager::tick)
+	(void) today;
+
 	// Recruitment: the regiment appears in the province when the time is up
 	for (size_t i = 0; i < recruitment_orders.size();) {
-		if (--recruitment_orders[i].days_left > 0) {
+		if (recruitment_orders[i].waiting || --recruitment_orders[i].days_left > 0) {
 			++i;
 			continue;
 		}
@@ -772,13 +779,35 @@ void UnitInstanceManager::tick(const Date today) {
 
 		const unique_id_t regiment_id = unique_id_counter++;
 		RegimentInstance& regiment = *regiments.insert(RegimentInstance {
-			regiment_id, fmt::format("{} {}", regiment_type->get_identifier(), regiment_id), *regiment_type, pop, false
+			regiment_id, fmt::format("{} {}", regiment_type->get_identifier(), regiment_id), *regiment_type, pop, order.mobilisation
 		});
 		unit_instance_map.emplace(regiment.unique_id, regiment);
 
 		// A regiment of a division recruited by a template: into the army of its division in the province (a new army for the first one)
 		ArmyInstance* target = nullptr;
-		if (order.division_id != 0) {
+		if (order.mobilisation) {
+			// A mobilised regiment joins the mobilised army of the province that stands there (every regiment mobilised) or makes a new one: the
+			// divisions (update_all_divisions) are made of the mobilised regiments only, the demobilisation does not tear the regular ones apart
+			for (ArmyInstance& army : province.get_armies()) {
+				if (&army.get_country() != &country || army.is_moving() || army.is_in_combat() || army.get_transport_navy() != nullptr
+					|| army.empty()) {
+					continue;
+				}
+				bool all_mobilised = true;
+				for (RegimentInstance const& other : army.get_regiment_instances()) {
+					all_mobilised &= other.is_mobilised();
+				}
+				if (all_mobilised) {
+					target = &army;
+					break;
+				}
+			}
+			if (target == nullptr) {
+				const unique_id_t army_id = unique_id_counter++;
+				target = &*armies.emplace(army_id, fmt::format("Мобилизованные {}", army_id), country, province);
+				unit_instance_group_map.emplace(target->unique_id, *target);
+			}
+		} else if (order.division_id != 0) {
 			for (ArmyInstance& army : province.get_armies()) {
 				if (&army.get_country() == &country && std::any_of(army.get_divisions().begin(), army.get_divisions().end(),
 					[&order](DivisionInstance const& division) -> bool { return division.id == order.division_id; })) {
@@ -1425,15 +1454,19 @@ Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const
 		manpower.multiplier += bonus.fixed();
 		manpower.max_men += bonus.of_int(manpower.pop_men);
 	}
+	// The mobilised regiments are out of the manpower of the soldiers (their men come from the mobilisation pool), the waiting orders took no men yet
 	for (ArmyInstance const& army : country.get_armies()) {
 		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.is_mobilised()) {
+				continue;
+			}
 			manpower.army_men += strength_men(regiment.get_strength());
 			manpower.army_full_men += strength_men(regiment.get_max_strength());
 			++manpower.regiments;
 		}
 	}
 	for (RecruitmentOrder const& order : recruitment_orders) {
-		if (order.country == &country && order.regiment_type != nullptr) {
+		if (order.country == &country && order.regiment_type != nullptr && !order.mobilisation && !order.waiting) {
 			manpower.queued_men += get_regiment_men(*order.regiment_type);
 		}
 	}
@@ -1466,7 +1499,9 @@ void UnitInstanceManager::apply_losses(RegimentInstance& regiment, CountryInstan
 		regiment.get_unapplied_losses() - fixed_point_t(static_cast<int32_t>(men)) / UnitInstanceGroup::war_defines->template_men_per_strength
 	);
 	std::int64_t left = men;
-	// A pop is never emptied by the losses (it keeps a man), what it does not have dies in the other pops of soldiers of the country
+	// A pop is never emptied by the losses (it keeps a man), what it does not have dies in the other pops of soldiers of the country (of a
+	// mobilised regiment: in the other poor pops of the mobilisation)
+	const bool mobilised = regiment.is_mobilised();
 	const auto take = [this, &left](Pop& pop) -> void {
 		const std::int64_t can = std::min<std::int64_t>(left, type_safe::get(pop.get_size()) - 1);
 		if (can > 0) {
@@ -1487,7 +1522,7 @@ void UnitInstanceManager::apply_losses(RegimentInstance& regiment, CountryInstan
 			if (left <= 0) {
 				break;
 			}
-			if (pop.get_type().can_be_recruited) {
+			if (mobilised ? is_mobilisation_pop_type(pop.get_type()) : pop.get_type().can_be_recruited) {
 				take(*province->find_pop_by_id(pop.id_in_province));
 			}
 		}
@@ -1574,41 +1609,30 @@ std::string UnitInstanceManager::get_division_recruitment_block_reason(
 	return {};
 }
 
-bool UnitInstanceManager::start_division_recruitment(
-	CountryInstance& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance& province
-) {
-	if (!get_division_recruitment_block_reason(country, unit_type_manager, division_template, province).empty()) {
-		return false;
-	}
-	const std::vector<RegimentType const*> types = template_regiment_types(unit_type_manager, division_template);
-	// The pops that give the soldiers: of the province first, then of the other provinces of the country (owned, not occupied) in their order
-	std::vector<Pop*> pops;
-	for (Pop const& pop : province.get_pops()) {
-		if (pop_gives_regiment(country, pop)) {
-			pops.push_back(province.find_pop_by_id(pop.id_in_province));
-		}
-	}
-	for (ProvinceInstance* other : country.get_owned_provinces()) {
-		if (other == &province || other->get_controller() != &country) {
-			continue;
-		}
-		for (Pop const& pop : other->get_pops()) {
+namespace {
+	// The pops that give the soldiers of a division: of the province first, then of the other provinces of the country (owned, not occupied) in their order
+	std::vector<Pop*> division_pops(CountryInstance& country, ProvinceInstance& province) {
+		std::vector<Pop*> pops;
+		for (Pop const& pop : province.get_pops()) {
 			if (pop_gives_regiment(country, pop)) {
-				pops.push_back(other->find_pop_by_id(pop.id_in_province));
+				pops.push_back(province.find_pop_by_id(pop.id_in_province));
 			}
 		}
+		for (ProvinceInstance* other : country.get_owned_provinces()) {
+			if (other == &province || other->get_controller() != &country) {
+				continue;
+			}
+			for (Pop const& pop : other->get_pops()) {
+				if (pop_gives_regiment(country, pop)) {
+					pops.push_back(other->find_pop_by_id(pop.id_in_province));
+				}
+			}
+		}
+		return pops;
 	}
-	int32_t days = 1;
-	for (RegimentType const* type : types) {
-		days = std::max(days, get_recruitment_days(country, *type));
-	}
-	const std::uint32_t division_id = next_division_id++;
-	if (pops.empty()) {
-		return false;
-	}
-	// Every regiment is linked to the pop with the most men not yet in regiments (of the province first): its losses are taken off that pop
-	const std::int64_t men_per_regiment = static_cast<std::int64_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
-	const auto pick_pop = [&pops, &province, men_per_regiment]() -> Pop* {
+
+	// The pop with the most men not yet in regiments (of the province first): the losses of the regiment are taken off it
+	Pop* pick_division_pop(std::vector<Pop*> const& pops, ProvinceInstance const& province, const std::int64_t men_per_regiment) {
 		Pop* best = nullptr;
 		std::int64_t best_free = 0;
 		bool best_local = false;
@@ -1622,19 +1646,54 @@ bool UnitInstanceManager::start_division_recruitment(
 			}
 		}
 		return best;
-	};
-	for (RegimentType const* type : types) {
-		Pop* const pop = pick_pop();
-		pop->add_recruit();
-		for (auto const& [good, quantity] : type->get_build_cost()) {
+	}
+
+	void take_build_cost(CountryInstance& country, RegimentType const& type) {
+		for (auto const& [good, quantity] : type.get_build_cost()) {
 			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
 			good_data.stockpile_amount -= quantity;
 			good_data.stockpile_change_yesterday -= quantity;
 		}
+	}
+}
+
+bool UnitInstanceManager::start_division_recruitment(
+	CountryInstance& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance& province
+) {
+	if (!get_division_recruitment_block_reason(country, unit_type_manager, division_template, province).empty()) {
+		return false;
+	}
+	const std::vector<RegimentType const*> types = template_regiment_types(unit_type_manager, division_template);
+	const std::vector<Pop*> pops = division_pops(country, province);
+	int32_t days = 1;
+	for (RegimentType const* type : types) {
+		days = std::max(days, get_recruitment_days(country, *type));
+	}
+	const std::uint32_t division_id = next_division_id++;
+	if (pops.empty()) {
+		return false;
+	}
+	// Over the monthly limit the whole division waits: no men, no goods, no pops yet (start_waiting_order). A division bigger than the limit
+	// starts alone at the beginning of a month
+	const std::int64_t limit_left = get_recruit_limit_left(country);
+	const bool waiting = limit_left >= 0
+		&& (limit_left == 0 || (static_cast<std::int64_t>(types.size()) > limit_left && country.recruited_this_month > 0));
+	const std::int64_t men_per_regiment = static_cast<std::int64_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	for (RegimentType const* type : types) {
+		Pop* pop = nullptr;
+		if (!waiting) {
+			pop = pick_division_pop(pops, province, men_per_regiment);
+			pop->add_recruit();
+			take_build_cost(country, *type);
+		}
 		RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, pop, days, days };
 		order.division_id = division_id;
 		order.template_id = division_template.id;
+		order.waiting = waiting;
 		recruitment_orders.push_back(order);
+	}
+	if (!waiting) {
+		count_recruited(country, static_cast<std::uint32_t>(types.size()));
 	}
 	return true;
 }
@@ -1682,22 +1741,27 @@ bool UnitInstanceManager::start_recruitment(
 		return false;
 	}
 
-	pop.add_recruit();
-
-	for (auto const& [good, quantity] : regiment_type.get_build_cost()) {
-		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
-		good_data.stockpile_amount -= quantity;
-		good_data.stockpile_change_yesterday -= quantity;
-	}
-
 	const int32_t days = get_recruitment_days(country, regiment_type);
-	recruitment_orders.push_back({ unique_id_counter++, &country, &regiment_type, nullptr, &province, &pop, days, days });
+	RecruitmentOrder order { unique_id_counter++, &country, &regiment_type, nullptr, &province, &pop, days, days };
+	// Over the monthly limit the order waits: the men and the goods are taken when it starts (start_waiting_order)
+	if (get_recruit_limit_left(country) == 0) {
+		order.waiting = true;
+		recruitment_orders.push_back(order);
+		return true;
+	}
+	pop.add_recruit();
+	take_build_cost(country, regiment_type);
+	count_recruited(country, 1);
+	recruitment_orders.push_back(order);
 	return true;
 }
 
 bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const unique_id_t order_id) {
-	// A regiment of a division: the whole division is cancelled
+	// A mobilised regiment is cancelled only by the demobilisation; a regiment of a division: the whole division is cancelled
 	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.id == order_id && order.mobilisation) {
+			return false;
+		}
 		if (order.id == order_id && order.division_id != 0 && order.country == &country) {
 			const std::uint32_t division_id = order.division_id;
 			std::vector<unique_id_t> ids;
@@ -1724,6 +1788,11 @@ bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const uni
 		}
 		if (it->country != &country) {
 			return false;
+		}
+		// A waiting order took nothing yet
+		if (it->waiting) {
+			recruitment_orders.erase(it);
+			return true;
 		}
 
 		UnitType const& unit_type = it->ship_type != nullptr ? static_cast<UnitType const&>(*it->ship_type)
@@ -2015,4 +2084,486 @@ ArmyInstance* UnitInstanceManager::create_army_with_regiments(
 	}
 	army.update_gamestate();
 	return &army;
+}
+
+// ---- The monthly limit of the recruitment and the priorities of the orders (docs/RECRUITMENT.md)
+
+std::int64_t UnitInstanceManager::get_recruit_limit_left(CountryInstance const& country) const {
+	const std::int32_t limit = UnitInstanceGroup::war_defines != nullptr ? UnitInstanceGroup::war_defines->recruit_max_regiments_per_month : 0;
+	if (limit <= 0) {
+		return -1;
+	}
+	const std::uint32_t done = country.recruit_month == current_month ? country.recruited_this_month : 0;
+	return std::max<std::int64_t>(0, static_cast<std::int64_t>(limit) - static_cast<std::int64_t>(done));
+}
+
+void UnitInstanceManager::count_recruited(CountryInstance& country, const std::uint32_t regiment_count) const {
+	if (UnitInstanceGroup::war_defines == nullptr || UnitInstanceGroup::war_defines->recruit_max_regiments_per_month <= 0) {
+		return;
+	}
+	if (country.recruit_month != current_month) {
+		country.recruit_month = current_month;
+		country.recruited_this_month = 0;
+	}
+	country.recruited_this_month += regiment_count;
+}
+
+bool UnitInstanceManager::start_waiting_order(const std::size_t index) {
+	RecruitmentOrder& first = recruitment_orders[index];
+	CountryInstance& country = *first.country;
+	ProvinceInstance& province = *first.province;
+	if (first.regiment_type == nullptr) {
+		first.waiting = false;
+		return true;
+	}
+	if (first.division_id == 0) {
+		// A regiment of its own: the same checks as when it was ordered (the men are free, the goods are there)
+		if (first.pop == nullptr || !get_recruitment_block_reason(country, *first.regiment_type, province, *first.pop).empty()) {
+			return false;
+		}
+		first.pop->add_recruit();
+		take_build_cost(country, *first.regiment_type);
+		first.waiting = false;
+		first.days_left = first.days_total;
+		return true;
+	}
+	// A division: all its waiting regiments start together, or none
+	const std::uint32_t division_id = first.division_id;
+	std::vector<std::size_t> members;
+	for (std::size_t i = 0; i < recruitment_orders.size(); ++i) {
+		if (recruitment_orders[i].division_id == division_id && recruitment_orders[i].country == &country && recruitment_orders[i].waiting) {
+			members.push_back(i);
+		}
+	}
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return false;
+	}
+	std::int64_t needed_men = 0;
+	std::vector<std::pair<GoodDefinition const*, fixed_point_t>> needed;
+	for (const std::size_t i : members) {
+		RegimentType const& type = *recruitment_orders[i].regiment_type;
+		if (!country.is_unit_type_unlocked(type)) {
+			return false;
+		}
+		needed_men += get_regiment_men(type);
+		for (auto const& [good, quantity] : type.get_build_cost()) {
+			auto it = std::find_if(needed.begin(), needed.end(), [good](auto const& entry) -> bool { return entry.first == good; });
+			if (it == needed.end()) {
+				needed.emplace_back(good, quantity);
+			} else {
+				it->second += quantity;
+			}
+		}
+	}
+	if (get_manpower(country).free_men < needed_men) {
+		return false;
+	}
+	for (auto const& [good, quantity] : needed) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return false;
+		}
+	}
+	const std::vector<Pop*> pops = division_pops(country, province);
+	if (pops.empty()) {
+		return false;
+	}
+	const std::int64_t men_per_regiment = static_cast<std::int64_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	for (const std::size_t i : members) {
+		RecruitmentOrder& order = recruitment_orders[i];
+		Pop* const pop = pick_division_pop(pops, province, men_per_regiment);
+		pop->add_recruit();
+		take_build_cost(country, *order.regiment_type);
+		order.pop = pop;
+		order.waiting = false;
+		order.days_left = order.days_total;
+	}
+	return true;
+}
+
+void UnitInstanceManager::start_waiting_orders(const Date today) {
+	current_month = static_cast<std::int32_t>(today.get_year()) * 12 + static_cast<std::int32_t>(today.get_month()) - 1;
+	// The waiting orders (one entry for a division): the higher priority first, then the older
+	std::vector<std::size_t> waiting;
+	for (std::size_t i = 0; i < recruitment_orders.size(); ++i) {
+		RecruitmentOrder const& order = recruitment_orders[i];
+		if (!order.waiting) {
+			continue;
+		}
+		if (order.division_id != 0 && std::any_of(waiting.begin(), waiting.end(), [this, &order](const std::size_t other) -> bool {
+			return recruitment_orders[other].division_id == order.division_id && recruitment_orders[other].country == order.country;
+		})) {
+			continue;
+		}
+		waiting.push_back(i);
+	}
+	if (waiting.empty()) {
+		return;
+	}
+	std::stable_sort(waiting.begin(), waiting.end(), [this](const std::size_t a, const std::size_t b) -> bool {
+		RecruitmentOrder const& first = recruitment_orders[a];
+		RecruitmentOrder const& second = recruitment_orders[b];
+		return first.priority != second.priority ? first.priority > second.priority : first.id < second.id;
+	});
+	for (const std::size_t index : waiting) {
+		CountryInstance& country = *recruitment_orders[index].country;
+		const std::int64_t left = get_recruit_limit_left(country);
+		std::uint32_t regiment_count = 1;
+		if (recruitment_orders[index].division_id != 0) {
+			regiment_count = 0;
+			for (RecruitmentOrder const& order : recruitment_orders) {
+				regiment_count += order.waiting && order.division_id == recruitment_orders[index].division_id && order.country == &country;
+			}
+		}
+		const std::uint32_t done = country.recruit_month == current_month ? country.recruited_this_month : 0;
+		// A division bigger than what is left waits for a month of its own (it starts alone when nothing was started yet)
+		if (left == 0 || (left > 0 && static_cast<std::int64_t>(regiment_count) > left && done > 0)) {
+			continue;
+		}
+		if (start_waiting_order(index)) {
+			count_recruited(country, regiment_count);
+		}
+	}
+}
+
+bool UnitInstanceManager::set_recruitment_priority(CountryInstance& country, const unique_id_t order_id, const std::uint32_t priority) {
+	const std::uint32_t new_priority = std::min(priority, RECRUITMENT_PRIORITY_MAX);
+	std::uint32_t division_id = 0;
+	bool found = false;
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.id == order_id && order.country == &country && !order.mobilisation) {
+			division_id = order.division_id;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		return false;
+	}
+	bool changed = false;
+	for (RecruitmentOrder& order : recruitment_orders) {
+		if (order.country == &country && (order.id == order_id || (division_id != 0 && order.division_id == division_id))
+			&& order.priority != new_priority) {
+			order.priority = new_priority;
+			changed = true;
+		}
+	}
+	return changed;
+}
+
+// ---- The mobilisation (docs/RECRUITMENT.md, "Мобилизация")
+
+bool UnitInstanceManager::is_mobilisation_pop_type(PopType const& pop_type) {
+	return !pop_type.can_be_recruited && !pop_type.is_slave && pop_type.strata.get_identifier() == "poor";
+}
+
+bool UnitInstanceManager::is_mobilisation_pop(CountryInstance const& country, Pop const& pop) {
+	return is_mobilisation_pop_type(pop.get_type()) && pop.get_size() > pop_size_t(0)
+		&& Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status());
+}
+
+std::int32_t UnitInstanceManager::get_mobilisation_days(CountryInstance const& country, ProvinceInstance const& province) const {
+	OpenVicWarDefines const& wd = *UnitInstanceGroup::war_defines;
+	const fixed_point_t reference_speed = wd.mobilisation_reference_speed.fixed();
+	fixed_point_t speed = reference_speed;
+	fixed_point_t rails_mult = fixed_point_t::_0;
+	if (country_defines != nullptr) {
+		if (country_defines->get_mobilization_speed_base() > fixed_point_t::_0) {
+			speed = country_defines->get_mobilization_speed_base();
+		}
+		rails_mult = std::max(fixed_point_t::_0, country_defines->get_mobilization_speed_rails_mult());
+	}
+	speed *= fixed_point_t::_1 + rails_mult * std::clamp(province.get_infrastructure_fraction(), fixed_point_t::_0, fixed_point_t::_1);
+	if (modifier_effect_cache != nullptr) {
+		if (modifier_effect_cache->get_mobilisation_speed_pct() != nullptr) {
+			speed *= std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_modifier_effect_value(*modifier_effect_cache->get_mobilisation_speed_pct()));
+		}
+		speed *= std::max(fixed_point_t::_0, get_effect_product(country, modifier_effect_cache->get_mobilisation_speed_mult()));
+	}
+	if (speed <= fixed_point_t::_0) {
+		return 3650;
+	}
+	const fixed_point_t days = fixed_point_t(wd.mobilisation_days) * reference_speed / speed;
+	return std::clamp<std::int32_t>(days.ceil<std::int32_t>(), 1, 3650);
+}
+
+Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& country) const {
+	Mobilisation mobilisation;
+	OpenVicWarDefines const& wd = *UnitInstanceGroup::war_defines;
+	mobilisation.men_per_regiment = static_cast<std::int32_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	// The share: the base of OpenVic and the mobilisation_size of the modifiers (the national values, the technologies of Vic2), times the
+	// mobilisation_size_pct of the technologies of OpenVic
+	fixed_point_t share = wd.mobilisation_pop_share.fixed();
+	fixed_point_t share_pct = fixed_point_t::_0;
+	if (modifier_effect_cache != nullptr) {
+		if (modifier_effect_cache->get_mobilisation_size_country() != nullptr) {
+			share += country.get_modifier_effect_value(*modifier_effect_cache->get_mobilisation_size_country());
+		}
+		if (modifier_effect_cache->get_mobilisation_size_tech() != nullptr) {
+			share += country.get_modifier_effect_value(*modifier_effect_cache->get_mobilisation_size_tech());
+		}
+		if (modifier_effect_cache->get_mobilisation_size_pct() != nullptr) {
+			share_pct = country.get_modifier_effect_value(*modifier_effect_cache->get_mobilisation_size_pct());
+		}
+	}
+	mobilisation.share = std::max(fixed_point_t::_0, share * std::max(fixed_point_t::_0, fixed_point_t::_1 + share_pct));
+	bool first_province = true;
+	for (ProvinceInstance const* province : country.get_owned_provinces()) {
+		if (province->get_controller() != &country) {
+			continue;
+		}
+		std::int64_t province_men = 0;
+		for (Pop const& pop : province->get_pops()) {
+			if (is_mobilisation_pop(country, pop)) {
+				province_men += type_safe::get(pop.get_size());
+			}
+		}
+		if (province_men <= 0) {
+			continue;
+		}
+		mobilisation.pop_men += province_men;
+		const std::int32_t days = get_mobilisation_days(country, *province);
+		mobilisation.days_min = first_province ? days : std::min(mobilisation.days_min, days);
+		mobilisation.days_max = first_province ? days : std::max(mobilisation.days_max, days);
+		first_province = false;
+	}
+	mobilisation.pool_men = static_cast<std::int64_t>((static_cast<std::int64_t>(mobilisation.share.get_raw_value()) * mobilisation.pop_men)
+		>> fixed_point_t::PRECISION);
+	if (mobilisation.pop_men > 0 && mobilisation.men_per_regiment > 0) {
+		const std::uint32_t min_regiments = country_defines != nullptr ? static_cast<std::uint32_t>(country_defines->get_min_mobilize_limit()) : 0;
+		mobilisation.pool_regiments = std::max(
+			min_regiments, static_cast<std::uint32_t>(mobilisation.pool_men / mobilisation.men_per_regiment)
+		);
+	}
+	for (ArmyInstance const& army : country.get_armies()) {
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.is_mobilised()) {
+				++mobilisation.regiments;
+				mobilisation.men += strength_men(regiment.get_strength());
+				mobilisation.full_men += strength_men(regiment.get_max_strength());
+			}
+		}
+	}
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.country == &country && order.mobilisation && order.regiment_type != nullptr) {
+			++mobilisation.pending_regiments;
+			mobilisation.pending_men += get_regiment_men(*order.regiment_type);
+			mobilisation.days_left = std::max(mobilisation.days_left, order.days_left);
+		}
+	}
+	mobilisation.free_men = mobilisation.pool_men - mobilisation.men - mobilisation.pending_men;
+	mobilisation.economy_impact = std::max(
+		fixed_point_t::_0, wd.mobilisation_economy_impact_base.fixed() + country.get_mobilisation_economy_impact()
+	);
+	// In ten-thousandths, so that the share of millions of men fits
+	const auto output_of = [&mobilisation, &wd](const std::int64_t taken_men) -> std::pair<fixed_point_t, fixed_point_t> {
+		if (mobilisation.pop_men <= 0 || taken_men <= 0) {
+			return { fixed_point_t::_0, fixed_point_t::_1 };
+		}
+		const fixed_point_t taken = fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(taken_men * 10000 / mobilisation.pop_men, 10000))) / 10000;
+		return { taken, std::max(wd.mobilisation_output_min_mult.fixed(), fixed_point_t::_1 - mobilisation.economy_impact * taken) };
+	};
+	const auto [taken_share, output_multiplier] = output_of(mobilisation.men + mobilisation.pending_men);
+	mobilisation.taken_share = taken_share;
+	mobilisation.output_multiplier = output_multiplier;
+	mobilisation.planned_output_multiplier =
+		output_of(static_cast<std::int64_t>(mobilisation.pool_regiments) * mobilisation.men_per_regiment).second;
+	return mobilisation;
+}
+
+std::string_view UnitInstanceManager::get_mobilise_block_reason(CountryInstance const& country) const {
+	if (country.is_rebel_country() || !country.exists()) {
+		return "Страна не может мобилизоваться";
+	}
+	if (country.is_mobilised()) {
+		return "Страна уже мобилизована";
+	}
+	if (!country.has_unlock(UNLOCK_MECHANIC_MOBILISATION)) {
+		return "Мобилизация ещё не открыта (технология «Генеральный штаб»)";
+	}
+	if (get_mobilisation(country).pool_regiments == 0) {
+		return "Нет бедного населения, из которого можно мобилизовать полки";
+	}
+	return {};
+}
+
+std::string_view UnitInstanceManager::get_demobilise_block_reason(CountryInstance const& country) const {
+	if (!country.is_mobilised()) {
+		return "Страна не мобилизована";
+	}
+	for (ArmyInstance const& army : country.get_armies()) {
+		if (!army.is_in_combat()) {
+			continue;
+		}
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.is_mobilised()) {
+				return "Мобилизованные полки в бою";
+			}
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::mobilise(CountryInstance& country) {
+	if (!get_mobilise_block_reason(country).empty() || unit_type_manager == nullptr) {
+		return false;
+	}
+	const Mobilisation mobilisation = get_mobilisation(country);
+	// The types: the cells of the first template of the country in their order (the regiments take them in turn), else the infantry
+	std::vector<RegimentType const*> types;
+	if (!country.get_division_templates().empty()) {
+		for (RegimentType const* type : template_regiment_types(*unit_type_manager, country.get_division_templates().front())) {
+			if (country.is_unit_type_unlocked(*type)) {
+				types.push_back(type);
+			}
+		}
+	}
+	if (types.empty()) {
+		RegimentType const* fallback = unit_type_manager->get_regiment_type_by_identifier("line_infantry");
+		if (fallback == nullptr || !country.is_unit_type_unlocked(*fallback)) {
+			fallback = nullptr;
+			RegimentType const* any = nullptr;
+			for (RegimentType const& type : unit_type_manager->get_regiment_types()) {
+				if (!country.is_unit_type_unlocked(type)) {
+					continue;
+				}
+				if (any == nullptr) {
+					any = &type;
+				}
+				if (fallback == nullptr && get_unit_category_scope(type) == "infantry") {
+					fallback = &type;
+				}
+			}
+			if (fallback == nullptr) {
+				fallback = any;
+			}
+		}
+		if (fallback == nullptr) {
+			return false;
+		}
+		types.push_back(fallback);
+	}
+	// Every pop of the pool gets the regiments of its share: the whole ones first, the rest by the largest remainder (the order of the pops on a tie)
+	struct Quota {
+		Pop* pop;
+		std::int64_t men;
+		std::uint32_t regiments;
+	};
+	std::vector<Quota> quotas;
+	const std::int64_t men_per_regiment = std::max<std::int64_t>(1, mobilisation.men_per_regiment);
+	std::uint32_t assigned = 0;
+	for (ProvinceInstance* province : country.get_owned_provinces()) {
+		if (province->get_controller() != &country) {
+			continue;
+		}
+		for (Pop const& pop : province->get_pops()) {
+			if (!is_mobilisation_pop(country, pop)) {
+				continue;
+			}
+			const std::int64_t men = (static_cast<std::int64_t>(mobilisation.share.get_raw_value()) * type_safe::get(pop.get_size()))
+				>> fixed_point_t::PRECISION;
+			Quota quota { province->find_pop_by_id(pop.id_in_province), men, static_cast<std::uint32_t>(men / men_per_regiment) };
+			assigned += quota.regiments;
+			quotas.push_back(quota);
+		}
+	}
+	if (quotas.empty()) {
+		return false;
+	}
+	if (assigned < mobilisation.pool_regiments) {
+		std::vector<std::size_t> order(quotas.size());
+		for (std::size_t i = 0; i < order.size(); ++i) {
+			order[i] = i;
+		}
+		std::stable_sort(order.begin(), order.end(), [&quotas, men_per_regiment](const std::size_t a, const std::size_t b) -> bool {
+			return quotas[a].men % men_per_regiment > quotas[b].men % men_per_regiment;
+		});
+		while (assigned < mobilisation.pool_regiments) {
+			for (const std::size_t i : order) {
+				if (assigned >= mobilisation.pool_regiments) {
+					break;
+				}
+				++quotas[i].regiments;
+				++assigned;
+			}
+		}
+	}
+	std::size_t next_type = 0;
+	for (Quota const& quota : quotas) {
+		ProvinceInstance& province = quota.pop->get_location();
+		const std::int32_t days = get_mobilisation_days(country, province);
+		for (std::uint32_t i = 0; i < quota.regiments; ++i) {
+			RegimentType const* const type = types[next_type++ % types.size()];
+			quota.pop->add_recruit();
+			RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, quota.pop, days, days };
+			order.mobilisation = true;
+			recruitment_orders.push_back(order);
+		}
+	}
+	country.set_mobilised(true);
+	country.mobilisation_war_seen = country.is_at_war();
+	country.mobilisation_peace_days = 0;
+	country.mobilisation_output_multiplier = get_mobilisation(country).output_multiplier;
+	return true;
+}
+
+bool UnitInstanceManager::demobilise(CountryInstance& country) {
+	if (!get_demobilise_block_reason(country).empty()) {
+		return false;
+	}
+	// The orders that are not ready: the pops get their men back
+	for (auto it = recruitment_orders.begin(); it != recruitment_orders.end();) {
+		if (it->country == &country && it->mobilisation) {
+			if (it->pop != nullptr) {
+				it->pop->release_recruit();
+			}
+			it = recruitment_orders.erase(it);
+		} else {
+			++it;
+		}
+	}
+	// The mobilised regiments are disbanded: their men go home (not a loss; what died today is already taken off the pops)
+	std::vector<ArmyInstance*> mobilised_armies;
+	for (ArmyInstance& army : country.get_armies()) {
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.is_mobilised()) {
+				mobilised_armies.push_back(&army);
+				break;
+			}
+		}
+	}
+	for (ArmyInstance* army : mobilised_armies) {
+		std::vector<RegimentInstance*> mobilised;
+		for (RegimentInstance& regiment : army->get_regiment_instances()) {
+			if (regiment.is_mobilised()) {
+				mobilised.push_back(&regiment);
+			}
+		}
+		// destroy_unit deletes the army with its last regiment
+		for (RegimentInstance* regiment : mobilised) {
+			destroy_unit(*regiment, *army);
+		}
+	}
+	country.set_mobilised(false);
+	country.mobilisation_war_seen = false;
+	country.mobilisation_peace_days = 0;
+	country.mobilisation_output_multiplier = fixed_point_t::_1;
+	return true;
+}
+
+void UnitInstanceManager::update_mobilisation(CountryInstance& country) {
+	if (!country.is_mobilised()) {
+		country.mobilisation_output_multiplier = fixed_point_t::_1;
+		return;
+	}
+	if (country.is_at_war()) {
+		country.mobilisation_war_seen = true;
+		country.mobilisation_peace_days = 0;
+	} else if (country.mobilisation_war_seen) {
+		// The peace: the men go home DEMOBILISE_DAYS after the last war (later if the mobilised regiments are still in a battle, with the rebels)
+		++country.mobilisation_peace_days;
+		if (country.mobilisation_peace_days >= UnitInstanceGroup::war_defines->demobilise_days && demobilise(country)) {
+			return;
+		}
+	}
+	country.mobilisation_output_multiplier = get_mobilisation(country).output_multiplier;
 }

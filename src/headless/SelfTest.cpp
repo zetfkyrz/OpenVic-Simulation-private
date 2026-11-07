@@ -37,6 +37,8 @@
 #include <openvic-simulation/population/PopDynamics.hpp>
 #include <openvic-simulation/population/PopulationGrowth.hpp>
 #include <openvic-simulation/military/Unlocks.hpp>
+#include <openvic-simulation/ai/CountryAI.hpp>
+#include <openvic-simulation/population/PopType.hpp>
 #include <openvic-simulation/research/ArmyResearch.hpp>
 #include <openvic-simulation/military/UnitEquipment.hpp>
 #include <openvic-simulation/military/UnitModifiers.hpp>
@@ -5509,6 +5511,297 @@ namespace {
 		}
 	}
 
+	// ---- the mobilisation (docs/RECRUITMENT.md, "Мобилизация"): the poor pops raise regiments out of the manpower of the soldiers, the losses of
+	// a mobilised regiment die in its pop, the demobilisation gives the men back (by hand, and by itself after the war), the AI mobilises when weaker
+
+	// The men of the poor pops of the mobilisation in the country (the pool base)
+	std::int64_t mobilisation_pop_men(CountryInstance const& country) {
+		std::int64_t men = 0;
+		for (ProvinceInstance const* province : country.get_owned_provinces()) {
+			for (Pop const& pop : province->get_pops()) {
+				if (UnitInstanceManager::is_mobilisation_pop_type(pop.get_type())) {
+					men += type_safe::get(pop.get_size());
+				}
+			}
+		}
+		return men;
+	}
+
+	std::size_t count_mobilised_regiments(CountryInstance const& country) {
+		std::size_t count = 0;
+		for (ArmyInstance const& army : country.get_armies()) {
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				count += regiment.is_mobilised();
+			}
+		}
+		return count;
+	}
+
+	void test_mobilisation(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		CountryInstance* country = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.is_at_war() || candidate.get_armies().empty()
+				|| candidate.get_owned_provinces().size() < 5) {
+				continue;
+			}
+			candidate.grant_unlock(UNLOCK_MECHANIC_MOBILISATION);
+			const Mobilisation pool = unit_manager.get_mobilisation(candidate);
+			if (pool.pool_regiments >= 3 && pool.pool_regiments <= 200) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO mobilisation: no country at peace with a pool of 3 to 200 regiments, not checked");
+			return;
+		}
+		const Manpower soldiers_before = unit_manager.get_manpower(*country);
+		const Mobilisation pool = unit_manager.get_mobilisation(*country);
+		fmt::println(
+			"TEST INFO mobilisation: {} poor {} men, share {:.4f}, pool {} men = {} regiments, {}-{} days, impact {:.2f}, planned output {:.3f}",
+			country->get_identifier(), pool.pop_men, static_cast<double>(pool.share), pool.pool_men, pool.pool_regiments, pool.days_min,
+			pool.days_max, static_cast<double>(pool.economy_impact), static_cast<double>(pool.planned_output_multiplier)
+		);
+		const std::size_t orders_before = unit_manager.get_recruitment_orders().size();
+		r.check(unit_manager.get_mobilise_block_reason(*country).empty() && unit_manager.mobilise(*country) && country->is_mobilised(),
+			"mobilisation: a country with the mechanic and poor pops mobilises", std::string { unit_manager.get_mobilise_block_reason(*country) });
+		std::size_t poor_orders = 0;
+		for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+			poor_orders += order.country == country && order.mobilisation && order.pop != nullptr
+				&& UnitInstanceManager::is_mobilisation_pop_type(order.pop->get_type()) && &order.pop->get_location() == order.province;
+		}
+		const Manpower soldiers_ordered = unit_manager.get_manpower(*country);
+		r.check(unit_manager.get_recruitment_orders().size() == orders_before + pool.pool_regiments && poor_orders == pool.pool_regiments
+				&& soldiers_ordered.queued_men == soldiers_before.queued_men && soldiers_ordered.free_men == soldiers_before.free_men,
+			"mobilisation: the regiments of the pool are ordered from the poor pops in their provinces, the manpower of the soldiers does not change",
+			fmt::format("{} orders of {} regiments, {} from poor pops; free soldiers {} -> {}", unit_manager.get_recruitment_orders().size() - orders_before,
+				pool.pool_regiments, poor_orders, soldiers_before.free_men, soldiers_ordered.free_men));
+		for (std::int32_t day = 0; day <= pool.days_max; ++day) {
+			im.force_tick_and_update();
+		}
+		const Mobilisation raised = unit_manager.get_mobilisation(*country);
+		bool linked = true;
+		for (ArmyInstance const& army : country->get_armies()) {
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				if (regiment.is_mobilised()) {
+					linked &= regiment.get_pop() != nullptr && UnitInstanceManager::is_mobilisation_pop_type(regiment.get_pop()->get_type());
+				}
+			}
+		}
+		const Manpower soldiers_raised = unit_manager.get_manpower(*country);
+		std::uint32_t regular = 0;
+		for (ArmyInstance const& army : country->get_armies()) {
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				regular += !regiment.is_mobilised();
+			}
+		}
+		r.check(raised.regiments == pool.pool_regiments && raised.pending_regiments == 0 && linked && soldiers_raised.regiments == regular,
+			"mobilisation: after the days of the provinces the mobilised regiments stand, linked to poor pops, out of the regiments of the soldiers",
+			fmt::format("{} of {} regiments ({} waiting), {} regular regiments of {} counted", raised.regiments, pool.pool_regiments,
+				raised.pending_regiments, soldiers_raised.regiments, regular));
+		r.check(country->manpower_combat_multiplier == fixed_point_t::_1 || soldiers_before.combat_multiplier < fixed_point_t::_1,
+			"mobilisation: the mobilised men do not put the army over the manpower of the soldiers",
+			fmt::format("multiplier {:.3f}", static_cast<double>(country->manpower_combat_multiplier)));
+		r.check(country->mobilisation_output_multiplier == raised.output_multiplier
+				&& (raised.economy_impact <= fixed_point_t::_0 || raised.output_multiplier < fixed_point_t::_1),
+			"mobilisation: while the men are away the RGOs and the factories of the country make less",
+			fmt::format("impact {:.2f}, taken {:.4f}, output {:.4f}", static_cast<double>(raised.economy_impact),
+				static_cast<double>(raised.taken_share), static_cast<double>(country->mobilisation_output_multiplier)));
+
+		// The losses of a mobilised regiment die in its poor pop, the soldiers do not lose a man
+		RegimentInstance* mobilised = nullptr;
+		for (ArmyInstance& army : country->get_armies()) {
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				if (mobilised == nullptr && regiment.is_mobilised() && regiment.get_pop() != nullptr && type_safe::get(regiment.get_pop()->get_size()) > 2000) {
+					mobilised = &regiment;
+				}
+			}
+		}
+		if (mobilised != nullptr) {
+			const std::int64_t pop_before = type_safe::get(mobilised->get_pop()->get_size());
+			const std::int64_t soldiers_men = unit_manager.get_manpower(*country).pop_men;
+			mobilised->take_damage(fixed_point_t::_0, fixed_point_t::_1);
+			unit_manager.apply_losses(*mobilised, *country);
+			r.check(type_safe::get(mobilised->get_pop()->get_size()) == pop_before - 1000 && unit_manager.get_manpower(*country).pop_men == soldiers_men,
+				"mobilisation: the losses of a mobilised regiment die in its poor pop, not in the soldiers",
+				fmt::format("pop {} -> {}, soldiers {} -> {}", pop_before, type_safe::get(mobilised->get_pop()->get_size()), soldiers_men,
+					unit_manager.get_manpower(*country).pop_men));
+		}
+
+		// The demobilisation: no mobilised regiment is left, the men are back (nobody dies), the economy is whole again
+		const std::int64_t poor_before = mobilisation_pop_men(*country);
+		std::size_t linked_regiments = 0;
+		for (ProvinceInstance const* province : country->get_owned_provinces()) {
+			for (Pop const& pop : province->get_pops()) {
+				if (UnitInstanceManager::is_mobilisation_pop_type(pop.get_type())) {
+					linked_regiments += pop.get_regiment_count();
+				}
+			}
+		}
+		const bool demobilised = unit_manager.demobilise(*country);
+		std::size_t linked_after = 0;
+		for (ProvinceInstance const* province : country->get_owned_provinces()) {
+			for (Pop const& pop : province->get_pops()) {
+				if (UnitInstanceManager::is_mobilisation_pop_type(pop.get_type())) {
+					linked_after += pop.get_regiment_count();
+				}
+			}
+		}
+		r.check(demobilised && !country->is_mobilised() && count_mobilised_regiments(*country) == 0 && mobilisation_pop_men(*country) == poor_before
+				&& linked_after + raised.regiments == linked_regiments && country->mobilisation_output_multiplier == fixed_point_t::_1,
+			"mobilisation: the demobilisation disbands the mobilised regiments, the men go back to their pops and nobody dies",
+			fmt::format("{} mobilised regiments left, poor {} -> {}, regiments linked to poor pops {} -> {}", count_mobilised_regiments(*country),
+				poor_before, mobilisation_pop_men(*country), linked_regiments, linked_after));
+
+		// The game action, and the demobilisation by itself DEMOBILISE_DAYS after a war
+		im.queue_game_action<set_mobilise_argument_t>(country->index, true);
+		im.force_tick_and_update();
+		r.check(country->is_mobilised(), "mobilisation: the game action set_mobilise mobilises");
+		country->mobilisation_war_seen = true; // as if a war had ended
+		const std::int32_t demobilise_days = im.definition_manager.get_define_manager().get_openvic_defines().war.demobilise_days;
+		for (std::int32_t day = 0; day <= demobilise_days; ++day) {
+			im.force_tick_and_update();
+		}
+		r.check(!country->is_mobilised() && count_mobilised_regiments(*country) == 0,
+			"mobilisation: DEMOBILISE_DAYS after the last war the country demobilises by itself",
+			fmt::format("{} days, mobilised {}", demobilise_days, country->is_mobilised()));
+	}
+
+	// The AI at war with fewer regiments than its enemy mobilises
+	void test_ai_mobilisation(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
+		CountryInstance* const turkey = im.get_country_instance_manager().get_country_instance_by_identifier("TUR");
+		if (russia == nullptr || turkey == nullptr) {
+			fmt::println("TEST INFO AI mobilisation: no Russia or Turkey, not checked");
+			return;
+		}
+		CountryInstance* weak = russia->get_regiment_count() < turkey->get_regiment_count() ? russia : turkey;
+		CountryInstance* strong = weak == russia ? turkey : russia;
+		if (!weak->is_at_war_with(*strong) && !war_manager.declare_war(im, *strong, *weak)) {
+			fmt::println("TEST INFO AI mobilisation: no war between Russia and Turkey, not checked");
+			return;
+		}
+		weak->grant_unlock(UNLOCK_MECHANIC_MOBILISATION);
+		strong->grant_unlock(UNLOCK_MECHANIC_MOBILISATION);
+		im.force_tick_and_update();
+		CountryAI::monthly_update(im);
+		r.check(!weak->is_ai() || weak->is_mobilised(), "AI mobilisation: the AI country at war with fewer regiments than its enemy mobilises",
+			fmt::format("{} {} regiments against {} {}", weak->get_identifier(), weak->get_regiment_count(), strong->get_identifier(),
+				strong->get_regiment_count()));
+		r.check(!strong->is_mobilised(), "AI mobilisation: the stronger side does not mobilise");
+	}
+
+	// The monthly limit of the recruitment (RECRUIT_MAX_REGIMENTS_PER_MONTH) and the priorities of the waiting orders
+	void test_recruitment_limit(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		OpenVicWarDefines& war = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
+		const std::int32_t limit_before = war.recruit_max_regiments_per_month;
+		// The first day of the game fits the armies of the start to the manpower and gives the stockpile: the country is chosen after it (the day also
+		// sets the month of the limit)
+		im.force_tick_and_update();
+		CountryInstance* country = nullptr;
+		RegimentType const* type = nullptr;
+		Pop* pop = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || candidate.is_at_war() || candidate.get_capital() == nullptr
+				|| unit_manager.get_manpower(candidate).available_regiments < 6) {
+				continue;
+			}
+			for (RegimentType const& regiment_type : im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+				if (candidate.is_unit_type_unlocked(regiment_type)) {
+					type = &regiment_type;
+					break;
+				}
+			}
+			if (type == nullptr) {
+				continue;
+			}
+			for (auto const& [good, quantity] : type->get_build_cost()) {
+				candidate.get_good_data(*good).stockpile_amount += quantity * 1000; // the armies eat these goods every day too
+			}
+			for (Pop const& candidate_pop : candidate.get_capital()->get_pops()) {
+				if (unit_manager.get_recruitment_block_reason(candidate, *type, *candidate.get_capital(), candidate_pop).empty()) {
+					pop = candidate.get_capital()->find_pop_by_id(candidate_pop.id_in_province);
+					break;
+				}
+			}
+			if (pop != nullptr) {
+				country = &candidate;
+				break;
+			}
+			type = nullptr;
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO recruitment limit: no country at peace with 6 free regiments and a pop of soldiers in its capital, not checked");
+			return;
+		}
+		war.recruit_max_regiments_per_month = 2;
+		ProvinceInstance& capital = *country->get_capital();
+		const auto order_of = [&unit_manager](const unique_id_t id) -> RecruitmentOrder const* {
+			for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+				if (order.id == id) {
+					return &order;
+				}
+			}
+			return nullptr;
+		};
+		const std::int64_t left = unit_manager.get_recruitment_limit_left(*country);
+		std::vector<unique_id_t> ids;
+		std::string refused;
+		for (int i = 0; i < 5; ++i) {
+			if (unit_manager.start_recruitment(*country, *type, capital, *pop)) {
+				ids.push_back(unit_manager.get_recruitment_orders().back().id);
+			} else if (refused.empty()) {
+				refused = std::string { unit_manager.get_recruitment_block_reason(*country, *type, capital, *pop) };
+			}
+		}
+		std::size_t started = 0;
+		std::size_t waiting = 0;
+		for (const unique_id_t id : ids) {
+			RecruitmentOrder const* const order = order_of(id);
+			started += order != nullptr && !order->waiting;
+			waiting += order != nullptr && order->waiting;
+		}
+		r.check(ids.size() == 5 && left >= 0 && started == static_cast<std::size_t>(left) && waiting == 5 - static_cast<std::size_t>(left),
+			"recruitment limit: over RECRUIT_MAX_REGIMENTS_PER_MONTH the orders wait in the queue and take nothing",
+			fmt::format("{} {} orders, {} started, {} waiting, {} left of the month; refused: {}", country->get_identifier(), ids.size(), started,
+				waiting, left, refused));
+		// The newest waiting order gets the urgent priority: in the next month it starts first, then the oldest one; the third one waits
+		std::vector<unique_id_t> waiting_ids;
+		for (const unique_id_t id : ids) {
+			if (RecruitmentOrder const* const order = order_of(id); order != nullptr && order->waiting) {
+				waiting_ids.push_back(id);
+			}
+		}
+		if (waiting_ids.size() >= 3) {
+			im.queue_game_action<set_recruitment_priority_argument_t>(country->index, waiting_ids.back(), std::uint32_t { 2 });
+			const std::int32_t month = unit_manager.current_month;
+			// The stockpile sells what the country does not need: the goods of the regiments are put back before every day
+			for (int day = 0; day < 40 && unit_manager.current_month == month; ++day) {
+				for (auto const& [good, quantity] : type->get_build_cost()) {
+					fixed_point_t& stockpile = country->get_good_data(*good).stockpile_amount;
+					stockpile = std::max(stockpile, quantity * 10);
+				}
+				im.force_tick_and_update();
+			}
+			RecruitmentOrder const* const urgent = order_of(waiting_ids.back());
+			RecruitmentOrder const* const oldest = order_of(waiting_ids.front());
+			RecruitmentOrder const* const middle = order_of(waiting_ids[1]);
+			r.check(urgent != nullptr && !urgent->waiting && urgent->priority == 2 && oldest != nullptr && !oldest->waiting && middle != nullptr
+					&& middle->waiting,
+				"recruitment limit: in the next month the waiting orders start by their priority, then the older ones",
+				fmt::format("urgent waits {}, oldest waits {}, middle waits {}; month {} -> {}, left {}, reason now: {}", urgent != nullptr && urgent->waiting,
+					oldest != nullptr && oldest->waiting, middle != nullptr && middle->waiting, month, unit_manager.current_month,
+					unit_manager.get_recruitment_limit_left(*country), unit_manager.get_recruitment_block_reason(*country, *type, capital, *pop)));
+		}
+		for (const unique_id_t id : ids) {
+			unit_manager.cancel_recruitment(*country, id);
+		}
+		war.recruit_max_regiments_per_month = limit_before;
+	}
+
 	// ---- the state of the executed plan (P5c): no war with the countries of the front is told to the player, with the war it is something else
 
 	void test_plan_status(Results& r, InstanceManager& im) {
@@ -7263,6 +7556,17 @@ namespace {
 		test_naval_invasion(r, *im); // ticks days, a war of its own
 		test_ai_marshals(r, *im); // ticks days, a war of its own
 		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
+		game.end();
+
+		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)
+		im = game.start();
+		r.check(im != nullptr, "mobilisation: the instance starts");
+		if (im == nullptr) {
+			return;
+		}
+		test_recruitment_limit(r, *im); // ticks up to a month
+		test_mobilisation(r, *im); // ticks the days of the mobilisation and DEMOBILISE_DAYS
+		test_ai_mobilisation(r, *im); // a war of its own
 		game.end();
 
 		// ---- the defines hash does not change while playing

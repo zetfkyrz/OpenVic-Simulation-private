@@ -178,12 +178,20 @@ namespace {
 		}
 	}
 
-	void recruit(InstanceManager& instance_manager, CountryInstance& country) {
-		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+	// The regiments of the country that are not mobilised (the mobilised ones go home after the war)
+	size_t regular_regiment_count(CountryInstance const& country) {
 		size_t regiments = 0;
 		for (ArmyInstance const& army : country.get_armies()) {
-			regiments += army.get_unit_count();
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				regiments += !regiment.is_mobilised();
+			}
 		}
+		return regiments;
+	}
+
+	void recruit(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+		const size_t regiments = regular_regiment_count(country);
 		const size_t wanted = std::max<size_t>(
 			static_cast<size_t>(ai.min_war_regiments),
 			static_cast<size_t>(ai.war_regiments_per_province.of_int(static_cast<std::int64_t>(country.get_owned_provinces().size())))
@@ -193,6 +201,10 @@ namespace {
 		}
 
 		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		// Over the monthly limit of the recruitment (ov_war.RECRUIT_MAX_REGIMENTS_PER_MONTH) the AI does not queue orders that would wait
+		if (unit_manager.get_recruitment_limit_left(country) == 0) {
+			return;
+		}
 		// Whole divisions by the first template: the capital first, then the other provinces of the country (the soldiers come from the whole
 		// country, the province is where the division appears)
 		if (ai.ai_divisions_per_month > 0 && !country.get_division_templates().empty()) {
@@ -271,7 +283,10 @@ namespace {
 				continue;
 			}
 			for (RegimentInstance& regiment : army.get_regiment_instances()) {
-				regiments.emplace_back(&regiment, &army);
+				// The mobilised regiments are out of the manpower of the soldiers (they go home with the demobilisation)
+				if (!regiment.is_mobilised()) {
+					regiments.emplace_back(&regiment, &army);
+				}
 			}
 		}
 		std::stable_sort(regiments.begin(), regiments.end(), [](auto const& a, auto const& b) -> bool {
@@ -284,6 +299,27 @@ namespace {
 			}
 			over -= (regiment->get_strength() * UnitInstanceGroup::war_defines->template_men_per_strength).floor<std::int64_t>();
 			unit_manager.destroy_unit(*regiment, *army);
+		}
+	}
+
+	// At war the AI mobilises when its regiments (not mobilised) are fewer than AI_MOBILISE_RATIO x the regiments of its enemies; the peace demobilises
+	// it by itself (UnitInstanceManager::update_mobilisation, DEMOBILISE_DAYS after the last war)
+	void mobilise_if_weaker(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicWarDefines const* const wd = UnitInstanceGroup::war_defines;
+		if (wd == nullptr || wd->ai_mobilise == 0 || country.is_mobilised() || !country.is_at_war()) {
+			return;
+		}
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		if (!unit_manager.get_mobilise_block_reason(country).empty()) {
+			return;
+		}
+		std::int64_t enemy_regiments = 0;
+		for (CountryInstance const& enemy : country.get_war_enemies()) {
+			enemy_regiments += static_cast<std::int64_t>(enemy.get_regiment_count());
+		}
+		const std::int64_t own = static_cast<std::int64_t>(regular_regiment_count(country));
+		if (own * Rate::DENOMINATOR < enemy_regiments * wd->ai_mobilise_ratio.numerator && unit_manager.mobilise(country)) {
+			SPDLOG_INFO("AI: {} mobilises ({} regiments against {})", country.get_identifier(), own, enemy_regiments);
 		}
 	}
 
@@ -365,6 +401,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 		colonise(instance_manager, country);
 
 		if (country.is_at_war()) {
+			mobilise_if_weaker(instance_manager, country);
 			recruit(instance_manager, country);
 		} else {
 			disband_over_manpower(instance_manager, country);

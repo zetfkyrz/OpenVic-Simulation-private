@@ -1014,7 +1014,8 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
 	fmt::println(file, "    --dump-supply-goods : Print the SUPPLY_GOOD lines at the start and after the days of -e: the world market and the needs of the supply goods of the regiments.");
-	fmt::println(file, "    --dump-manpower : Print the MANPOWER lines at the start and after the days of -e: the manpower of the countries with the biggest armies.");
+	fmt::println(file, "    --dump-manpower : Print the MANPOWER lines at the start and after the days of -e: the manpower of the countries with the biggest armies,");
+	fmt::println(file, "                      and their MOBILISATION lines (the pool of the poor pops, the regiments, the days, the output while mobilised).");
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
@@ -1485,6 +1486,15 @@ static void run_manpower_dump(InstanceManager& instance_manager, std::string_vie
 			label, country->get_identifier(), manpower.pop_men, manpower.max_men, manpower.army_men, manpower.army_full_men, manpower.regiments,
 			manpower.free_men, static_cast<double>(manpower.over_share), static_cast<double>(country->manpower_combat_multiplier),
 			country->get_armies().size(), overloaded, static_cast<double>(worst)
+		);
+		// The mobilisation pool (docs/RECRUITMENT.md, "Мобилизация"): the poor pops, the share, the regiments, the days, the output while mobilised
+		const Mobilisation mobilisation = unit_manager.get_mobilisation(*country);
+		fmt::println(
+			"MOBILISATION {} {:<4} poor={:>9} share={:.4f} pool={:>8} pool_regiments={:>4} days={}-{} impact={:.2f} output={:.3f} mobilised={} regiments={} pending={}",
+			label, country->get_identifier(), mobilisation.pop_men, static_cast<double>(mobilisation.share), mobilisation.pool_men,
+			mobilisation.pool_regiments, mobilisation.days_min, mobilisation.days_max, static_cast<double>(mobilisation.economy_impact),
+			static_cast<double>(country->is_mobilised() ? mobilisation.output_multiplier : mobilisation.planned_output_multiplier),
+			country->is_mobilised() ? 1 : 0, mobilisation.regiments, mobilisation.pending_regiments
 		);
 	}
 }
