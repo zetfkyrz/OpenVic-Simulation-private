@@ -296,11 +296,20 @@ namespace OpenVic {
 	/* the defence times 1 - OVER_MANPOWER_PENALTY x the share over it, not below OVER_MANPOWER_MIN_MULT; the new men of the regiments come out of */ \
 	/* the free manpower and cost REINFORCE_GOODS_SHARE of the build cost of the regiment for its share of the strength; the armies of the start */ \
 	/* over the maximum start weaker, at the maximum (START_MANPOWER_FIT); an AI country over it at peace disbands its weakest regiments */ \
-	/* The war exhaustion (docs/WAR_ASSUMPTIONS.md): every day at war a country gets WAR_EXHAUSTION_PER_LOSS_SHARE points for the share of its manpower */ \
-	/* that died that day (times 1 + war_exhaustion of the technologies), WAR_EXHAUSTION_OCCUPATION_PER_DAY for the share of its population under */ \
-	/* the enemy and WAR_EXHAUSTION_BLOCKADE_PER_DAY for the share of its ports blockaded (the total_occupation, total_blockaded of Vic2); every month */ \
-	/* the war_exhaustion of the modifiers (at peace -1); at most max_war_exhaustion (100 at war, 50 at peace) */ \
-	FIXED(WAR_EXHAUSTION_PER_LOSS_SHARE, war_exhaustion_per_loss_share, fixed_point_t(100), 0, 10000) \
+	/* The war exhaustion (docs/WAR_ASSUMPTIONS.md, section 8; decision of the owner 2026-11-07): every day at war a country gets */ \
+	/* WAR_EXHAUSTION_PER_POPULATION_LOSS points for the share of its population that died in its armies that day (1 point for 0.33 %), times */ \
+	/* 1 + war_exhaustion of the technologies, and WAR_EXHAUSTION_PER_PRESTIGE for every point of prestige it lost in battles; a lost battle costs */ \
+	/* BATTLE_LOST_PRESTIGE_PER_REGIMENT prestige for every regiment of the country in it (the laws will change it). The occupation and the blockade */ \
+	/* (WAR_EXHAUSTION_OCCUPATION_PER_DAY, WAR_EXHAUSTION_BLOCKADE_PER_DAY for the whole country) are 0 for now. Every month the war_exhaustion of */ \
+	/* the modifiers (at peace -1); at most max_war_exhaustion (100 at war, 50 at peace) and before WAR_EXHAUSTION_EARLY_UNTIL_YEAR at most */ \
+	/* WAR_EXHAUSTION_EARLY_MAX (the reforms and the technologies will make it grow faster later). A point of it takes WAR_EXHAUSTION_EFFECT_SCALE */ \
+	/* of the effects of the war_exhaustion modifier of Vic2 (factory and RGO throughput -1 % a point: -0.5 % a point, -50 % at 100) */ \
+	FIXED(WAR_EXHAUSTION_PER_POPULATION_LOSS, war_exhaustion_per_population_loss, fixed_point_t(300), 0, 1000000) \
+	FIXED(WAR_EXHAUSTION_PER_PRESTIGE, war_exhaustion_per_prestige, fixed_point_t(1), 0, 1000) \
+	FIXED(BATTLE_LOST_PRESTIGE_PER_REGIMENT, battle_lost_prestige_per_regiment, fixed_point_t(1) / 100, 0, 100) \
+	FIXED(WAR_EXHAUSTION_EARLY_MAX, war_exhaustion_early_max, fixed_point_t(25), 0, 1000) \
+	INT(WAR_EXHAUSTION_EARLY_UNTIL_YEAR, war_exhaustion_early_until_year, 1850, 0, 3000) \
+	RATE(WAR_EXHAUSTION_EFFECT_SCALE, war_exhaustion_effect_scale, Rate(50, 100), 0, 10) \
 	/* An AI ally joins a war it is called into while its war exhaustion is at most CALL_ALLY_MAX_EXHAUSTION (and it fights no other war); an AI country */ \
 	/* that does not lead its side asks for a separate peace once its war exhaustion is SEPARATE_PEACE_AI_TIREDNESS of its maximum */ \
 	FIXED(CALL_ALLY_MAX_EXHAUSTION, call_ally_max_exhaustion, fixed_point_t(25), 0, 1000) \
@@ -310,10 +319,10 @@ namespace OpenVic {
 	FIXED(JUSTIFY_WAR_INFAMY, justify_war_infamy, fixed_point_t(2), 0, 100) \
 	INT(CASUS_BELLI_DAYS, casus_belli_days, 365, 1, 36500) \
 	FIXED(NO_CB_WAR_INFAMY, no_cb_war_infamy, fixed_point_t(5), 0, 100) \
-	FIXED(NO_CB_WAR_EXHAUSTION, no_cb_war_exhaustion, fixed_point_t(10), 0, 100) \
+	FIXED(NO_CB_WAR_EXHAUSTION, no_cb_war_exhaustion, fixed_point_t(5), 0, 100) \
 	RATE(SEPARATE_PEACE_AI_TIREDNESS, separate_peace_ai_tiredness, Rate(50, 100), 0, 1) \
-	FIXED(WAR_EXHAUSTION_OCCUPATION_PER_DAY, war_exhaustion_occupation_per_day, fixed_point_t(5) / 100, 0, 100) \
-	FIXED(WAR_EXHAUSTION_BLOCKADE_PER_DAY, war_exhaustion_blockade_per_day, fixed_point_t(1) / 2, 0, 100) \
+	FIXED(WAR_EXHAUSTION_OCCUPATION_PER_DAY, war_exhaustion_occupation_per_day, fixed_point_t::_0, 0, 100) \
+	FIXED(WAR_EXHAUSTION_BLOCKADE_PER_DAY, war_exhaustion_blockade_per_day, fixed_point_t::_0, 0, 100) \
 	RATE(MANPOWER_BASE_BONUS, manpower_base_bonus, Rate(10, 100), 0, 10) \
 	RATE(MANPOWER_WAR_BONUS, manpower_war_bonus, Rate(10, 100), 0, 10) \
 	RATE(OVER_MANPOWER_PENALTY, over_manpower_penalty, Rate(1, 1), 0, 100) \

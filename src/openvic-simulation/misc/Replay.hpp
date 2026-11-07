@@ -112,7 +112,9 @@ namespace OpenVic {
 		//     country that does not lead its side (game action separate_peace; a tired AI country asks for it)
 		// 66: the justification of a war (JUSTIFY_WAR_DAYS, then a casus belli; a war without one costs infamy and war exhaustion), the AI justifies
 		//     before it declares, the infamy changes every month (badboy of the modifiers)
-		inline constexpr int SIMULATION_VERSION = 66;
+		// 67: the war exhaustion from the dead for the population (1 point for 0.1 %) and from the prestige of the lost battles (0.01 a regiment), at most
+		//     25 before 1850, a point takes 0.5 % of the output; the occupation and the blockade give none for now
+		inline constexpr int SIMULATION_VERSION = 67;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

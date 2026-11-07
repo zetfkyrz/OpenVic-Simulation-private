@@ -1271,6 +1271,22 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 					leader->add_prestige(wd.leader_victory_prestige.fixed());
 				}
 			}
+			// A lost battle costs every country of the losers BATTLE_LOST_PRESTIGE_PER_REGIMENT prestige for each of its regiments in it (and war exhaustion)
+			std::vector<std::pair<CountryInstance*, std::int32_t>> loser_countries;
+			for (BattleUnit const& unit : loser.units) {
+				CountryInstance* const country = &unit.army->get_country();
+				auto it = std::find_if(loser_countries.begin(), loser_countries.end(), [country](auto const& entry) -> bool { return entry.first == country; });
+				if (it == loser_countries.end()) {
+					loser_countries.emplace_back(country, static_cast<std::int32_t>(unit.stats->regiments));
+				} else {
+					it->second += static_cast<std::int32_t>(unit.stats->regiments);
+				}
+			}
+			for (auto const& [country, regiments] : loser_countries) {
+				const fixed_point_t lost = wd.battle_lost_prestige_per_regiment * std::max(1, regiments);
+				country->add_prestige(-lost);
+				country->war_prestige_lost_today += lost;
+			}
 			for (ArmyInstance* army : loser.armies) {
 				if (LeaderInstance* const leader = army->get_leader()) {
 					leader->add_prestige(-wd.leader_defeat_prestige.fixed());
@@ -2319,20 +2335,24 @@ void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists() || country.is_rebel_country()) {
 			country.war_losses_today = 0;
+			country.war_prestige_lost_today = fixed_point_t::_0;
 			continue;
 		}
 		fixed_point_t delta = fixed_point_t::_0;
 		if (country.is_at_war()) {
-			// The dead of the day for the manpower of the country (the technologies with war_exhaustion make it smaller)
-			if (country.war_losses_today > 0) {
-				const std::int64_t max_men = std::max<std::int64_t>(1, unit_manager.get_manpower(country).max_men);
-				fixed_point_t battles = fixed_point_t::_1;
-				if (cache.get_war_exhaustion_from_battles() != nullptr) {
-					battles = std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_modifier_effect_value(*cache.get_war_exhaustion_from_battles()));
-				}
-				const fixed_point_t lost_share = fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(country.war_losses_today * 10000 / max_men, 10000))) / 10000;
-				delta += wd.war_exhaustion_per_loss_share * lost_share * battles;
+			// The dead of the day for the population of the country (the technologies with war_exhaustion make it smaller), the prestige lost
+			fixed_point_t battles = fixed_point_t::_1;
+			if (cache.get_war_exhaustion_from_battles() != nullptr) {
+				battles = std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_modifier_effect_value(*cache.get_war_exhaustion_from_battles()));
 			}
+			if (country.war_losses_today > 0) {
+				const std::int64_t population = std::max<std::int64_t>(1, static_cast<std::int64_t>(type_safe::get(country.get_total_population())));
+				// In millionths, so that the dead of a day of a country of millions are not lost
+				const fixed_point_t lost_share = fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(country.war_losses_today * 1000000 / population, 1000000)))
+					/ 1000000;
+				delta += wd.war_exhaustion_per_population_loss * lost_share * battles;
+			}
+			delta += wd.war_exhaustion_per_prestige * country.war_prestige_lost_today * battles;
 			// The population under the enemy and the blockade
 			std::int64_t population = 0, occupied = 0;
 			for (ProvinceInstance const* province : country.get_owned_provinces()) {
@@ -2354,7 +2374,12 @@ void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
 		if (delta != fixed_point_t::_0) {
 			country.change_war_exhaustion(delta);
 		}
+		// The early years of the game: the war exhaustion stays below WAR_EXHAUSTION_EARLY_MAX
+		if (instance_manager.get_today().get_year() < wd.war_exhaustion_early_until_year && country.get_war_exhaustion() > wd.war_exhaustion_early_max) {
+			country.change_war_exhaustion(wd.war_exhaustion_early_max - country.get_war_exhaustion());
+		}
 		country.war_losses_today = 0;
+		country.war_prestige_lost_today = fixed_point_t::_0;
 	}
 }
 

@@ -1868,7 +1868,11 @@ void CountryInstance::update_modifier_sum(Date today, StaticModifierCache const&
 	if (is_disarmed()) {
 		modifier_sum.add_modifier(static_modifier_cache.get_disarming());
 	}
-	modifier_sum.add_modifier(static_modifier_cache.get_war_exhaustion(), war_exhaustion);
+	// A point of war exhaustion takes WAR_EXHAUSTION_EFFECT_SCALE of the effects of the modifier of Vic2 (docs/WAR_ASSUMPTIONS.md, section 8)
+	modifier_sum.add_modifier(
+		static_modifier_cache.get_war_exhaustion(),
+		UnitInstanceGroup::war_defines != nullptr ? UnitInstanceGroup::war_defines->war_exhaustion_effect_scale.of(war_exhaustion) : war_exhaustion
+	);
 	modifier_sum.add_modifier(static_modifier_cache.get_infamy(), infamy.get_untracked());
 	modifier_sum.add_modifier(static_modifier_cache.get_literacy(), get_average_literacy());
 	modifier_sum.add_modifier(static_modifier_cache.get_plurality(), plurality.get_untracked());
