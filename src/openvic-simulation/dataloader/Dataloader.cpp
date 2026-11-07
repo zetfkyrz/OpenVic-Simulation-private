@@ -611,13 +611,16 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 		}
 	}
 	{
-		// The regiment types of Vic2 are the armies of 1836: their soldiers eat grain, the world has almost no canned food then
-		// (docs/MILITARY_SUPPLY.md; the types of OpenVic say what they eat in their files)
+		// The regiment types of Vic2 are the armies of 1836: their soldiers eat grain and fish (ARMY_RATION_FISH_SHARE of it fish), the world has
+		// almost no canned food then (docs/MILITARY_SUPPLY.md; the types of OpenVic say what they eat in their files)
 		GoodDefinitionManager const& goods = definition_manager.get_economy_manager().get_good_definition_manager();
 		GoodDefinition const* const canned_food = goods.get_good_definition_by_identifier("canned_food");
 		GoodDefinition const* const grain = goods.get_good_definition_by_identifier("grain");
-		if (canned_food != nullptr && grain != nullptr) {
-			unit_type_manager.replace_vic2_regiment_good(*canned_food, *grain);
+		GoodDefinition const* const fish = goods.get_good_definition_by_identifier("fish");
+		if (canned_food != nullptr && grain != nullptr && fish != nullptr) {
+			const fixed_point_t fish_share = definition_manager.get_define_manager().get_openvic_defines().economy.army_ration_fish_share.fixed();
+			const std::pair<GoodDefinition const*, fixed_point_t> rations[] = { { grain, fixed_point_t::_1 - fish_share }, { fish, fish_share } };
+			unit_type_manager.replace_vic2_regiment_good(*canned_food, rations);
 		}
 	}
 
@@ -1315,8 +1318,17 @@ bool Dataloader::load_defines(
 	}
 	{
 		OpenVicEconomyDefines const& openvic_economy = definition_manager.get_define_manager().get_openvic_defines().economy;
-		if (GoodDefinition const* const fish = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("fish")) {
-			definition_manager.get_economy_manager().get_production_type_manager().scale_rgo_output(*fish, openvic_economy.fish_output_multiplier);
+		GoodDefinitionManager const& good_definitions = definition_manager.get_economy_manager().get_good_definition_manager();
+		ProductionTypeManager& production_types = definition_manager.get_economy_manager().get_production_type_manager();
+		for (auto const& [identifier, multiplier] : {
+			std::pair { std::string_view { "fish" }, openvic_economy.fish_output_multiplier },
+			std::pair { std::string_view { "grain" }, openvic_economy.grain_output_multiplier },
+			std::pair { std::string_view { "wool" }, openvic_economy.wool_output_multiplier },
+			std::pair { std::string_view { "cattle" }, openvic_economy.cattle_output_multiplier },
+		}) {
+			if (GoodDefinition const* const good = good_definitions.get_good_definition_by_identifier(identifier)) {
+				production_types.scale_rgo_output(*good, multiplier);
+			}
 		}
 		definition_manager.get_economy_manager().get_building_type_manager().set_wood_rules(
 			openvic_economy.lumber_per_cement, fixed_point_t(openvic_economy.timber_per_cement_building)

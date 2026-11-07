@@ -170,7 +170,7 @@ void UnitType::scale_good(GoodDefinition const& good, const fixed_point_t share)
 	}
 }
 
-void UnitType::replace_good(GoodDefinition const& from, GoodDefinition const& to) {
+void UnitType::replace_good(GoodDefinition const& from, std::span<const std::pair<GoodDefinition const*, fixed_point_t>> to) {
 	const auto move_amount = [&from, &to](fixed_point_map_t<GoodDefinition const*>& goods) -> void {
 		auto it = goods.find(&from);
 		if (it == goods.end()) {
@@ -178,22 +178,32 @@ void UnitType::replace_good(GoodDefinition const& from, GoodDefinition const& to
 		}
 		const fixed_point_t quantity = it->second;
 		goods.erase(it);
-		if (auto target = goods.find(&to); target != goods.end()) {
-			target.value() += quantity;
-		} else {
-			goods.emplace(&to, quantity);
+		for (auto const& [good, share] : to) {
+			if (auto target = goods.find(good); target != goods.end()) {
+				target.value() += quantity * share;
+			} else {
+				goods.emplace(good, quantity * share);
+			}
 		}
 	};
 	move_amount(build_cost);
 	move_amount(supply_cost);
-	for (supply_item_t& item : supply_items) {
-		if (item.good == &from) {
-			item.good = &to;
+	const auto item = std::find_if(supply_items.begin(), supply_items.end(), [&from](supply_item_t const& entry) -> bool { return entry.good == &from; });
+	if (item != supply_items.end()) {
+		const supply_item_t replaced = *item;
+		supply_items.erase(item);
+		for (auto const& [good, share] : to) {
+			auto existing = std::find_if(supply_items.begin(), supply_items.end(), [good](supply_item_t const& entry) -> bool { return entry.good == good; });
+			if (existing != supply_items.end()) {
+				existing->construction_amount += replaced.construction_amount * share;
+			} else {
+				supply_items.push_back({ good, replaced.construction_amount * share, replaced.consumable, replaced.engine_fuel });
+			}
 		}
 	}
 }
 
-void UnitTypeManager::replace_vic2_regiment_good(GoodDefinition const& from, GoodDefinition const& to) {
+void UnitTypeManager::replace_vic2_regiment_good(GoodDefinition const& from, std::span<const std::pair<GoodDefinition const*, fixed_point_t>> to) {
 	for (RegimentType const& regiment_type : get_regiment_types()) {
 		if (!regiment_type.ov.is_ov) {
 			const_cast<RegimentType&>(regiment_type).replace_good(from, to); // the registry owns the types non-const

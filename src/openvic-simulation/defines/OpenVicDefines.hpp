@@ -563,6 +563,8 @@ namespace OpenVic {
 	/* The canned food the national stockpile does not have is replaced by grain, this many grain for a can (the grain feeds half as well; */ \
 	/* the government buys the grain for it), 0: no replacement */ \
 	FIXED(CANNED_FOOD_GRAIN_SUBSTITUTE, canned_food_grain_substitute, fixed_point_t(2), 0, 100) \
+	/* The regiment types of Vic2 eat grain and fish instead of their canned food: this share of it is fish (8 grain and 2 fish for 10 cans) */ \
+	RATE(ARMY_RATION_FISH_SHARE, army_ration_fish_share, Rate(20, 100), 0, 1) \
 	RATE(ARMY_SUPPLY_DURABLE_SHARE, army_supply_durable_share, Rate(1, 100), 0, 10) \
 	RATE(ARMY_SUPPLY_CONSUMABLE_SHARE, army_supply_consumable_share, Rate(100, 100), 0, 10) \
 	RATE(NAVY_SUPPLY_DURABLE_SHARE, navy_supply_durable_share, Rate(1, 100), 0, 10) \
@@ -627,7 +629,11 @@ namespace OpenVic {
 	/* (EXPANSION_MIN_EMPLOYMENT) in every one of the months since the last check */ \
 	INT(EXPANSION_CHECK_MONTHS, expansion_check_months, 3, 1, 120) \
 	/* The output of the fishing grounds (the fish RGO) of the whole world is multiplied by this once after the loading: fish was always cheap, 1 = the game as it is */ \
-	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(2), 0.1, 20) \
+	/* (2.2: twice, and 10 % more for the rations of the armies); the same for the grain, the wool and the cattle (10 % more, decision of the owner 2026-11-07) */ \
+	FIXED(FISH_OUTPUT_MULTIPLIER, fish_output_multiplier, fixed_point_t(22) / 10, 0.1, 20) \
+	FIXED(GRAIN_OUTPUT_MULTIPLIER, grain_output_multiplier, fixed_point_t(11) / 10, 0.1, 20) \
+	FIXED(WOOL_OUTPUT_MULTIPLIER, wool_output_multiplier, fixed_point_t(11) / 10, 0.1, 20) \
+	FIXED(CATTLE_OUTPUT_MULTIPLIER, cattle_output_multiplier, fixed_point_t(11) / 10, 0.1, 20) \
 	/* Every ship has this much lumber in its build cost for each piece of the rest of the cost (clipper_convoy, artillery...): man-of-war 25 pieces x 4 = 100 lumber, */ \
 	/* and it needs 1 % of it every month (NAVY_SUPPLY_DURABLE_SHARE). 0 = the ships need no lumber */ \
 	FIXED(SHIP_LUMBER_PER_PIECE, ship_lumber_per_piece, fixed_point_t(4), 0, 100) \

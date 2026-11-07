@@ -4575,10 +4575,15 @@ namespace {
 		ProductionType const* const wharf = fish == nullptr ? nullptr : definitions.get_economy_manager().get_production_type_manager().get_good_to_rgo_production_type(*fish);
 		const fixed_point_t multiplier = definitions.get_define_manager().get_openvic_defines().economy.fish_output_multiplier;
 		r.check(wharf != nullptr && near(wharf->base_output_quantity, fixed_point_t(22) / 10 * multiplier, fixed_point_t(1) / 1000),
-			"fish: the output of the fishing grounds is the 2.2 of the files times FISH_OUTPUT_MULTIPLIER (twice by default)");
+			"fish: the output of the fishing grounds is the 2.2 of the files times FISH_OUTPUT_MULTIPLIER (2.2 by default)");
 		GoodDefinition const* const grain = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("grain");
 		ProductionType const* const farm = grain == nullptr ? nullptr : definitions.get_economy_manager().get_production_type_manager().get_good_to_rgo_production_type(*grain);
-		r.check(farm != nullptr && near(farm->base_output_quantity, fixed_point_t(18) / 10, fixed_point_t(1) / 1000), "fish: the other goods are not touched (grain stays at 1.8)");
+		const fixed_point_t grain_multiplier = definitions.get_define_manager().get_openvic_defines().economy.grain_output_multiplier;
+		r.check(farm != nullptr && near(farm->base_output_quantity, fixed_point_t(18) / 10 * grain_multiplier, fixed_point_t(1) / 1000),
+			"fish: the grain is the 1.8 of the files times GRAIN_OUTPUT_MULTIPLIER (1.1 by default)");
+		GoodDefinition const* const iron = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("iron");
+		ProductionType const* const mine = iron == nullptr ? nullptr : definitions.get_economy_manager().get_production_type_manager().get_good_to_rgo_production_type(*iron);
+		r.check(mine != nullptr && mine->base_output_quantity > fixed_point_t::_0, "fish: the other goods (iron) are not scaled");
 	}
 
 	// The growth comes once a month: the world total (the pops, with the men who died in the armies added back: they die every day) changes on the
