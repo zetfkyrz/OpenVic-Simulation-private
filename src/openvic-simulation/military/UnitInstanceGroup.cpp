@@ -1482,9 +1482,12 @@ Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const
 		manpower.over_share = manpower.max_men > 0
 			? fixed_point_t(static_cast<int32_t>(std::min<std::int64_t>(over * 10000 / manpower.max_men, 1000000))) / 10000
 			: fixed_point_t::_1;
-		manpower.combat_multiplier = std::max(
-			wd.over_manpower_min_mult.fixed(), fixed_point_t::_1 - wd.over_manpower_penalty.of(manpower.over_share)
-		);
+		// A little over (the pops of soldiers change from month to month, the armies of the start are at the maximum) is no penalty yet
+		if (manpower.over_share > wd.over_manpower_tolerance.fixed()) {
+			manpower.combat_multiplier = std::max(
+				wd.over_manpower_min_mult.fixed(), fixed_point_t::_1 - wd.over_manpower_penalty.of(manpower.over_share)
+			);
+		}
 	}
 	return manpower;
 }

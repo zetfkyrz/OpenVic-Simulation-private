@@ -300,6 +300,8 @@ namespace OpenVic {
 	RATE(MANPOWER_WAR_BONUS, manpower_war_bonus, Rate(10, 100), 0, 10) \
 	RATE(OVER_MANPOWER_PENALTY, over_manpower_penalty, Rate(1, 1), 0, 100) \
 	RATE(OVER_MANPOWER_MIN_MULT, over_manpower_min_mult, Rate(25, 100), 0, 1) \
+	/* An army at most this share over the maximum has no penalty (and no message): the pops of soldiers change a little from month to month */ \
+	RATE(OVER_MANPOWER_TOLERANCE, over_manpower_tolerance, Rate(2, 100), 0, 1) \
 	RATE(REINFORCE_GOODS_SHARE, reinforce_goods_share, Rate(1, 1), 0, 100) \
 	INT(START_MANPOWER_FIT, start_manpower_fit, 1, 0, 1) \
 	INT(AI_DISBAND_OVER_MANPOWER, ai_disband_over_manpower, 1, 0, 1) \
