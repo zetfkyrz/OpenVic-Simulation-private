@@ -123,7 +123,9 @@ namespace OpenVic {
 		//     plan for a country without the generals for its groups
 		// 71: the reconnaissance in a land battle: the tactics bonus of the side ahead, the dig in of the defenders cancelled by the attackers, the caution of
 		//     the estimate (RECON_TACTICS_BONUS, RECON_DIG_IN_CANCEL, RECON_ESTIMATE_CAUTION)
-		inline constexpr int SIMULATION_VERSION = 71;
+		// 72: the breakthroughs of the field marshals of the AI: much stronger with enough divisions, from the front to the capital of the enemy; one that
+		//     stands is given up (AI_BREAKTHROUGH_RATIO, AI_BREAKTHROUGH_MIN_DIVISIONS, AI_BREAKTHROUGH_STALL_DAYS, AI_BREAKTHROUGH_PAUSE_DAYS)
+		inline constexpr int SIMULATION_VERSION = 72;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

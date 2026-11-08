@@ -6733,7 +6733,10 @@ namespace {
 		ArmyInstance& army = country->get_armies()[0].get();
 		const std::uint32_t group_before = army.get_army_group_id();
 		set_army_group(*country, army, group_id, get_marshal_max_attached(im, *country));
-		r.check(get_army_planning(army) == max, "planning: the divisions of the marshal have the bonus in a battle");
+		// (the skill of the planning of the marshal, section 7: the bonus is worth planning_effect, it falls slower; an earlier test war may have taught him)
+		const fixed_point_t effect = country->find_army_group(group_id)->planning_effect;
+		r.check(get_army_planning(army) == max * effect, "planning: the divisions of the marshal have the bonus in a battle",
+			fmt::format("{} of {} x {}", get_army_planning(army), max, effect));
 		army.set_manual_order(true);
 		r.check(get_army_planning(army) == fixed_point_t::_0, "planning: a division moving by a manual order has no bonus");
 		army.set_manual_order(false);
@@ -6744,7 +6747,9 @@ namespace {
 			update_army_groups(im, *country);
 		}
 		const fixed_point_t decay = im.definition_manager.get_define_manager().get_openvic_defines().war.planning_decay_per_day.of(fixed_point_t::_1);
-		r.check(planning() == max - decay * 5, "planning: the bonus falls by the decay a day while the plan is executed", fmt::format("{}", planning()));
+		const fixed_point_t slower = std::max(fixed_point_t::_0, fixed_point_t(2) - effect);
+		r.check(planning() == max - decay * slower * 5, "planning: the bonus falls by the decay a day while the plan is executed",
+			fmt::format("{}, the effect {}", planning(), effect));
 		war_manager.delete_group_lines(im, *country, group_id);
 		update_army_groups(im, *country);
 		r.check(planning() == fixed_point_t::_0, "planning: the order deleted, the bonus is gone");
@@ -7284,6 +7289,51 @@ namespace {
 			}
 		}
 		r.check(in_group > 0 && with_stance == in_group, "ai marshals: the armies of the group of the AI get stances", fmt::format("{} of {}", with_stance, in_group));
+		// The breakthrough (section 13): with the thresholds open the marshal draws one from his front to the capital of the enemy; one that stands is
+		// given up and the next one waits for the pause
+		const Rate kept_ratio = defines.ai_breakthrough_ratio;
+		const std::int32_t kept_divisions = defines.ai_breakthrough_min_divisions;
+		const auto breakthrough_of = [&]() -> PlanLine* {
+			for (PlanLine const& line : war_manager.get_plan_lines()) {
+				if (line.country == country && line.type == PlanLine::type_t::BREAKTHROUGH) {
+					return const_cast<PlanLine*>(&line);
+				}
+			}
+			return nullptr;
+		};
+		const auto to_marshals = [&]() -> void {
+			do {
+				im.force_tick_and_update();
+			} while (im.get_today().get_day() % 10 != 0);
+		};
+		defines.ai_breakthrough_ratio = Rate(0, 1);
+		defines.ai_breakthrough_min_divisions = 1;
+		const memory::vector<ProvinceInstance*> way = front != nullptr && enemy->get_capital() != nullptr
+			? war_manager.get_ai_breakthrough_way(im, *country, *war_manager.find_front_of_group(*country, country->get_army_groups().front().id), *enemy)
+			: memory::vector<ProvinceInstance*> {};
+		if (way.empty()) {
+			fmt::println("TEST INFO ai marshals: the capital of {} is not reachable over its land, the breakthrough not checked", enemy->get_identifier());
+		} else {
+			bool chain = way.back() == enemy->get_capital();
+			for (std::size_t index = 1; index < way.size(); ++index) {
+				chain &= way[index - 1]->province_definition.is_adjacent_to(way[index]->province_definition);
+			}
+			to_marshals();
+			PlanLine* const line = breakthrough_of();
+			r.check(chain && line != nullptr && !line->provinces.empty() && line->provinces.back() == enemy->get_capital(),
+				"ai marshals: a strong marshal draws a breakthrough, a chain of neighbours from his front to the capital of the enemy",
+				fmt::format("way {} line {}", way.size(), line != nullptr ? line->provinces.size() : 0));
+			if (line != nullptr) {
+				line->stalled_days = static_cast<std::uint32_t>(defines.ai_breakthrough_stall_days);
+				line->progress = static_cast<std::uint32_t>(line->provinces.size());
+			}
+			to_marshals();
+			ArmyGroup const* const group = country->get_army_groups().empty() ? nullptr : &country->get_army_groups().front();
+			r.check(breakthrough_of() == nullptr && group != nullptr && group->ai_breakthrough_after > im.get_today(),
+				"ai marshals: a breakthrough that stands is given up, the next one waits for the pause");
+		}
+		defines.ai_breakthrough_ratio = kept_ratio;
+		defines.ai_breakthrough_min_divisions = kept_divisions;
 		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
 			war_manager.end_war(im, war->id);
 		}

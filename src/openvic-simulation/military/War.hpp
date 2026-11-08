@@ -147,6 +147,10 @@ namespace OpenVic {
 		memory::vector<unique_id_t> army_ids;
 		// NAVAL: the days the invasion was prepared (not executed); it is executed after NAVAL_PLAN_PREP_DAYS
 		std::uint32_t prepared_days = 0;
+		// BREAKTHROUGH: the index of the next province of the way the enemy holds (the size of the way when it is all taken) and the days it has not
+		// grown (the field marshals of the AI give up a breakthrough that stands, docs/WAR_ASSUMPTIONS.md, section 13)
+		std::uint32_t progress = 0;
+		std::uint32_t stalled_days = 0;
 	};
 
 	// A land battle in a province (docs/WAR_ASSUMPTIONS.md, section 6), kept from day to day: which side attacks, the counter of the breakthrough rule
@@ -301,6 +305,14 @@ namespace OpenVic {
 		// The breakthrough (P7): its divisions gather at the start of the way; while the plan is executed they take its next province when the chance of
 		// the victory reaches the aggressive threshold, and stay at its end
 		void execute_breakthrough(InstanceManager& instance_manager, PlanLine& line, bool executed);
+	public:
+		// The way of a breakthrough of the AI (docs/WAR_ASSUMPTIONS.md, section 13): the shortest chain of neighbours over the land the enemies of the
+		// country hold, from a province across the front (the nearest one; ties: the earlier edge) to the capital of the enemy; empty when the capital is
+		// not held by an enemy or is farther than PLAN_LINE_MAX_STEPS
+		memory::vector<ProvinceInstance*> get_ai_breakthrough_way(
+			InstanceManager& instance_manager, CountryInstance const& country, Front const& front, CountryInstance const& enemy
+		) const;
+	private:
 		// A division of a field marshal that is cut off goes to the nearest province reached from a source of the supply (P8)
 		void break_out_encircled(InstanceManager& instance_manager, ArmyInstance& army);
 		// The naval invasion (P10): the divisions gather in the port; executed and prepared, they board the fleets there, the fleets sail to the sea next to

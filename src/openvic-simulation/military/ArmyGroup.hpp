@@ -8,6 +8,7 @@
 
 #include "openvic-simulation/core/memory/Vector.hpp"
 #include "openvic-simulation/core/object/Colour.hpp"
+#include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/dataloader/NodeTools.hpp"
 #include "openvic-simulation/types/UniqueId.hpp"
@@ -73,6 +74,8 @@ namespace OpenVic {
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
 		// Made by the field marshals of the AI (WarManager::update_ai_marshals): only these groups are taken, changed and deleted by them
 		bool ai_made = false;
+		// The field marshal of the AI draws no new breakthrough before this day (one gave up: docs/WAR_ASSUMPTIONS.md, section 13)
+		Date ai_breakthrough_after;
 	};
 
 	// The palette of the colours of the field marshals (ov_data/common/ov_command/palette.txt: colour = { r g b } lines). A new group takes the first

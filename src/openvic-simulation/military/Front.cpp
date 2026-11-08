@@ -1024,13 +1024,80 @@ void WarManager::spread_front_divisions(InstanceManager& instance_manager, Front
 	}
 }
 
+memory::vector<ProvinceInstance*> WarManager::get_ai_breakthrough_way(
+	InstanceManager& instance_manager, CountryInstance const& country, Front const& front, CountryInstance const& enemy
+) const {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	memory::vector<ProvinceInstance*> way;
+	const auto hostile = [&country](ProvinceInstance const& province) -> bool {
+		CountryInstance const* const controller = province.get_controller();
+		return !province.province_definition.is_water() && controller != nullptr && controller != &country && country.is_at_war_with(*controller);
+	};
+	if (enemy.get_capital() == nullptr || !hostile(*enemy.get_capital())) {
+		return way;
+	}
+	ProvinceInstance* const capital = &map_instance.get_province_instance_by_definition(enemy.get_capital()->province_definition);
+	// The steps from the capital over the land of the enemies (the order of the neighbours: the same in every run)
+	std::vector<std::int32_t> steps(map_instance.get_province_instances().size(), -1);
+	std::deque<ProvinceInstance*> queue;
+	steps[type_safe::get(capital->index)] = 0;
+	queue.push_back(capital);
+	const std::int32_t max_steps = get_war_defines().plan_line_max_steps;
+	while (!queue.empty()) {
+		ProvinceInstance* const current = queue.front();
+		queue.pop_front();
+		const std::int32_t next_steps = steps[type_safe::get(current->index)] + 1;
+		if (next_steps >= max_steps) {
+			continue;
+		}
+		for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+			if (steps[type_safe::get(neighbour->index)] < 0 && hostile(*neighbour)) {
+				steps[type_safe::get(neighbour->index)] = next_steps;
+				queue.push_back(neighbour);
+			}
+		}
+	}
+	ProvinceInstance* start = nullptr;
+	for (FrontEdge const& edge : front.edges) {
+		const std::int32_t edge_steps = steps[type_safe::get(edge.other->index)];
+		if (edge_steps >= 0 && (start == nullptr || edge_steps < steps[type_safe::get(start->index)])) {
+			start = edge.other;
+		}
+	}
+	// From the start down the steps to the capital (the first neighbour one step nearer)
+	for (ProvinceInstance* current = start; current != nullptr;) {
+		way.push_back(current);
+		const std::int32_t current_steps = steps[type_safe::get(current->index)];
+		ProvinceInstance* nearer = nullptr;
+		if (current_steps > 0) {
+			for (ProvinceInstance* neighbour : get_land_neighbours(*current, map_instance)) {
+				if (steps[type_safe::get(neighbour->index)] == current_steps - 1) {
+					nearer = neighbour;
+					break;
+				}
+			}
+		}
+		current = nearer;
+	}
+	return way;
+}
+
 bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryInstance& country) {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	const std::size_t palette_size = instance_manager.definition_manager.get_military_manager().get_command_palette().size();
 	// The enemies it borders, in the order of the countries
 	std::vector<CountryInstance const*> enemies;
 	for (CountryInstance const& enemy : instance_manager.get_country_instance_manager().get_country_instances()) {
-		if (&enemy != &country && country.is_at_war_with(enemy) && !get_border_part(instance_manager, country, enemy, nullptr, nullptr).empty()) {
+		if (&enemy == &country || !country.is_at_war_with(enemy)) {
+			continue;
+		}
+		// Only a border the supply reaches (one of our provinces on it): a border of exclaves cut off from it gets no front, its divisions would be
+		// encircled there (section 13)
+		bool supplied = false;
+		for (FrontEdge const& edge : get_border_part(instance_manager, country, enemy, nullptr, nullptr)) {
+			supplied |= is_supply_reached(country, *edge.own);
+		}
+		if (supplied) {
 			enemies.push_back(&enemy);
 		}
 	}
@@ -1150,6 +1217,51 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 				}
 				if (!defending) {
 					make_offensive(group_id, front_copy, enemy);
+				}
+			}
+		}
+		// The breakthrough (section 13): only much stronger with enough divisions; one whose way is taken, or stands, goes (the one that stood: a pause
+		// before the next one); a new one goes from the front to the capital of the enemy
+		{
+			std::uint32_t breakthrough_id = 0;
+			for (PlanLine const& line : plan_lines) {
+				if (line.country == &country && line.group_id == group_id && line.type == PlanLine::type_t::BREAKTHROUGH) {
+					breakthrough_id = line.id;
+				}
+			}
+			std::size_t divisions = 0;
+			for (ArmyInstance const& army : country.get_armies()) {
+				divisions += army.get_army_group_id() == group_id ? army.get_divisions().size() : 0;
+			}
+			const bool strong = ratio >= wd.ai_breakthrough_ratio.fixed() && divisions >= static_cast<std::size_t>(wd.ai_breakthrough_min_divisions);
+			ArmyGroup* group = nullptr;
+			for (ArmyGroup& candidate : country.get_mutable_army_groups()) {
+				group = candidate.id == group_id ? &candidate : group;
+			}
+			const Date today = instance_manager.get_today();
+			if (PlanLine const* const line = get_plan_line_by_id(breakthrough_id); line != nullptr) {
+				bool left = false;
+				for (ProvinceInstance const* const province : line->provinces) {
+					CountryInstance const* const controller = province->get_controller();
+					left |= controller != nullptr && controller != &country && country.is_at_war_with(*controller);
+				}
+				const bool stalled = line->stalled_days >= static_cast<std::uint32_t>(wd.ai_breakthrough_stall_days);
+				if (!strong || !left || stalled) {
+					delete_plan_line(country, breakthrough_id);
+					breakthrough_id = 0;
+					if (stalled && group != nullptr) {
+						group->ai_breakthrough_after = today + Timespan::from_days(wd.ai_breakthrough_pause_days);
+					}
+				}
+			}
+			Front const* const front = find_front_of_group(country, group_id);
+			if (breakthrough_id == 0 && strong && front != nullptr && group != nullptr && today >= group->ai_breakthrough_after) {
+				memory::vector<ProvinceInstance*> way = get_ai_breakthrough_way(instance_manager, country, *front, *enemy);
+				if (!way.empty()) {
+					const std::uint32_t line_id = create_plan_line(instance_manager, country, group_id, PlanLine::type_t::BREAKTHROUGH, *way.front());
+					if (PlanLine* const line = find_plan_line(line_id); line != nullptr) {
+						line->provinces = std::move(way);
+					}
 				}
 			}
 		}
@@ -1322,7 +1434,19 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 			}
 
 			memory::vector<ProvinceInstance*> line = build_border_line(instance_manager.get_map_instance(), country, enemy);
-			if (line.empty()) {
+			// A border of exclaves the supply does not reach gets no front (section 13): the one there goes
+			bool supplied = false;
+			for (ProvinceInstance const* const province : line) {
+				supplied |= is_supply_reached(country, *province);
+			}
+			if (!line.empty() && !supplied && front != nullptr) {
+				const std::uint32_t gone_id = front->id;
+				stop_front_armies(instance_manager, gone_id);
+				std::erase_if(fronts, [gone_id](Front const& other) -> bool {
+					return other.id == gone_id;
+				});
+			}
+			if (line.empty() || !supplied) {
 				continue;
 			}
 
@@ -2116,6 +2240,14 @@ void WarManager::execute_breakthrough(InstanceManager& instance_manager, PlanLin
 			break;
 		}
 	}
+	// The progress of the way: the days it has not grown while executed (section 13)
+	const std::uint32_t reached = static_cast<std::uint32_t>(next == nullptr ? line.provinces.size() : next_index);
+	if (reached > line.progress) {
+		line.stalled_days = 0;
+	} else if (executed) {
+		line.stalled_days++;
+	}
+	line.progress = reached;
 	std::vector<ArmyInstance*> free;
 	for (const unique_id_t army_id : line.army_ids) {
 		UnitInstanceGroup* const group = unit_manager.get_unit_instance_group_by_unique_id(army_id);
@@ -2395,8 +2527,9 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		orders.country = &country;
 		orders.mode = Front::mode_t::ATTACK;
 		for (CountryInstance const& enemy : country.get_war_enemies()) {
+			// (not the provinces the supply does not reach: exclaves cut off, section 13)
 			for (ProvinceInstance* province : build_border_line(instance_manager.get_map_instance(), country, enemy)) {
-				if (std::find(orders.provinces.begin(), orders.provinces.end(), province) == orders.provinces.end()) {
+				if (is_supply_reached(country, *province) && std::find(orders.provinces.begin(), orders.provinces.end(), province) == orders.provinces.end()) {
 					orders.provinces.push_back(province);
 				}
 			}

@@ -2235,13 +2235,20 @@ static void run_war_dump(InstanceManager& instance_manager, const size_t day) {
 					organisation += static_cast<double>(army.get_organisation_proportion());
 				}
 			}
+			// The breakthrough of the group: the provinces of its way, the ones taken, the days it stands
+			std::string breakthrough = "-";
+			for (PlanLine const& line : war_manager.get_plan_lines()) {
+				if (line.country == &country && line.group_id == group.id && line.type == PlanLine::type_t::BREAKTHROUGH) {
+					breakthrough = fmt::format("{}:{}:{}", line.provinces.size(), line.progress, line.stalled_days);
+				}
+			}
 			fmt::println(
 				"WAR_GROUP day={} country={} id={} ai_made={} marshal={} enemy={} divisions={} on_line={} moving={} organisation={:.2f} active={} aggression={} "
-				"status={} attacks={} best_chance={:.2f}", day,
+				"status={} attacks={} best_chance={:.2f} breakthrough={}", day,
 				country.get_identifier(), group.id, group.ai_made ? 1 : 0, group.marshal_id != 0 ? 1 : 0,
 				front != nullptr && front->enemy != nullptr ? front->enemy->get_identifier() : std::string_view { "-" }, divisions, on_line, moving,
 				divisions > 0 ? organisation / static_cast<double>(divisions) : 0.0, group.plan_active ? 1 : 0,
-				group.aggression, group.plan_status, group.plan_attacks, static_cast<double>(group.plan_best_chance)
+				group.aggression, group.plan_status, group.plan_attacks, static_cast<double>(group.plan_best_chance), breakthrough
 			);
 			// The enemy held provinces across the line with defenders: the estimate of an attack by the divisions of the group next to them
 			if (front == nullptr) {

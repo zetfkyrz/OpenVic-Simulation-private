@@ -401,6 +401,14 @@ namespace OpenVic {
 	/* The stances of the armies of the field marshals of the AI (section 12), every day: in battle or with an enemy army in the province or next to */ \
 	/* it — entrench; else under AI_STANCE_REST_ORGANISATION of the organisation and standing — rest; on the land of an enemy — raid; else entrench */ \
 	RATE(AI_STANCE_REST_ORGANISATION, ai_stance_rest_organisation, Rate(50, 100), 0, 1) \
+	/* The breakthroughs of the field marshals of the AI (section 13): with the land regiments of the country at least AI_BREAKTHROUGH_RATIO of the ones */ \
+	/* of the enemy and at least AI_BREAKTHROUGH_MIN_DIVISIONS divisions in the group the marshal draws a breakthrough from his front to the capital of */ \
+	/* the enemy (the shortest way over the land of the enemies, at most PLAN_LINE_MAX_STEPS); a breakthrough that takes no new province of its way */ \
+	/* for AI_BREAKTHROUGH_STALL_DAYS is given up, the next one is drawn after AI_BREAKTHROUGH_PAUSE_DAYS */ \
+	RATE(AI_BREAKTHROUGH_RATIO, ai_breakthrough_ratio, Rate(150, 100), 0, 100) \
+	INT(AI_BREAKTHROUGH_MIN_DIVISIONS, ai_breakthrough_min_divisions, 6, 1, 1000) \
+	INT(AI_BREAKTHROUGH_STALL_DAYS, ai_breakthrough_stall_days, 60, 1, 3650) \
+	INT(AI_BREAKTHROUGH_PAUSE_DAYS, ai_breakthrough_pause_days, 90, 0, 3650) \
 	/* The breakthrough (P7): this share of the divisions of the field marshal (the strongest by their attack, at least one) goes along its way of */ \
 	/* provinces into the enemy land with the threshold of the aggressive mode, without the minimum to hold */ \
 	RATE(PLAN_BREAKTHROUGH_SHARE, plan_breakthrough_share, Rate(1, 3), 0, 1) \

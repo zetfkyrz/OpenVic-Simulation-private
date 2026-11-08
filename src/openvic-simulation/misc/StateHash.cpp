@@ -179,6 +179,8 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army_group.planning_effect);
 			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
 			hasher.add(army_group.ai_made ? 1 : 0);
+			hasher.add(static_cast<std::uint64_t>(army_group.ai_breakthrough_after.get_year()) * 10000 + army_group.ai_breakthrough_after.get_month() * 100
+				+ army_group.ai_breakthrough_after.get_day());
 		}
 		// The experience of the generals (section 7 of docs/WAR_ASSUMPTIONS.md); only the ones that have some
 		for (LeaderInstance const& leader : country.get_leaders<unit_branch_t::LAND>()) {
@@ -302,6 +304,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army_id);
 		}
 		hasher.add(static_cast<std::uint64_t>(line.prepared_days));
+		hasher.add(static_cast<std::uint64_t>(line.progress) * 100003ULL + line.stalled_days);
 	}
 	// The land battles that go on (in the order of the provinces): the days, the counter of the breakthrough, the divisions of the front
 	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
