@@ -280,6 +280,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(front.army_ids.size()));
 		hasher.add(static_cast<std::uint64_t>(front.kind));
 		hasher.add(front.edited ? 1 : 0);
+		hasher.add(front.focus != nullptr ? static_cast<std::uint64_t>(type_safe::get(front.focus->index)) + 1 : 0);
+		hasher.add(front.focus_target != nullptr ? static_cast<std::uint64_t>(type_safe::get(front.focus_target->index)) + 1 : 0);
+		hasher.add(static_cast<std::uint64_t>(front.focus_divisions) * 100003ULL + front.focus_days);
 		for (FrontEdge const& edge : front.edges) {
 			hasher.add(static_cast<std::uint64_t>(type_safe::get(edge.own->index)));
 			hasher.add(static_cast<std::uint64_t>(type_safe::get(edge.other->index)));

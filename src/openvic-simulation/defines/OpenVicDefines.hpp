@@ -387,10 +387,20 @@ namespace OpenVic {
 	RATE(PLAN_WIN_BALANCED, plan_win_balanced, Rate(65, 100), 0, 1) \
 	RATE(PLAN_WIN_AGGRESSIVE, plan_win_aggressive, Rate(50, 100), 0, 1) \
 	INT(PLAN_MIN_HOLD, plan_min_hold, 1, 0, 100) \
+	/* The concentration (docs/WAR_ASSUMPTIONS.md, section 12): the executor tries the first PLAN_FOCUS_TARGETS targets not attacked today (nearer */ \
+	/* to the line of the plan first) with the free divisions of the whole line left (the nearest first, the minimum stays); the fewest that win */ \
+	/* go to a province of the line next to the target and stay there until they attack, the target is gone or PLAN_FOCUS_MAX_DAYS pass */ \
+	INT(PLAN_FOCUS_TARGETS, plan_focus_targets, 3, 0, 100) \
+	INT(PLAN_FOCUS_MAX_DAYS, plan_focus_max_days, 30, 1, 3650) \
 	/* The field marshals of the AI (P11): the mode by the land regiments of the country over the ones of the enemy — at least AI_MARSHAL_AGGRESSIVE_RATIO */ \
 	/* aggressive, at least AI_MARSHAL_BALANCED_RATIO balanced, else careful; an offensive that is taken is drawn again from the front of the day */ \
 	RATE(AI_MARSHAL_AGGRESSIVE_RATIO, ai_marshal_aggressive_ratio, Rate(150, 100), 0, 100) \
 	RATE(AI_MARSHAL_BALANCED_RATIO, ai_marshal_balanced_ratio, Rate(100, 100), 0, 100) \
+	/* Under AI_MARSHAL_DEFEND_RATIO the field marshal of the AI draws no offensive: his front holds the line (section 12) */ \
+	RATE(AI_MARSHAL_DEFEND_RATIO, ai_marshal_defend_ratio, Rate(70, 100), 0, 100) \
+	/* The stances of the armies of the field marshals of the AI (section 12), every day: in battle or with an enemy army in the province or next to */ \
+	/* it — entrench; else under AI_STANCE_REST_ORGANISATION of the organisation and standing — rest; on the land of an enemy — raid; else entrench */ \
+	RATE(AI_STANCE_REST_ORGANISATION, ai_stance_rest_organisation, Rate(50, 100), 0, 1) \
 	/* The breakthrough (P7): this share of the divisions of the field marshal (the strongest by their attack, at least one) goes along its way of */ \
 	/* provinces into the enemy land with the threshold of the aggressive mode, without the minimum to hold */ \
 	RATE(PLAN_BREAKTHROUGH_SHARE, plan_breakthrough_share, Rate(1, 3), 0, 1) \
@@ -511,6 +521,13 @@ namespace OpenVic {
 	RATE(BATTLE_FLANK_WIDTH, battle_flank_width, Rate(1, 3), 0, 10) \
 	RATE(BATTLE_FLANK_ATTACK, battle_flank_attack, Rate(5, 100), 0, 10) \
 	INT(BATTLE_FLANK_MAX_DIRECTIONS, battle_flank_max_directions, 3, 1, 10) \
+	/* The reconnaissance in a battle (docs/WAR_ASSUMPTIONS.md, section 12): the reconnaissance of a side is the sum of its divisions in the battle (the front */ \
+	/* and the reserve) times 1 + the reconnaissance of the traits of their generals; the advantage a = 2 x own / (own + enemy) - 1. A side with a > 0 has */ \
+	/* its attack and breakthrough times 1 + RECON_TACTICS_BONUS x a; the attacker with a > 0 cancels RECON_DIG_IN_CANCEL x a of the dig in of the defenders; */ \
+	/* the estimate of an attack (the field marshals) with a < 0 takes the defence as lasting 1 + RECON_ESTIMATE_CAUTION x |a| times longer */ \
+	RATE(RECON_TACTICS_BONUS, recon_tactics_bonus, Rate(10, 100), 0, 10) \
+	RATE(RECON_DIG_IN_CANCEL, recon_dig_in_cancel, Rate(50, 100), 0, 1) \
+	RATE(RECON_ESTIMATE_CAUTION, recon_estimate_caution, Rate(50, 100), 0, 10) \
 	/* A division of the front with less than BATTLE_ROTATE_ORGANISATION of its organisation goes to the reserve when the reserve has a division */ \
 	/* with at least BATTLE_ROTATE_RESERVE_ORGANISATION of it (that one takes its place) */ \
 	RATE(BATTLE_ROTATE_ORGANISATION, battle_rotate_organisation, Rate(30, 100), 0, 1) \

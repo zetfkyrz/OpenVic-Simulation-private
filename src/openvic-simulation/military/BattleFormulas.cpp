@@ -105,6 +105,28 @@ bool battle_formulas::breakthrough_day(OpenVicWarDefines const& defines, const f
 	return false;
 }
 
+fixed_point_t battle_formulas::recon_advantage(const fixed_point_t own, const fixed_point_t enemy) {
+	const fixed_point_t own_clamped = std::max(own, fixed_point_t::_0);
+	const fixed_point_t sum = own_clamped + std::max(enemy, fixed_point_t::_0);
+	if (sum <= fixed_point_t::_0) {
+		return fixed_point_t::_0;
+	}
+	return own_clamped * 2 / sum - fixed_point_t::_1;
+}
+
+fixed_point_t battle_formulas::recon_tactics(OpenVicWarDefines const& defines, const fixed_point_t advantage) {
+	return fixed_point_t::_1 + defines.recon_tactics_bonus.of(std::max(advantage, fixed_point_t::_0));
+}
+
+fixed_point_t battle_formulas::recon_dig_in(OpenVicWarDefines const& defines, const fixed_point_t dig_in_levels, const fixed_point_t attacker_advantage) {
+	const fixed_point_t cancelled = std::min(fixed_point_t::_1, defines.recon_dig_in_cancel.of(std::max(attacker_advantage, fixed_point_t::_0)));
+	return dig_in_levels * (fixed_point_t::_1 - cancelled);
+}
+
+fixed_point_t battle_formulas::recon_caution(OpenVicWarDefines const& defines, const fixed_point_t attacker_advantage) {
+	return fixed_point_t::_1 + defines.recon_estimate_caution.of(std::max(-attacker_advantage, fixed_point_t::_0));
+}
+
 fixed_point_t battle_formulas::occupation_power(OpenVicWarDefines const& defines, const fixed_point_t weight_sum) {
 	return weight_sum / defines.occupation_reference_regiments;
 }

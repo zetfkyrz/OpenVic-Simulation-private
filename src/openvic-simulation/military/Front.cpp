@@ -1105,6 +1105,13 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 	// A group for every enemy: the one whose front is against him, else a new one
 	std::vector<std::uint32_t> group_ids;
 	for (CountryInstance const* const enemy : enemies) {
+		// The forces (docs/WAR_ASSUMPTIONS.md, sections 6 and 12, P11): much stronger — aggressive (no minimum stays on the line), not weaker — balanced,
+		// weaker — careful, much weaker — no offensive (the front holds the line)
+		const std::int32_t own = regiments_of(country);
+		const std::int32_t theirs = std::max(1, regiments_of(*enemy));
+		const fixed_point_t ratio = fixed_point_t(own) / theirs;
+		const std::uint32_t aggression = ratio >= wd.ai_marshal_aggressive_ratio.fixed() ? 3 : ratio >= wd.ai_marshal_balanced_ratio.fixed() ? 2 : 1;
+		const bool defending = ratio < wd.ai_marshal_defend_ratio.fixed();
 		std::uint32_t group_id = 0;
 		Front const* group_front = nullptr;
 		for (Front const& front : fronts) {
@@ -1120,7 +1127,7 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 			group_id = country.get_army_groups().back().id;
 			country.get_mutable_army_groups().back().ai_made = true;
 			const std::uint32_t front_id = create_border_front(instance_manager, country, group_id, *enemy);
-			if (Front const* const front = get_front_by_id(front_id); front != nullptr) {
+			if (Front const* const front = get_front_by_id(front_id); front != nullptr && !defending) {
 				make_offensive(group_id, *front, enemy);
 			}
 		} else if (group_front != nullptr) {
@@ -1135,12 +1142,15 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 					}
 				}
 			}
-			if (!targets_left) {
+			// Much weaker: the offensives go (the front holds the line); else a new one when none is left
+			if (defending || !targets_left) {
 				Front const front_copy = *group_front;
 				for (const std::uint32_t line_id : offensives) {
 					delete_plan_line(country, line_id);
 				}
-				make_offensive(group_id, front_copy, enemy);
+				if (!defending) {
+					make_offensive(group_id, front_copy, enemy);
+				}
 			}
 		}
 		// The field marshal (a new group, or the marshal died): a free general, else the general of an army (he leaves it)
@@ -1154,12 +1164,6 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 				}
 			}
 		}
-		// The mode by the forces (docs/WAR_ASSUMPTIONS.md, section 6, P11): much stronger — aggressive (no minimum stays on the line), not weaker —
-		// balanced, weaker — careful
-		const std::int32_t own = regiments_of(country);
-		const std::int32_t theirs = std::max(1, regiments_of(*enemy));
-		const fixed_point_t ratio = fixed_point_t(own) / theirs;
-		const std::uint32_t aggression = ratio >= wd.ai_marshal_aggressive_ratio.fixed() ? 3 : ratio >= wd.ai_marshal_balanced_ratio.fixed() ? 2 : 1;
 		if (ArmyGroup const* const group = country.find_army_group(group_id); group != nullptr && group->aggression != aggression) {
 			set_army_group_modes(country, group_id, aggression, group->integrity);
 		}
@@ -1211,6 +1215,52 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 		}
 	}
 	return true;
+}
+
+void WarManager::update_ai_stances(InstanceManager& instance_manager) {
+	MapInstance& map_instance = instance_manager.get_map_instance();
+	OpenVicWarDefines const& wd = get_war_defines();
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.is_ai() || !country.is_at_war() || country.get_army_groups().empty()) {
+			continue;
+		}
+		const auto enemy_army_in = [&country](ProvinceInstance const& province) -> bool {
+			for (ArmyInstance const& other : province.get_armies()) {
+				if (!other.empty() && country.is_at_war_with(other.get_country())) {
+					return true;
+				}
+			}
+			return false;
+		};
+		for (ArmyInstance& army : country.get_armies()) {
+			ArmyGroup const* const group = army.get_army_group_id() != 0 ? country.find_army_group(army.get_army_group_id()) : nullptr;
+			if (group == nullptr || !group->ai_made || army.empty() || army.get_transport_navy() != nullptr) {
+				continue;
+			}
+			ProvinceInstance const& at = army.get_location();
+			bool threatened = army.is_in_combat() || enemy_army_in(at);
+			for (ProvinceInstance* neighbour : get_land_neighbours(at, map_instance)) {
+				threatened = threatened || enemy_army_in(*neighbour);
+			}
+			std::uint8_t stance = ArmyInstance::STANCE_ENTRENCH;
+			if (!threatened) {
+				fixed_point_t organisation = fixed_point_t::_0, maximum = fixed_point_t::_0;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					organisation += regiment.get_organisation();
+					maximum += regiment.get_max_organisation();
+				}
+				CountryInstance const* const owner = at.get_owner();
+				if (!army.is_moving() && maximum > fixed_point_t::_0 && organisation < wd.ai_stance_rest_organisation.of(maximum)) {
+					stance = ArmyInstance::STANCE_REST;
+				} else if (owner != nullptr && country.is_at_war_with(*owner)) {
+					stance = ArmyInstance::STANCE_RAID;
+				}
+			}
+			if (army.get_stance() != stance) {
+				army.set_stance(stance);
+			}
+		}
+	}
 }
 
 void WarManager::update_auto_plan(InstanceManager& instance_manager) {
@@ -1515,6 +1565,25 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 	for (std::size_t index = 0; given < divisions && index < remainders.size(); ++index, ++given) {
 		shares[remainders[index].second]++;
 	}
+	// The concentration (section 12): the province of the focus keeps the divisions that gather there (taken from the shares of the provinces with the
+	// most, down to PLAN_MIN_HOLD)
+	if (front.focus != nullptr) {
+		const std::size_t focus_place = place_of(front.focus);
+		const std::int64_t wanted = std::min<std::int64_t>(static_cast<std::int64_t>(front.focus_divisions), divisions);
+		while (focus_place < province_count && shares[focus_place] < wanted) {
+			std::size_t donor = province_count;
+			for (std::size_t province = 0; province < province_count; ++province) {
+				if (province != focus_place && shares[province] > defines.plan_min_hold && (donor == province_count || shares[province] > shares[donor])) {
+					donor = province;
+				}
+			}
+			if (donor == province_count) {
+				break;
+			}
+			shares[donor]--;
+			shares[focus_place]++;
+		}
+	}
 	// Where the divisions are (or go)
 	std::vector<std::int64_t> placed(province_count, 0);
 	std::vector<std::size_t> place(armies.size(), province_count);
@@ -1619,6 +1688,20 @@ WarManager::OffensiveReport WarManager::execute_offensive(
 		}
 	}
 	report.candidates = static_cast<std::uint32_t>(candidates.size());
+	// The concentration (docs/WAR_ASSUMPTIONS.md, section 12) ends when its target is no target any more or it lasted too long
+	const auto end_focus = [&front]() {
+		front.focus = nullptr;
+		front.focus_target = nullptr;
+		front.focus_divisions = 0;
+		front.focus_days = 0;
+	};
+	if (!dry_run && front.focus_target != nullptr) {
+		front.focus_days++;
+		if (!in(candidates, front.focus_target) || std::find(front.provinces.begin(), front.provinces.end(), front.focus) == front.provinces.end()
+			|| front.focus_days > static_cast<std::uint32_t>(defines.plan_focus_max_days)) {
+			end_focus();
+		}
+	}
 	if (candidates.empty() || free.empty()) {
 		return report;
 	}
@@ -1732,6 +1815,8 @@ WarManager::OffensiveReport WarManager::execute_offensive(
 		return first.score > second.score;
 	});
 	// Each target in turn with the divisions that are still free
+	bool focus_attacked = false;
+	std::vector<ProvinceInstance const*> attacked_targets;
 	for (scored_t const& entry : scored) {
 		std::vector<std::int32_t> left = standing;
 		std::vector<std::size_t> chosen = attackers_of(entry.target, left);
@@ -1747,6 +1832,8 @@ WarManager::OffensiveReport WarManager::execute_offensive(
 			chosen.resize(1);
 		}
 		report.attacks++;
+		focus_attacked |= entry.target == front.focus_target;
+		attacked_targets.push_back(entry.target);
 		for (const std::size_t index : chosen) {
 			used[index] = true;
 			const std::size_t place = static_cast<std::size_t>(std::find(front.provinces.begin(), front.provinces.end(), &free[index]->get_location()) - front.provinces.begin());
@@ -1754,6 +1841,124 @@ WarManager::OffensiveReport WarManager::execute_offensive(
 			if (!dry_run) {
 				unit_manager.order_move(*free[index], *entry.target, map_instance);
 			}
+		}
+	}
+	if (dry_run) {
+		return report;
+	}
+	// The concentration (section 12): the focus ends with the attack on its target, or when its divisions stand there and still do not attack
+	if (front.focus_target != nullptr) {
+		std::uint32_t gathered = 0;
+		for (std::size_t index = 0; index < free.size(); ++index) {
+			gathered += !used[index] && &free[index]->get_location() == front.focus;
+		}
+		if (focus_attacked || gathered >= front.focus_divisions) {
+			end_focus();
+		}
+		return report;
+	}
+	if (defines.plan_focus_targets <= 0) {
+		return report;
+	}
+	// The targets not attacked today, nearer to the line of the plan first (ties: the order of the pieces); the careful and the balanced mode do not
+	// open a wide flank
+	std::vector<std::pair<std::int32_t, ProvinceInstance*>> focus_candidates;
+	for (ProvinceInstance* target : candidates) {
+		if (std::find(attacked_targets.begin(), attacked_targets.end(), target) != attacked_targets.end()) {
+			continue;
+		}
+		if (aggression <= 2 && flank_of(*target) > defines.flank_exposure_max.of(fixed_point_t::_1)) {
+			continue;
+		}
+		const auto found = steps.find(target);
+		focus_candidates.emplace_back(found != steps.end() ? found->second : static_cast<std::int32_t>(zone.size()), target);
+	}
+	std::stable_sort(focus_candidates.begin(), focus_candidates.end(), [](auto const& first, auto const& second) -> bool {
+		return first.first < second.first;
+	});
+	if (focus_candidates.size() > static_cast<std::size_t>(defines.plan_focus_targets)) {
+		focus_candidates.resize(static_cast<std::size_t>(defines.plan_focus_targets));
+	}
+	for (auto const& focus_candidate : focus_candidates) {
+		ProvinceInstance* const target = focus_candidate.second;
+		// The province of the line where the divisions gather: the first one next to the target (the order of the pieces)
+		ProvinceInstance* focus = nullptr;
+		for (FrontEdge const& edge : front.edges) {
+			if (focus == nullptr && edge.other == target) {
+				focus = edge.own;
+			}
+		}
+		if (focus == nullptr) {
+			continue;
+		}
+		const auto next_to_target = [&](ProvinceInstance const* at) -> bool {
+			for (FrontEdge const& edge : front.edges) {
+				if (edge.own == at && edge.other == target) {
+					return true;
+				}
+			}
+			return false;
+		};
+		// The free divisions of the line, the nearest to the target first (the minimum stays in every province)
+		std::vector<std::size_t> order;
+		for (std::size_t index = 0; index < free.size(); ++index) {
+			order.push_back(index);
+		}
+		std::stable_sort(order.begin(), order.end(), [&](const std::size_t first, const std::size_t second) -> bool {
+			return centre_distance_squared(free[first]->get_location(), *target) < centre_distance_squared(free[second]->get_location(), *target);
+		});
+		std::vector<std::int32_t> left = standing;
+		std::vector<std::size_t> available;
+		std::size_t far = 0;
+		for (const std::size_t index : order) {
+			const std::size_t place = static_cast<std::size_t>(std::find(front.provinces.begin(), front.provinces.end(), &free[index]->get_location()) - front.provinces.begin());
+			if (!used[index] && left[place] > min_hold) {
+				left[place]--;
+				available.push_back(index);
+				far += !next_to_target(&free[index]->get_location());
+			}
+		}
+		if (far == 0) {
+			continue;
+		}
+		// The fewest of them (in that order) that win: the ones from afar attack from the province of the focus
+		const auto estimate_first = [&](const std::size_t count) -> BattleEstimate {
+			std::vector<ArmyInstance const*> attacking;
+			std::vector<ProvinceInstance const*> origins;
+			for (std::size_t position = 0; position < count; ++position) {
+				ArmyInstance const* const army = free[available[position]];
+				attacking.push_back(army);
+				origins.push_back(next_to_target(&army->get_location()) ? &army->get_location() : focus);
+			}
+			return estimate_battle(instance_manager, attacking, *target, origins);
+		};
+		if (!offensive_attacks(aggression, estimate_first(available.size()), defines)) {
+			continue;
+		}
+		std::size_t needed = available.size();
+		for (std::size_t count = 1; count < available.size(); ++count) {
+			if (offensive_attacks(aggression, estimate_first(count), defines)) {
+				needed = count;
+				break;
+			}
+		}
+		std::uint32_t at_focus = 0;
+		for (std::size_t position = 0; position < needed; ++position) {
+			ArmyInstance& army = *free[available[position]];
+			if (&army.get_location() == focus) {
+				at_focus++;
+			} else if (!next_to_target(&army.get_location()) && unit_manager.order_move(army, *focus, map_instance)) {
+				used[available[position]] = true;
+				at_focus++;
+				report.concentrated++;
+			}
+		}
+		if (report.concentrated > 0) {
+			front.focus = focus;
+			front.focus_target = target;
+			front.focus_divisions = at_focus;
+			front.focus_days = 0;
+			break;
 		}
 	}
 	return report;
@@ -1832,6 +2037,8 @@ void WarManager::update_plan_status(
 	}
 	if (report.attacks > 0) {
 		group->plan_status = 1;
+	} else if (front->focus != nullptr) {
+		group->plan_status = 10;
 	} else if (report.candidates == 0) {
 		group->plan_status = fighting ? 2 : 4;
 	} else if (report.free_divisions == 0) {
@@ -2170,6 +2377,11 @@ void WarManager::update_fronts(InstanceManager& instance_manager) {
 		join_group_armies(orders);
 		ArmyGroup const* const group = line.country->find_army_group(line.group_id);
 		distribute_divisions(instance_manager, orders, group != nullptr ? group->integrity : 1);
+	}
+
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "stances of the AI");
+		update_ai_stances(instance_manager);
 	}
 
 	OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "minimal plan of the AI");

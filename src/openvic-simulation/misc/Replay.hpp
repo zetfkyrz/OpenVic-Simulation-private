@@ -121,7 +121,9 @@ namespace OpenVic {
 		//     army_to_port)
 		// 70: the field marshals of the AI are on by default (PLAN_AI_ENABLED): their mode by the forces, the offensive drawn again when it is taken, the minimal
 		//     plan for a country without the generals for its groups
-		inline constexpr int SIMULATION_VERSION = 70;
+		// 71: the reconnaissance in a land battle: the tactics bonus of the side ahead, the dig in of the defenders cancelled by the attackers, the caution of
+		//     the estimate (RECON_TACTICS_BONUS, RECON_DIG_IN_CANCEL, RECON_ESTIMATE_CAUTION)
+		inline constexpr int SIMULATION_VERSION = 71;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

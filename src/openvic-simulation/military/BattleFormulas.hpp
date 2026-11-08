@@ -77,6 +77,15 @@ namespace OpenVic {
 		};
 		[[nodiscard]] bool breakthrough_day(OpenVicWarDefines const& defines, fixed_point_t ratio, BreakthroughCounter& counter);
 
+		// The reconnaissance in a battle (docs/WAR_ASSUMPTIONS.md, section 12). The advantage of a side, -1..1: 2 x its reconnaissance / the sum of both - 1
+		// (0 when both have none). An advantage a > 0 multiplies the attack and the breakthrough of the side by 1 + RECON_TACTICS_BONUS x a (recon_tactics);
+		// the advantage of the attacker keeps 1 - RECON_DIG_IN_CANCEL x a of the dig in of the defenders (recon_dig_in); the estimate of an attack with an
+		// advantage a < 0 takes the defence as lasting 1 + RECON_ESTIMATE_CAUTION x |a| times longer (recon_caution)
+		[[nodiscard]] fixed_point_t recon_advantage(fixed_point_t own, fixed_point_t enemy);
+		[[nodiscard]] fixed_point_t recon_tactics(OpenVicWarDefines const& defines, fixed_point_t advantage);
+		[[nodiscard]] fixed_point_t recon_dig_in(OpenVicWarDefines const& defines, fixed_point_t dig_in_levels, fixed_point_t attacker_advantage);
+		[[nodiscard]] fixed_point_t recon_caution(OpenVicWarDefines const& defines, fixed_point_t attacker_advantage);
+
 		// What the weapon is worth to the attack, the defence or the breakthrough of a regiment: the multiplier of its weapon; with an equipment fill
 		// (0..1) the regiment has the best weapon in this share and the one it was made with in the rest
 		[[nodiscard]] fixed_point_t weapon_ratio(fixed_point_t first_points, fixed_point_t best_points, fixed_point_t fill);

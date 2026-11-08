@@ -56,7 +56,7 @@ namespace {
 
 	// Bonuses of a general from the personality and background traits
 	struct LeaderBonus {
-		fixed_point_t attack, defence, morale, attrition;
+		fixed_point_t attack, defence, morale, attrition, reconnaissance;
 	};
 
 	LeaderBonus get_leader_bonus(LeaderInstance const* const leader, ModifierEffectCache const& cache) {
@@ -79,6 +79,9 @@ namespace {
 			}
 			if (cache.get_attrition_leader() != nullptr) {
 				bonus.attrition += trait->get_effect(*cache.get_attrition_leader());
+			}
+			if (cache.get_reconnaissance() != nullptr) {
+				bonus.reconnaissance += trait->get_effect(*cache.get_reconnaissance());
 			}
 		}
 		return bonus;
@@ -574,6 +577,7 @@ namespace {
 	struct BattleDay {
 		std::uint32_t width = 0, attacker_ranks = 0, defender_ranks = 0;
 		fixed_point_t attacker_attack, defender_attack, attacker_conditions, ratio;
+		fixed_point_t recon_advantage; // of the attackers, -1..1 (battle_formulas::recon_advantage)
 	};
 
 	BattleDay work_out_battle_day(
@@ -672,6 +676,16 @@ namespace {
 	const fixed_point_t terrain_defence = fixed_point_t::_1 + wd.terrain_defence_per_point.of(terrain != nullptr ? terrain->get_defence_bonus() : fixed_point_t::_0);
 	const fixed_point_t terrain_conditions = conditions.get_terrain(terrain_id);
 	const fixed_point_t skill_step = wd.general_skill_step.fixed();
+	// The reconnaissance of a side (section 12): its divisions in the battle, the front and the reserve, times 1 + the reconnaissance of the traits of
+	// their generals
+	const auto side_recon = [&cache](BattleSideUnits const& side) -> fixed_point_t {
+		fixed_point_t sum = fixed_point_t::_0;
+		for (BattleUnit const& unit : side.units) {
+			sum += unit.stats->reconnaissance * std::max(fixed_point_t::_0, fixed_point_t::_1 + get_leader_bonus(*unit.army, cache).reconnaissance);
+		}
+		return sum;
+	};
+	const fixed_point_t recon_advantage = battle_formulas::recon_advantage(side_recon(attackers), side_recon(defenders));
 
 	// What every division of the front is worth today: the parts of its types with their buffs, its general, its supply, the bonus of the planning of its
 	// field marshal (P6)
@@ -704,8 +718,9 @@ namespace {
 				breakthrough += part.breakthrough * (fixed_point_t::_1 + buff.breakthrough_mult);
 			}
 			const fixed_point_t planning = fixed_point_t::_1 + get_army_planning(*unit.army);
-			unit.attack = attack * leader_attack * skill_attack * supply * planning;
-			unit.breakthrough = breakthrough * leader_attack * supply * planning;
+			const fixed_point_t tactics = battle_formulas::recon_tactics(wd, attacking ? recon_advantage : -recon_advantage);
+			unit.attack = attack * leader_attack * skill_attack * supply * planning * tactics;
+			unit.breakthrough = breakthrough * leader_attack * supply * planning * tactics;
 			if (attacking) {
 				unit.protection = unit.breakthrough;
 				// Over a river: the army came from a province whose border with this one runs along a river
@@ -722,7 +737,9 @@ namespace {
 				unit.conditions = own_conditions * terrain_factor * conditions.night * conditions.weather
 					* (river ? conditions.river_crossing : fixed_point_t::_1) * flank_attack;
 			} else {
-				const fixed_point_t fortification = unit.stats->fortification + fixed_point_t(static_cast<std::int32_t>(unit.army->get_dig_in_level()));
+				// The reconnaissance of the attackers finds the works of the dig in (section 12)
+				const fixed_point_t fortification = unit.stats->fortification
+					+ battle_formulas::recon_dig_in(wd, fixed_point_t(static_cast<std::int32_t>(unit.army->get_dig_in_level())), recon_advantage);
 				// The defence the terrain gives is a bonus: the skill of the general makes it bigger
 				const fixed_point_t own_terrain_defence = fixed_point_t::_1
 					+ leader_skills::scale_terrain_effect(terrain_defence - fixed_point_t::_1, skill_step, terrain_level);
@@ -785,6 +802,7 @@ namespace {
 		day.defender_attack = defender_attack;
 		day.attacker_conditions = attacker_conditions;
 		day.ratio = battle_formulas::breakthrough_ratio(breakthrough_sum, protection_sum);
+		day.recon_advantage = recon_advantage;
 		return day;
 	}
 
@@ -895,7 +913,8 @@ DivisionStats const& WarManager::get_live_division_stats(
 }
 
 BattleEstimate WarManager::estimate_battle(
-	InstanceManager const& instance_manager, std::span<ArmyInstance const* const> attacking_armies, ProvinceInstance const& target
+	InstanceManager const& instance_manager, std::span<ArmyInstance const* const> attacking_armies, ProvinceInstance const& target,
+	std::span<ProvinceInstance const* const> origins
 ) const {
 	BattleEstimate estimate;
 	if (attacking_armies.empty()) {
@@ -913,7 +932,9 @@ BattleEstimate WarManager::estimate_battle(
 		}
 	}
 	const auto gather = [&](BattleSideUnits& side, const bool attacking) {
-		for (ArmyInstance* army : side.armies) {
+		for (std::size_t army_index = 0; army_index < side.armies.size(); ++army_index) {
+			ArmyInstance* const army = side.armies[army_index];
+			ProvinceInstance const* const given_origin = attacking && army_index < origins.size() ? origins[army_index] : nullptr;
 			for (DivisionInstance const& division : army->get_divisions()) {
 				DivisionStats const& stats = get_live_division_stats(instance_manager, *army, division);
 				if (stats.regiments == 0) {
@@ -923,7 +944,8 @@ BattleEstimate WarManager::estimate_battle(
 				unit.army = army;
 				unit.division_id = division.id;
 				unit.stats = &stats;
-				unit.origin = attacking ? (&army->get_location() != &target ? &army->get_location() : army->get_previous_location()) : nullptr;
+				unit.origin = !attacking ? nullptr : given_origin != nullptr ? given_origin
+					: &army->get_location() != &target ? &army->get_location() : army->get_previous_location();
 				side.units.push_back(unit);
 			}
 		}
@@ -971,7 +993,11 @@ BattleEstimate WarManager::estimate_battle(
 	const fixed_point_t defence_ends = estimate.breakthrough_days > 0
 		? std::min(estimate.defender_days, fixed_point_t(static_cast<std::int32_t>(estimate.breakthrough_days))) : estimate.defender_days;
 	estimate.attacker_wins = defence_ends < estimate.attacker_days;
-	estimate.win_chance = battle_formulas::win_chance(estimate.attacker_days, defence_ends, wd.battle_win_steepness);
+	// The chance is what the attacker sees: with a worse reconnaissance it takes the defence as lasting longer (section 12)
+	estimate.recon_advantage = day.recon_advantage;
+	estimate.win_chance = battle_formulas::win_chance(
+		estimate.attacker_days, defence_ends * battle_formulas::recon_caution(wd, day.recon_advantage), wd.battle_win_steepness
+	);
 	return estimate;
 }
 
@@ -1158,6 +1184,7 @@ void WarManager::update_combat(InstanceManager& instance_manager) {
 		report.defender_attack = defender_attack;
 		report.conditions = attacker_conditions;
 		report.ratio = ratio;
+		report.recon_advantage = battle_day.recon_advantage;
 		report.breakthrough = broken;
 		const std::uint32_t extra_depth = static_cast<std::uint32_t>(wd.template_depth_default);
 		const auto take_losses = [&](BattleSideUnits& side, fixed_point_t& lost_total) {

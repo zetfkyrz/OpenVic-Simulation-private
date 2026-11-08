@@ -65,7 +65,8 @@ namespace OpenVic {
 		// executed, 1 attacking (orders given), 2 in battle, 3 no war with the countries of the front, 4 no target of the offensive next to the line, 5 no
 		// free division on the line (they go there or fight), 6 every division holds its province (PLAN_MIN_HOLD; the aggressive mode or more divisions),
 		// 7 the targets open a wide flank (FLANK_EXPOSURE_MAX in the careful and the balanced mode), 8 the chance is too low (plan_best_chance of the
-		// best target), 9 the front only holds (no offensive)
+		// best target), 9 the front only holds (no offensive), 10 the divisions gather against a target (the concentration, docs/WAR_ASSUMPTIONS.md,
+		// section 12)
 		std::uint32_t plan_status = 0;
 		fixed_point_t plan_best_chance;
 		std::uint32_t plan_attacks = 0;

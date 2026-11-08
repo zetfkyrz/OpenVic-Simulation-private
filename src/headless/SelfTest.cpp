@@ -1827,6 +1827,19 @@ namespace {
 		r.check(near(defender_protection(war, fixed_point_t(10), fixed_point_t::_1, fixed_point_t(12) / 10), fixed_point_t(10) * (fixed_point_t::_1 + war.fortification_per_level.of(fixed_point_t::_1)) * fixed_point_t(12) / 10, eps),
 			"battle: the protection of a defender is its defence x (1 + 0.05 x fortification) x the terrain");
 
+		// The reconnaissance (section 12): the advantage 2 x own / sum - 1; 3 against 1 is +0.5: the attack x (1 + RECON_TACTICS_BONUS / 2), the dig in of the
+		// enemy less by RECON_DIG_IN_CANCEL / 2; the side with -0.5 gets no bonus and sees the defence lasting (1 + RECON_ESTIMATE_CAUTION / 2) times longer
+		const fixed_point_t ahead = recon_advantage(fixed_point_t(3), fixed_point_t::_1);
+		r.check(ahead == fixed_point_t::_1 / 2 && recon_advantage(fixed_point_t::_1, fixed_point_t(3)) == -fixed_point_t::_1 / 2
+				&& recon_advantage(fixed_point_t::_0, fixed_point_t::_0) == fixed_point_t::_0 && recon_advantage(fixed_point_t(2), fixed_point_t::_0) == fixed_point_t::_1
+				&& recon_tactics(war, ahead) == fixed_point_t::_1 + war.recon_tactics_bonus.of(ahead) && recon_tactics(war, -ahead) == fixed_point_t::_1
+				&& near(recon_dig_in(war, fixed_point_t(4), ahead), fixed_point_t(4) * (fixed_point_t::_1 - war.recon_dig_in_cancel.of(ahead)), eps)
+				&& recon_dig_in(war, fixed_point_t(4), -ahead) == fixed_point_t(4)
+				&& recon_caution(war, -ahead) == fixed_point_t::_1 + war.recon_estimate_caution.of(ahead) && recon_caution(war, ahead) == fixed_point_t::_1,
+			"battle: the reconnaissance gives the side ahead the tactics bonus and cancels a part of the enemy dig in; the side behind estimates with caution",
+			fmt::format("advantage {} tactics {} dig in {} caution {}", dbl(ahead), dbl(recon_tactics(war, ahead)), dbl(recon_dig_in(war, fixed_point_t(4), ahead)),
+				dbl(recon_caution(war, -ahead))));
+
 		// The modifiers of the country count in the attack, the defence and the breakthrough of a template (percents are summed)
 		CountryInstance* country = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
@@ -4970,6 +4983,8 @@ namespace {
 		r.check(near(estimate.ratio, report->ratio, report->ratio / 5) && estimate.attacker_wins == (report->ended && report->attacker_won),
 			"live battle: the estimate of the day before gives about the R of the battle and its winner (the supply of a day may differ)",
 			fmt::format("estimate R {} wins {}, battle R {} won {}", dbl(estimate.ratio), estimate.attacker_wins, dbl(report->ratio), report->attacker_won));
+		r.check(estimate.recon_advantage == report->recon_advantage && report->recon_advantage >= -fixed_point_t::_1 && report->recon_advantage <= fixed_point_t::_1,
+			"live battle: the battle and the estimate see the same advantage of the reconnaissance (section 12)", fmt::format("{}", dbl(report->recon_advantage)));
 		// The divisions of a new day: the front keeps its divisions while they stay
 		std::uint32_t day = 1;
 		while (day < 30) {
@@ -6529,6 +6544,129 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
+	// ---- the concentration (docs/WAR_ASSUMPTIONS.md, section 12): the division next to the target does not win alone, the free divisions of the line do:
+	// they gather in the province of the line next to the target
+
+	void test_concentration(Results& r, InstanceManager& im) {
+		WarManager& war_manager = im.get_war_manager();
+		MapInstance& map_instance = im.get_map_instance();
+		UnitInstanceManager& units = im.get_unit_instance_manager();
+		CountryInstance* country = nullptr;
+		CountryInstance* neighbour = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_rebel_country() || !candidate.has_army_command() || candidate.is_at_war() || !candidate.get_army_groups().empty()) {
+				continue;
+			}
+			std::size_t divisions = 0;
+			for (ArmyInstance const& army : candidate.get_armies()) {
+				divisions += army.get_transport_navy() == nullptr ? army.get_divisions().size() : 0;
+			}
+			if (divisions < 4) {
+				continue;
+			}
+			for (ProvinceInstance* province : candidate.get_owned_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					CountryInstance* const other = map_instance.get_province_instance_by_definition(adjacency.get_to()).get_controller();
+					if (neighbour == nullptr && adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && other != nullptr && other != &candidate
+						&& !other->is_at_war() && !other->is_rebel_country() && !other->has_alliance_with(candidate) && other->has_armies()) {
+						neighbour = other;
+					}
+				}
+			}
+			if (neighbour != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr || !war_manager.declare_war(im, *country, *neighbour)) {
+			fmt::println("TEST INFO concentration: no country with four divisions next to a neighbour with an army, not checked");
+			return;
+		}
+		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
+		create_army_group(*country, palette_size);
+		const std::uint32_t group_id = country->get_army_groups().back().id;
+		const std::uint32_t front_id = war_manager.create_border_front(im, *country, group_id, *neighbour);
+		Front const* front = war_manager.get_front_by_id(front_id);
+		ProvinceInstance* target = nullptr;
+		ProvinceInstance* near = nullptr;
+		ProvinceInstance* far = nullptr;
+		if (front != nullptr && !front->edges.empty()) {
+			target = front->edges.front().other;
+			near = front->edges.front().own;
+			for (ProvinceInstance* province : front->provinces) {
+				bool next_to = false;
+				for (FrontEdge const& edge : front->edges) {
+					next_to |= edge.own == province && edge.other == target;
+				}
+				if (far == nullptr && !next_to) {
+					far = province;
+				}
+			}
+		}
+		ArmyInstance* defender = nullptr;
+		for (ArmyInstance& army : neighbour->get_armies()) {
+			if (defender == nullptr && army.get_transport_navy() == nullptr && !army.empty()) {
+				defender = &army;
+			}
+		}
+		bool marshal = false;
+		for (LeaderInstance const& leader : country->get_leaders<unit_branch_t::LAND>()) {
+			marshal = marshal || (!leader.is_marshal() && leader.get_can_be_used() && set_army_group_marshal(im, *country, group_id, leader.unique_id));
+		}
+		if (far == nullptr || defender == nullptr || !marshal) {
+			fmt::println("TEST INFO concentration: no province of the line away from the target, no enemy army or no field marshal, not checked");
+		} else {
+			// The enemy army defends the target; one division of ours stands next to it, the others on the line away from it
+			defender->clear_path();
+			defender->set_location(*target);
+			std::vector<ArmyInstance*> ours;
+			for (ArmyInstance& army : country->get_armies()) {
+				if (army.get_transport_navy() == nullptr && !army.empty()) {
+					ours.push_back(&army);
+				}
+			}
+			for (std::size_t index = 0; index < ours.size(); ++index) {
+				while (ours[index]->get_divisions().size() > 1) {
+					ArmyInstance* const split = split_division_unit(units, *ours[index]);
+					if (split == nullptr) {
+						break;
+					}
+					ours.push_back(split);
+				}
+			}
+			const std::uint32_t max_attached = get_marshal_max_attached(im, *country);
+			for (std::size_t index = 0; index < ours.size(); ++index) {
+				ours[index]->clear_path();
+				ours[index]->set_location(index == 0 ? *near : *far);
+				set_army_group(*country, *ours[index], group_id, max_attached);
+			}
+			war_manager.create_plan_line(im, *country, group_id, PlanLine::type_t::OFFENSIVE, *target);
+			// The careful mode: PLAN_MIN_HOLD keeps the only division next to the target in its province
+			set_army_group_modes(*country, group_id, 1, 0);
+			set_army_group_plan_active(im, *country, group_id, true);
+			im.force_tick_and_update();
+			ArmyGroup const* const group = country->find_army_group(group_id);
+			front = war_manager.get_front_by_id(front_id);
+			std::size_t to_focus = 0;
+			for (ArmyInstance const* army : ours) {
+				to_focus += front != nullptr && front->focus != nullptr && army->is_moving() && &static_cast<ProvinceInstance const&>(army->get_path().back()) == front->focus;
+			}
+			const std::uint32_t status = group != nullptr ? group->plan_status : 0;
+			if (front != nullptr && front->focus_target == target) {
+				r.check(to_focus > 0 && to_focus < ours.size(),
+					"concentration: the division next to the target does not win alone, the divisions from afar go to the province of the line next to it",
+					fmt::format("{} of {} go to the focus", to_focus, ours.size()));
+			} else {
+				fmt::println("TEST INFO concentration: no gathering against the target, the plan status is {} (1: attacks, 6 or 8: all of them lose), not checked", status);
+			}
+		}
+		if (War* const war = war_manager.find_war_between(*country, *neighbour); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		war_manager.delete_group_lines(im, *country, group_id);
+		delete_army_group(im, *country, group_id);
+	}
+
 	// ---- the bonus of the planning (P6, docs/WAR_ASSUMPTIONS.md, section 6): it grows while the order waits, falls while it is executed, is gone without
 	// an order; a division moving by a manual order has none; the modifiers exist
 
@@ -7125,8 +7263,27 @@ namespace {
 		for (PlanLine const& line : war_manager.get_plan_lines()) {
 			offensive |= line.country == country && line.type == PlanLine::type_t::OFFENSIVE;
 		}
-		r.check(!country->get_army_groups().empty() && country->get_army_groups().front().ai_made && front != nullptr && front->enemy == enemy && offensive,
-			"ai marshals: on, an AI country at war makes a group, a front against its enemy and an offensive", fmt::format("{} groups", country->get_army_groups().size()));
+		// Much weaker than the enemy (AI_MARSHAL_DEFEND_RATIO): no offensive, the front holds the line (section 12)
+		const auto regiments_of = [](CountryInstance const& owner) -> std::int32_t {
+			std::int32_t regiments = 0;
+			for (ArmyInstance const& army : owner.get_armies()) {
+				regiments += static_cast<std::int32_t>(army.get_unit_count());
+			}
+			return regiments;
+		};
+		const bool weak = fixed_point_t(regiments_of(*country)) / std::max(1, regiments_of(*enemy)) < defines.ai_marshal_defend_ratio.fixed();
+		r.check(!country->get_army_groups().empty() && country->get_army_groups().front().ai_made && front != nullptr && front->enemy == enemy && offensive != weak,
+			"ai marshals: on, an AI country at war makes a group, a front against its enemy and an offensive (none when much weaker)",
+			fmt::format("{} groups, weak {}", country->get_army_groups().size(), weak));
+		// The stances (section 12): every army of the group has one of the AI (entrench, raid or rest)
+		std::size_t in_group = 0, with_stance = 0;
+		for (ArmyInstance const& army : country->get_armies()) {
+			if (!country->get_army_groups().empty() && army.get_army_group_id() == country->get_army_groups().front().id && !army.empty()) {
+				in_group++;
+				with_stance += army.get_stance() != ArmyInstance::STANCE_NORMAL;
+			}
+		}
+		r.check(in_group > 0 && with_stance == in_group, "ai marshals: the armies of the group of the AI get stances", fmt::format("{} of {}", with_stance, in_group));
 		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
 			war_manager.end_war(im, war->id);
 		}
@@ -7726,6 +7883,7 @@ namespace {
 		test_order_moves(r, *im); // ticks days
 		test_offensive_modes(r, *im);
 		test_offensive_execution(r, *im); // ticks days, a war of its own
+		test_concentration(r, *im); // ticks a day, a war of its own
 		test_planning(r, *im);
 		test_breakthrough(r, *im); // ticks a day
 		test_encirclement(r, *im); // ticks days, a war of its own

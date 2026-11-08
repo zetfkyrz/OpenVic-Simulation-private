@@ -120,6 +120,12 @@ namespace OpenVic {
 		std::uint32_t group_id = 0;
 		// The player changed the pieces of the line (the edit mode): the line keeps them instead of the whole border
 		bool edited = false;
+		// The concentration of the executor of the offensive (docs/WAR_ASSUMPTIONS.md, section 12): focus_divisions gather in the province focus of the
+		// line against focus_target; nullptr when there is none. focus_days: the days it lasts
+		ProvinceInstance* focus = nullptr;
+		ProvinceInstance const* focus_target = nullptr;
+		std::uint32_t focus_divisions = 0;
+		std::uint32_t focus_days = 0;
 	};
 
 	// A line of the plan of a field marshal (docs/WAR_ASSUMPTIONS.md, section 6): an offensive (the enemy provinces to take, from a front of the
@@ -164,6 +170,7 @@ namespace OpenVic {
 		fixed_point_t attacker_attack, defender_attack; // of the front, with the buffs and the multipliers (the attacker without its conditions)
 		fixed_point_t conditions; // the conditions of the attacker (the terrain, the river, the night, the weather)
 		fixed_point_t ratio; // R: the breakthrough of the attackers over the protection of the defenders
+		fixed_point_t recon_advantage; // of the attackers, -1..1 (docs/WAR_ASSUMPTIONS.md, section 12)
 		fixed_point_t attacker_strength_lost, defender_strength_lost; // strength points
 		fixed_point_t attacker_strength, defender_strength, attacker_max_strength, defender_max_strength; // of all the divisions of the battle, after the day
 		fixed_point_t attacker_organisation, defender_organisation; // the average of the front divisions after the day (points)
@@ -182,7 +189,9 @@ namespace OpenVic {
 		fixed_point_t attacker_days, defender_days; // the days until the first division of the front has no organisation left (1000: never)
 		std::uint32_t breakthrough_days = 0; // the breakthrough rule makes the defence retreat after these days (1 or BREAK_WEEK_DAYS), 0: not by R
 		bool attacker_wins = false; // the defence leaves first (by R or by the organisation)
-		// The chance of the victory of the attackers, 0..1 (battle_formulas::win_chance; 1 when nobody defends, 0 without attackers)
+		fixed_point_t recon_advantage; // of the attackers, -1..1 (docs/WAR_ASSUMPTIONS.md, section 12)
+		// The chance of the victory of the attackers, 0..1 (battle_formulas::win_chance; 1 when nobody defends, 0 without attackers); with a worse
+		// reconnaissance the defence is taken as lasting longer (battle_formulas::recon_caution)
 		fixed_point_t win_chance;
 	};
 
@@ -301,6 +310,7 @@ namespace OpenVic {
 		// the ones left out for the flank, the attacks ordered and the best chance of a victory
 		struct OffensiveReport {
 			std::uint32_t candidates = 0, free_divisions = 0, with_attackers = 0, flank_skipped = 0, attacks = 0;
+			std::uint32_t concentrated = 0; // divisions sent to the focus of the concentration today (section 12)
 			fixed_point_t best_chance = fixed_point_t::_0;
 		};
 		// dry_run: only the report, no orders (the check when the execution is pressed)
@@ -332,6 +342,10 @@ namespace OpenVic {
 		// shared among them, a front along the border and an offensive two provinces deep, executed in the balanced mode
 		// False when the country has no field marshal for a group (no free general): it fights by the minimal plan of the AI then
 		bool update_ai_marshals(InstanceManager& instance_manager, CountryInstance& country);
+	public:
+		// The stances of the armies in the groups of the field marshals of the AI (docs/WAR_ASSUMPTIONS.md, section 12), every day
+		void update_ai_stances(InstanceManager& instance_manager);
+	private:
 		// The zone (when limited) holds the provinces the armies may attack: the offensives of a field marshal
 		void order_front_armies(InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone = {}, bool limited = false);
 		// Spreads the divisions of the armies of the front over its line: while the front has fewer armies than sectors (the provinces
@@ -375,8 +389,10 @@ namespace OpenVic {
 		// What a battle of these armies (in any provinces: the support from several directions) against the enemies in the province would come to
 		// (docs/WAR_ASSUMPTIONS.md, section 6). The same work out of a day as the battle: the width, the front, the live divisions, the buffs, the
 		// generals, the supply, the fortification, the terrain, the river from where every army stands. Changes nothing (the cache of the numbers only).
+		// origins: where every army attacks from (nullptr or no entry: where it stands), for the armies that will gather somewhere else first
 		[[nodiscard]] BattleEstimate estimate_battle(
-			InstanceManager const& instance_manager, std::span<ArmyInstance const* const> attacking_armies, ProvinceInstance const& target
+			InstanceManager const& instance_manager, std::span<ArmyInstance const* const> attacking_armies, ProvinceInstance const& target,
+			std::span<ProvinceInstance const* const> origins = {}
 		) const;
 		// How many times get_live_division_stats computed the numbers (the tests of the cache)
 		std::uint64_t get_live_stats_computed() const {

@@ -2111,12 +2111,12 @@ static void run_front_dump(InstanceManager& instance_manager) {
 				continue;
 			}
 			fmt::println(
-				"FRONT_BATTLE day={} province={} attacker={} defender={} battle_day={} width={} front={}+{}/{}+{} ranks={}/{} attack={:.1f}/{:.1f} conditions={:.2f} R={:.2f} "
+				"FRONT_BATTLE day={} province={} attacker={} defender={} battle_day={} width={} front={}+{}/{}+{} ranks={}/{} attack={:.1f}/{:.1f} conditions={:.2f} R={:.2f} recon={:.2f} "
 				"lost={:.3f}/{:.3f} strength={:.2f}/{:.2f} of {:.2f}/{:.2f} organisation={:.1f}/{:.1f} retreated={}/{} breakthrough={} ended={} attacker_won={}",
 				day, report.province->get_identifier(), report.attacker->get_identifier(), report.defender->get_identifier(), report.day, report.width,
 				report.attacker_front, report.attacker_reserve, report.defender_front, report.defender_reserve, report.attacker_ranks, report.defender_ranks,
 				static_cast<double>(report.attacker_attack), static_cast<double>(report.defender_attack), static_cast<double>(report.conditions),
-				static_cast<double>(report.ratio), static_cast<double>(report.attacker_strength_lost), static_cast<double>(report.defender_strength_lost),
+				static_cast<double>(report.ratio), static_cast<double>(report.recon_advantage), static_cast<double>(report.attacker_strength_lost), static_cast<double>(report.defender_strength_lost),
 				static_cast<double>(report.attacker_strength), static_cast<double>(report.defender_strength), static_cast<double>(report.attacker_max_strength),
 				static_cast<double>(report.defender_max_strength), static_cast<double>(report.attacker_organisation), static_cast<double>(report.defender_organisation),
 				report.attacker_retreated, report.defender_retreated, report.breakthrough ? 1 : 0, report.ended ? 1 : 0, report.attacker_won ? 1 : 0
@@ -2273,11 +2273,11 @@ static void run_war_dump(InstanceManager& instance_manager, const size_t day) {
 				const BattleEstimate estimate = war_manager.estimate_battle(instance_manager, attacking, *target);
 				fmt::println(
 					"WAR_TARGET day={} country={} province={} terrain={} siege_days={} dig_in={} attackers={} defenders={} valid={} ratio={:.2f} attack={:.2f}/{:.2f} days={:.1f}/{:.1f} "
-					"breakthrough_days={} wins={} chance={:.2f}", day, country.get_identifier(), target->get_identifier(),
+					"breakthrough_days={} wins={} recon={:.2f} chance={:.2f}", day, country.get_identifier(), target->get_identifier(),
 					target->get_terrain_type() != nullptr ? target->get_terrain_type()->get_identifier() : std::string_view { "-" }, war_manager.get_siege_days_required(*target), dig_in,
 					attacking.size(), defenders, estimate.valid ? 1 : 0, static_cast<double>(estimate.ratio), static_cast<double>(estimate.attacker_attack),
 					static_cast<double>(estimate.defender_attack), static_cast<double>(estimate.attacker_days), static_cast<double>(estimate.defender_days),
-					estimate.breakthrough_days, estimate.attacker_wins ? 1 : 0, static_cast<double>(estimate.win_chance)
+					estimate.breakthrough_days, estimate.attacker_wins ? 1 : 0, static_cast<double>(estimate.recon_advantage), static_cast<double>(estimate.win_chance)
 				);
 			}
 		}
