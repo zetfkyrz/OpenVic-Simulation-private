@@ -204,8 +204,13 @@ namespace OpenVic {
 			expansion_wanted = false;
 		}
 
-		// Cost of building or expanding by one level at the current market prices
+		// Cost of building or expanding by one level at the current market prices: the money part and the goods of the building type, and the
+		// wages of the builders (CONSTRUCTION_WAGE_SHARE of them)
 		[[nodiscard]] static fixed_point_t calculate_construction_cost(
+			BuildingType const& building_type, MarketInstance const& market_instance
+		);
+		// The wages of the builders in the cost above
+		[[nodiscard]] static fixed_point_t calculate_construction_wages(
 			BuildingType const& building_type, MarketInstance const& market_instance
 		);
 		[[nodiscard]] static Timespan calculate_construction_time(BuildingType const& building_type);

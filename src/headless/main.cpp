@@ -1453,6 +1453,50 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			fmt::println("SUPPLY_GOOD_MAKERS {} {} countries={}{}", label, identifier, rows.size(), text);
 		}
 	}
+	// SUPPLY_COUNTRY: the 25 countries with the most regiments: the cash, the share of the need that arrived and the supply level, and the goods of the
+	// units their stockpile has for less than a day (stockpile/daily need/bought yesterday)
+	std::vector<std::pair<CountryInstance*, std::size_t>> armies;
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country() || country.get_armies().empty()) {
+			continue;
+		}
+		std::size_t regiments = 0;
+		for (ArmyInstance const& army : country.get_armies()) {
+			regiments += army.get_regiment_instances().size();
+		}
+		armies.emplace_back(&country, regiments);
+	}
+	std::sort(armies.begin(), armies.end(), [](auto const& a, auto const& b) -> bool {
+		return a.second != b.second ? a.second > b.second : type_safe::get(a.first->index) < type_safe::get(b.first->index);
+	});
+	for (std::size_t index = 0; index < armies.size() && index < 25; ++index) {
+		CountryInstance& country = *armies[index].first;
+		std::string short_goods;
+		for (auto const& [good_instance, good_data] : country.get_goods_data()) {
+			const fixed_point_t need = good_data.army_needs + good_data.navy_needs;
+			if (need > fixed_point_t::_0 && good_data.stockpile_amount < need) {
+				short_goods += fmt::format(" {}:{:.1f}/{:.1f}/{:.1f}", good_instance.get_identifier(), static_cast<double>(good_data.stockpile_amount),
+					static_cast<double>(need), static_cast<double>(good_data.quantity_traded_yesterday));
+			}
+		}
+		fixed_point_t taxable = fixed_point_t::_0;
+		for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+			taxable += country.get_taxable_income_by_strata(strata);
+		}
+		fmt::println("SUPPLY_COUNTRY {} {} regiments={} cash={:.0f} construction={:.0f} income={:.1f} army_cost={:.1f} stockpile_spent={:.1f} admin={:.1f} education={:.1f} arrived={:.2f} level={:.2f} army_slider={:.2f} tax={:.2f} military={:.2f} taxable={:.0f} tax_eff={:.2f} tariff={:.1f} population={} short={}", label, country.get_identifier(),
+			armies[index].second, static_cast<double>(country.get_cash_stockpile().load()), static_cast<double>(country.get_construction_money()),
+			static_cast<double>(country.get_income_yesterday()),
+			static_cast<double>(country.calculate_army_supply_cost_per_day()), static_cast<double>(country.get_actual_national_stockpile_spending().load()),
+			static_cast<double>(country.get_projected_administration_spending_unscaled_by_slider_untracked() * country.get_administration_spending_slider_value().get_value_untracked()),
+			static_cast<double>(country.get_projected_education_spending_unscaled_by_slider_untracked() * country.get_education_spending_slider_value().get_value_untracked()),
+			static_cast<double>(country.get_army_supply_ratio()),
+			static_cast<double>(country.get_army_supply_level()), static_cast<double>(country.get_army_spending_slider_value().get_value_untracked()),
+			static_cast<double>(country.get_tax_rate_slider_value_by_strata(instance_manager.definition_manager.get_pop_manager().get_stratas().front()).get_value_untracked()),
+			static_cast<double>(country.get_military_spending_slider_value().get_value_untracked()), static_cast<double>(taxable),
+			static_cast<double>(country.get_tax_efficiency_untracked()), static_cast<double>(country.get_tariff_income()),
+			type_safe::get(country.get_total_population()),
+			short_goods.empty() ? std::string { "-" } : short_goods);
+	}
 }
 
 // --dump-manpower (docs/RECRUITMENT.md): MANPOWER lines of the countries with the most men in the army: the pops of soldiers, the maximum, the men

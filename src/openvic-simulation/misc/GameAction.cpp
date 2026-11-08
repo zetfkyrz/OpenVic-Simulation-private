@@ -605,9 +605,11 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 		return false;
 	}
 
-	// The player pays the money part of the cost at once, the goods are taken from the national stockpile while building
+	// The player pays the money part of the cost and the wages of the builders (ov_economy.CONSTRUCTION_WAGE_SHARE, to the pops of the state) at
+	// once, the goods are taken from the national stockpile while building
 	const fixed_point_t cost = building_type.cost;
-	if (country.get_cash_stockpile().load() < cost) {
+	const fixed_point_t wages = FactoryInstance::calculate_construction_wages(building_type, instance_manager.get_market_instance());
+	if (country.get_cash_stockpile().load() < cost + wages) {
 		return false;
 	}
 
@@ -628,6 +630,7 @@ bool GameActionManager::VariantVisitor::operator() (build_factory_argument_t con
 	}
 
 	country.spend_cash(cost);
+	country.spend_cash(CountryInstance::pay_construction_wages(state, wages));
 	factory->start_construction(instance_manager.get_today(), true);
 	return true;
 }
@@ -824,12 +827,14 @@ bool GameActionManager::VariantVisitor::operator() (expand_all_factories_argumen
 			if (!factory.can_be_expanded() || !country.is_building_type_unlocked(factory.building_type)) {
 				continue;
 			}
-			// Like the expansion of a single factory: the money part is paid at once, the goods come from the stockpile
+			// Like the expansion of a single factory: the money part and the wages of the builders are paid at once, the goods come from the stockpile
 			const fixed_point_t cost = factory.building_type.cost;
-			if (country.get_cash_stockpile().load() < cost) {
+			const fixed_point_t wages = FactoryInstance::calculate_construction_wages(factory.building_type, instance_manager.get_market_instance());
+			if (country.get_cash_stockpile().load() < cost + wages) {
 				continue;
 			}
 			country.spend_cash(cost);
+			country.spend_cash(CountryInstance::pay_construction_wages(*state, wages));
 			factory.start_construction(instance_manager.get_today(), true);
 			changed = true;
 		}

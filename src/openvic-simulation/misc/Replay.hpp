@@ -125,7 +125,12 @@ namespace OpenVic {
 		//     the estimate (RECON_TACTICS_BONUS, RECON_DIG_IN_CANCEL, RECON_ESTIMATE_CAUTION)
 		// 72: the breakthroughs of the field marshals of the AI: much stronger with enough divisions, from the front to the capital of the enemy; one that
 		//     stands is given up (AI_BREAKTHROUGH_RATIO, AI_BREAKTHROUGH_MIN_DIVISIONS, AI_BREAKTHROUGH_STALL_DAYS, AI_BREAKTHROUGH_PAUSE_DAYS)
-		inline constexpr int SIMULATION_VERSION = 72;
+		// 73: the economy of the constructions and the budget of the AI: a construction costs its goods and CONSTRUCTION_WAGE_SHARE more (the wages,
+		//     to the pops of the state); what a fund pays goes to the treasury of the country of the state, which buys the goods on the market
+		//     (before, the money left the economy); the AI counts the supplies of the army and the navy in its spending, cuts the education and the
+		//     administration first, disbands at peace what it cannot pay (BUDGET_DISBAND_SHARE), and with a surplus (or a growing treasury) lowers
+		//     the taxes to BUDGET_MIN_TAX and raises the spending to BUDGET_MAX_SPENDING
+		inline constexpr int SIMULATION_VERSION = 73;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

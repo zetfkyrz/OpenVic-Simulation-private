@@ -418,6 +418,8 @@ void InvestmentPlanner::review(InstanceManager& instance_manager, CountryInstanc
 		}
 
 		country.spend_investment_fund(candidate.cost, std::move(record));
+		// The treasury builds it: the wages of the builders and the goods of the building on the market
+		country.take_construction_order(*candidate.building_type, state, candidate.cost);
 		started++;
 	}
 }

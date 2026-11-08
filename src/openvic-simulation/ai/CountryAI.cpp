@@ -109,12 +109,16 @@ namespace {
 		if (ai.budget_enabled == 0) {
 			return;
 		}
-		const fixed_point_t spending = country.projected_spending.get_untracked();
+		// The supplies of the army and the navy are bought for the national stockpile out of what is left after the other spending, so they are
+		// counted here too: without them a poor country spent all on the education and the administration and its armies got nothing
+		const fixed_point_t spending = country.projected_spending.get_untracked() + country.calculate_army_supply_cost_per_day()
+			+ country.calculate_navy_supply_cost_per_day();
 		const fixed_point_t income = country.get_income_yesterday();
 		if (spending <= fixed_point_t::_0 || income <= fixed_point_t::_0) {
 			return; // the first days: nothing was collected yet
 		}
-		const fixed_point_t cash = country.get_cash_stockpile().load();
+		// The money of the constructions in the treasury is not the money of the budget
+		const fixed_point_t cash = country.get_cash_stockpile().load() - country.get_construction_money();
 		const fixed_point_t reserve = spending * ai.budget_reserve_days;
 		const fixed_point_t step = ai.budget_step.fixed();
 		PopManager const& pop_manager = instance_manager.definition_manager.get_pop_manager();
@@ -129,21 +133,33 @@ namespace {
 					taxes_at_top = false;
 				}
 			}
-			if (taxes_at_top) {
+			// The education and the administration go down first, the pay of the military only when both are at the floor; at once when the
+			// treasury does not hold a day of the spending (the supplies of the armies are bought last, they would get nothing)
+			if (taxes_at_top || cash < spending) {
 				const fixed_point_t floor = ai.budget_min_spending.fixed();
-				country.set_military_spending_slider_value(std::max(floor, country.get_military_spending_slider_value().get_value_untracked() - step));
-				country.set_administration_spending_slider_value(std::max(floor, country.get_administration_spending_slider_value().get_value_untracked() - step));
-				country.set_education_spending_slider_value(std::max(floor, country.get_education_spending_slider_value().get_value_untracked() - step));
-			}
-		} else if (cash > reserve * 2 && income * Rate::DENOMINATOR > spending * ai.budget_surplus_ratio.numerator) {
-			const fixed_point_t middle = fixed_point_t::_0_50;
-			for (Strata const& strata : pop_manager.get_stratas()) {
-				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
-				if (rate > middle) {
-					country.set_strata_tax_rate_slider_value(strata, std::max(middle, rate - step));
+				const fixed_point_t administration = country.get_administration_spending_slider_value().get_value_untracked();
+				const fixed_point_t education = country.get_education_spending_slider_value().get_value_untracked();
+				if (administration > floor || education > floor) {
+					country.set_administration_spending_slider_value(std::max(floor, administration - step));
+					country.set_education_spending_slider_value(std::max(floor, education - step));
+				} else {
+					country.set_military_spending_slider_value(std::max(floor, country.get_military_spending_slider_value().get_value_untracked() - step));
 				}
 			}
-			const auto restore = [&](fixed_point_t value) { return value < middle ? std::min(middle, value + step) : value; };
+		} else if (cash > reserve * 2 && (income * Rate::DENOMINATOR > spending * ai.budget_surplus_ratio.numerator
+			// the treasury grows (the freight of the trade and the tariffs are not in the income of the taxes)
+			|| country.get_balance_before_investment_average() > fixed_point_t::_0)) {
+			// A surplus: the money goes back to the pops, the taxes go down to BUDGET_MIN_TAX and the spending up to BUDGET_MAX_SPENDING (before, the
+			// treasuries of the rich countries kept the money)
+			const fixed_point_t lowest = ai.budget_min_tax.fixed();
+			for (Strata const& strata : pop_manager.get_stratas()) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
+				if (rate > lowest) {
+					country.set_strata_tax_rate_slider_value(strata, std::max(lowest, rate - step));
+				}
+			}
+			const fixed_point_t highest = ai.budget_max_spending.fixed();
+			const auto restore = [&](fixed_point_t value) { return value < highest ? std::min(highest, value + step) : value; };
 			country.set_military_spending_slider_value(restore(country.get_military_spending_slider_value().get_value_untracked()));
 			country.set_administration_spending_slider_value(restore(country.get_administration_spending_slider_value().get_value_untracked()));
 			country.set_education_spending_slider_value(restore(country.get_education_spending_slider_value().get_value_untracked()));
@@ -443,6 +459,74 @@ namespace {
 		}
 	}
 
+	// At peace an AI country that has nothing more to cut (the taxes at the top, the military, administration and education spending at the floor) and whose
+	// income, after the other spending, does not pay the supplies of its army disbands its weakest regiments: at most BUDGET_DISBAND_SHARE of them a
+	// month and never under MIN_WAR_REGIMENTS (docs/MILITARY_SUPPLY.md, "Бюджет ИИ и снабжение")
+	void disband_over_budget(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+		if (ai.budget_enabled == 0 || ai.budget_disband_share.numerator <= 0) {
+			return;
+		}
+		const fixed_point_t army_cost = country.calculate_army_supply_cost_per_day();
+		const fixed_point_t income = country.get_income_yesterday();
+		const fixed_point_t other = country.projected_spending.get_untracked() + country.calculate_navy_supply_cost_per_day();
+		if (army_cost <= fixed_point_t::_0 || income <= fixed_point_t::_0 || country.get_cash_stockpile().load() >= other + army_cost) {
+			return;
+		}
+		const fixed_point_t left = std::max(fixed_point_t::_0, income - other);
+		if (army_cost <= left) {
+			return;
+		}
+		for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+			if (country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked()
+				< std::min(ai.budget_max_tax.fixed(), country.get_tax_rate_slider_value_by_strata(strata).get_max())) {
+				return;
+			}
+		}
+		const fixed_point_t floor = ai.budget_min_spending.fixed();
+		if (country.get_military_spending_slider_value().get_value_untracked() > floor
+			|| country.get_administration_spending_slider_value().get_value_untracked() > floor
+			|| country.get_education_spending_slider_value().get_value_untracked() > floor) {
+			return;
+		}
+		const size_t total = regular_regiment_count(country);
+		const size_t keep = static_cast<size_t>(ai.min_war_regiments);
+		if (total <= keep) {
+			return;
+		}
+		std::vector<std::pair<RegimentInstance*, ArmyInstance*>> regiments;
+		for (ArmyInstance& army : country.get_armies()) {
+			if (army.is_in_combat()) {
+				continue;
+			}
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				if (!regiment.is_mobilised()) {
+					regiments.emplace_back(&regiment, &army);
+				}
+			}
+		}
+		std::stable_sort(regiments.begin(), regiments.end(), [](auto const& a, auto const& b) -> bool {
+			return a.first->get_strength() != b.first->get_strength() ? a.first->get_strength() < b.first->get_strength()
+				: a.first->unique_id < b.first->unique_id;
+		});
+		const size_t most = std::max<size_t>(1, static_cast<size_t>(ai.budget_disband_share.of_int(static_cast<std::int64_t>(total))));
+		const fixed_point_t per_regiment = army_cost / static_cast<std::int32_t>(total);
+		fixed_point_t excess = army_cost - left;
+		size_t disbanded = 0;
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		for (auto const& [regiment, army] : regiments) {
+			if (excess <= fixed_point_t::_0 || disbanded >= most || total - disbanded <= keep) {
+				break;
+			}
+			unit_manager.destroy_unit(*regiment, *army);
+			excess -= per_regiment;
+			disbanded++;
+		}
+		if (disbanded > 0) {
+			SPDLOG_INFO("AI: {} disbands {} regiments it cannot pay for", country.get_identifier(), disbanded);
+		}
+	}
+
 	// At war the AI mobilises when its regiments (not mobilised) are fewer than AI_MOBILISE_RATIO x the regiments of its enemies; the peace demobilises
 	// it by itself (UnitInstanceManager::update_mobilisation, DEMOBILISE_DAYS after the last war)
 	void mobilise_if_weaker(InstanceManager& instance_manager, CountryInstance& country) {
@@ -555,6 +639,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			recruit(instance_manager, country);
 		} else {
 			disband_over_manpower(instance_manager, country);
+			disband_over_budget(instance_manager, country);
 		}
 		if (!country.is_at_war() && ai.war_chance_per_year.numerator > 0 && country.get_total_rank() > 0
 			&& static_cast<int>(country.get_total_rank()) <= ai.max_rank_for_wars

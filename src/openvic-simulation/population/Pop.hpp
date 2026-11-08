@@ -74,7 +74,8 @@ namespace OpenVic {
 		F(government_salary_education) \
 		F(government_salary_military) \
 		F(event_and_decision_income) \
-		F(loan_interest_payments)
+		F(loan_interest_payments) \
+		F(construction_wages)
 
 	#define OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(F) \
 		F(life_needs_expense) \

@@ -67,6 +67,8 @@ namespace OpenVic {
 	X(pop_government_salary_military, "budget") \
 	X(pop_event_and_decision_income, "other") \
 	X(pop_loan_interest_payments, "credit") \
+	/* the wages of the builders of a construction (CONSTRUCTION_WAGE_SHARE of its price), paid to the pops of the state */ \
+	X(pop_construction_wages, "income") \
 	X(pop_import_subsidies, "subsidy") \
 	X(pop_artisanal_revenue, "income") \
 	X(pop_life_needs_expense, "trade") \
@@ -88,6 +90,8 @@ namespace OpenVic {
 	X(expansion_fund_spent, "factory") \
 	/* the investment fund of a country pays the construction of an enterprise or a railroad */ \
 	X(investment_fund_spent, "factory") \
+	/* the treasury of the country of the state takes the money of a construction a fund paid for (the goods are bought with it) */ \
+	X(construction_contract, "factory") \
 	/* the other changes of the treasury of a country (add_cash / spend_cash) */ \
 	X(country_other_credit, "other") \
 	X(country_other_debit, "other")

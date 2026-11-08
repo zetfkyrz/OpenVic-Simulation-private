@@ -2219,6 +2219,9 @@ void CountryInstance::country_tick_before_map(
 	unemployment_benefit_today = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
 
 	fixed_point_t available_funds = cash_stockpile_start_of_tick = cash_stockpile;
+	// The money of the constructions is not for the budget, it buys the goods of the constructions (take_construction_order)
+	construction_money = std::clamp(construction_money, fixed_point_t::_0, std::max(fixed_point_t::_0, available_funds));
+	available_funds -= construction_money;
 	const fixed_point_t projected_administration_spending_copy = projected_administration_spending.get_untracked();
 	const fixed_point_t projected_education_spending_copy = projected_education_spending.get_untracked();
 	const fixed_point_t projected_military_spending_copy = projected_military_spending.get_untracked();
@@ -2295,6 +2298,7 @@ void CountryInstance::country_tick_before_map(
 
 	calculate_government_good_needs(today);
 
+	available_funds += construction_money;
 	manage_national_stockpile(
 		reusable_goods_mask,
 		reusable_vectors,
@@ -2302,8 +2306,8 @@ void CountryInstance::country_tick_before_map(
 		available_funds
 	);
 
-	// What is left is free to be spent on subsidies and loans during the day
-	free_funds = available_funds;
+	// What is left is free to be spent on subsidies and loans during the day (not the money of the constructions)
+	free_funds = std::max(fixed_point_t::_0, available_funds - construction_money);
 
 	//TODO market maker orders
 
@@ -2590,6 +2594,7 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	}
 	canned_food_from_grain_yesterday = cans_from_grain;
 
+	fixed_point_t construction_value = fixed_point_t::_0;
 	for (auto [good_instance, good_data] : goods_data) {
 		const fixed_point_t daily_need = good_data.army_needs + good_data.navy_needs;
 		const fixed_point_t due = good_data.army_due + good_data.navy_due;
@@ -2618,7 +2623,35 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 			good_data.government_needs += daily_need * DAYS_OF_SUPPLY;
 			good_data.max_government_consumption += daily_need * DAYS_OF_SUPPLY;
 		}
+
+		// The goods of the constructions the treasury builds for a fund: what was ordered yesterday and is in the stockpile over its other needs goes
+		// into them (what the market did not give is given up), and today CONSTRUCTION_GOODS_BUY_SHARE of what is still due is ordered (at least 1)
+		if (good_data.construction_ordered > fixed_point_t::_0) {
+			const fixed_point_t spare = std::max(fixed_point_t::_0, good_data.stockpile_amount - good_data.government_needs);
+			const fixed_point_t used = std::min(good_data.construction_ordered, spare);
+			if (used > fixed_point_t::_0) {
+				good_data.stockpile_amount -= used;
+				good_data.stockpile_change_yesterday -= used;
+				construction_money = std::max(fixed_point_t::_0, construction_money - used * good_instance.get_price());
+			}
+			good_data.construction_ordered = fixed_point_t::_0;
+		}
+		if (good_data.construction_due > fixed_point_t::_0) {
+			if (construction_money <= fixed_point_t::_0) {
+				good_data.construction_due = fixed_point_t::_0;
+			} else {
+				const fixed_point_t want = std::min(good_data.construction_due,
+					std::max(openvic_economy_defines->construction_goods_buy_share.of(good_data.construction_due), fixed_point_t::_1));
+				good_data.construction_due -= want;
+				good_data.construction_ordered = want;
+				good_data.government_needs += want;
+				good_data.max_government_consumption += want;
+				construction_value += (good_data.construction_due + want) * good_instance.get_price();
+			}
+		}
 	}
+	// The money of the constructions is not more than what their goods still cost: what the market did not give is free
+	construction_money = std::min(construction_money, construction_value);
 
 	// The companies: what each type works as today and how much of its goods it got (the slider of the army counts as it does for the regiments)
 	if (!company_works_as.empty()) {
@@ -3094,6 +3127,50 @@ fixed_point_t CountryInstance::get_investment_allocation(const fixed_point_t sli
 CountryInstance::good_data_t::good_data_t()
 	: mutex { memory::make_unique<spin_mutex>() }
 	{ }
+
+fixed_point_t CountryInstance::pay_construction_wages(State& state, const fixed_point_t amount) {
+	if (amount <= fixed_point_t::_0) {
+		return fixed_point_t::_0;
+	}
+	std::int64_t total = 0;
+	for (ProvinceInstance& province : state.get_provinces()) {
+		for (Pop const& pop : province.get_pops()) {
+			total += type_safe::get(pop.get_size());
+		}
+	}
+	if (total <= 0 || total > std::numeric_limits<std::int32_t>::max()) {
+		return fixed_point_t::_0;
+	}
+	fixed_point_t paid = fixed_point_t::_0;
+	for (ProvinceInstance& province : state.get_provinces()) {
+		for (Pop& pop : province.get_mutable_pops()) {
+			const std::int32_t size = static_cast<std::int32_t>(type_safe::get(pop.get_size()));
+			if (size <= 0) {
+				continue;
+			}
+			const fixed_point_t share = amount * size / static_cast<std::int32_t>(total);
+			if (share > fixed_point_t::_0) {
+				pop.add_construction_wages(share);
+				paid += share;
+			}
+		}
+	}
+	return paid;
+}
+
+void CountryInstance::take_construction_order(BuildingType const& building_type, State& state, const fixed_point_t paid) {
+	if (paid <= fixed_point_t::_0) {
+		return;
+	}
+	const fixed_point_t wages = pay_construction_wages(state, std::min(paid, FactoryInstance::calculate_construction_wages(building_type, market_instance)));
+	const fixed_point_t contract = paid - wages;
+	cash_stockpile += contract;
+	MoneyLedger::record(MoneyLedger::label_t::construction_contract, contract);
+	construction_money += contract;
+	for (auto const& [good, quantity] : building_type.goods_cost) {
+		goods_data.at_index(good->index).construction_due += quantity;
+	}
+}
 
 void CountryInstance::good_data_t::clear_daily_recorded_data() {
 	const std::lock_guard<spin_mutex> lock_guard { *mutex };

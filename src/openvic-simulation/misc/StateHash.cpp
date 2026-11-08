@@ -144,6 +144,15 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		hasher.add(country.get_cash_stockpile().load());
 		hasher.add(country.get_investment_fund());
+		{
+			// The constructions the treasury builds for a fund (version 73)
+			fixed_point_t due = fixed_point_t::_0;
+			for (auto const& [good_instance, good_data] : country.get_goods_data()) {
+				due += good_data.construction_due + good_data.construction_ordered * 3;
+			}
+			hasher.add(country.get_construction_money());
+			hasher.add(due);
+		}
 		hasher.add(country.get_income_yesterday());
 		hasher.add(country.get_balance_before_investment_average());
 		hasher.add(country.get_prestige_untracked());

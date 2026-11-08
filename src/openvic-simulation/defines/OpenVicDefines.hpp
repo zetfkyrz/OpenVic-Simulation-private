@@ -130,13 +130,22 @@ namespace OpenVic {
 	/* The budget of an AI country, once a month (docs/POPULATION.md A2-b): when the treasury holds less than BUDGET_RESERVE_DAYS days of the spending */ \
 	/* and the income of yesterday is under the spending, the taxes of all strata go up by BUDGET_STEP (to BUDGET_MAX_TAX), and when they are at the top the */ \
 	/* military, administration and education spending go down by BUDGET_STEP (to BUDGET_MIN_SPENDING). With a surplus (income over BUDGET_SURPLUS_RATIO x */ \
-	/* the spending and twice the reserve in the treasury) the sliders go back toward 0.5 by the step. 0 = the sliders of the AI stay where they are */ \
+	/* the spending and twice the reserve in the treasury) the sliders go back toward 0.5 by the step. 0 = the sliders of the AI stay where they are. */ \
+	/* The spending counts the supplies of the army and the navy (version 73); the education and the administration go down first, the military pay */ \
+	/* last, and at once when the treasury does not hold a day of the spending. At peace, when there is nothing more to cut (the taxes at the top, the */ \
+	/* three sliders at the floor) and the income left after the other spending does not pay the supplies of the army, the AI disbands its weakest */ \
+	/* regiments: at most BUDGET_DISBAND_SHARE of them a month, never under MIN_WAR_REGIMENTS (0 = no disbanding) */ \
 	INT(BUDGET_ENABLED, budget_enabled, 1, 0, 1) \
 	RATE(BUDGET_STEP, budget_step, Rate(5, 100), 0, 1) \
 	INT(BUDGET_RESERVE_DAYS, budget_reserve_days, 30, 0, 3650) \
 	RATE(BUDGET_MAX_TAX, budget_max_tax, Rate(80, 100), 0, 1) \
 	RATE(BUDGET_MIN_SPENDING, budget_min_spending, Rate(20, 100), 0, 1) \
-	RATE(BUDGET_SURPLUS_RATIO, budget_surplus_ratio, Rate(130, 100), 1, 100)
+	RATE(BUDGET_SURPLUS_RATIO, budget_surplus_ratio, Rate(130, 100), 1, 100) \
+	RATE(BUDGET_DISBAND_SHARE, budget_disband_share, Rate(10, 100), 0, 1) \
+	/* With a surplus the money goes back to the pops (version 73): the taxes go down by the step to BUDGET_MIN_TAX and the military, */ \
+	/* administration and education spending up by the step to BUDGET_MAX_SPENDING */ \
+	RATE(BUDGET_MIN_TAX, budget_min_tax, Rate(10, 100), 0, 1) \
+	RATE(BUDGET_MAX_SPENDING, budget_max_spending, Rate(100, 100), 0, 1)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(20, 100), 0, 1) \
 	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \
@@ -698,6 +707,13 @@ namespace OpenVic {
 	INT(POP_START_SAVINGS_DAYS, pop_start_savings_days, 7, 0, 3650) \
 	/* Investment fund: the construction slider of the budget sets aside this share of the daily income at 100 percent */ \
 	RATE(INVESTMENT_BUDGET_SHARE, investment_budget_share, Rate(50, 100), 0, 1) \
+	/* The price of a construction (an enterprise, a level of a factory, a railroad) is the goods of the building at the prices of the market and */ \
+	/* this share more: the wages of the builders, paid at the start to the pops of the state (by their size). When a fund pays (the investment */ \
+	/* fund, the expansion fund of a factory, the capitalists), the treasury of the country of the state takes the rest as the contractor (version */ \
+	/* 73: before, the money left the economy) and buys the goods of the building on the market: every day CONSTRUCTION_GOODS_BUY_SHARE of what */ \
+	/* is still to be bought (at least 1 piece). The budget does not spend that money (docs/ECONOMY_CONSTRUCTION.md) */ \
+	RATE(CONSTRUCTION_WAGE_SHARE, construction_wage_share, Rate(5, 100), 0, 10) \
+	RATE(CONSTRUCTION_GOODS_BUY_SHARE, construction_goods_buy_share, Rate(5, 100), 0, 1) \
 	/* How often (in days) the profit of the possible enterprises and railroads is reviewed, and how many projects may start per review */ \
 	INT(INVESTMENT_PERIOD_DAYS, investment_period_days, 7, 1, 365) \
 	INT(INVESTMENT_PROJECTS_PER_REVIEW, investment_projects_per_review, 2, 1, 100) \

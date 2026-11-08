@@ -44,14 +44,28 @@ FactoryInstance::FactoryInstance(
 	}
 }
 
+namespace {
+	// The money part and the goods of the building type at the prices of the market
+	fixed_point_t construction_goods_cost(BuildingType const& building_type, MarketInstance const& market_instance) {
+		fixed_point_t cost = building_type.cost;
+		for (auto const& [good, quantity] : building_type.goods_cost) {
+			cost += quantity * market_instance.get_good_instance(good->index).get_price();
+		}
+		return cost;
+	}
+}
+
 fixed_point_t FactoryInstance::calculate_construction_cost(
 	BuildingType const& building_type, MarketInstance const& market_instance
 ) {
-	fixed_point_t cost = building_type.cost;
-	for (auto const& [good, quantity] : building_type.goods_cost) {
-		cost += quantity * market_instance.get_good_instance(good->index).get_price();
-	}
-	return cost;
+	const fixed_point_t goods = construction_goods_cost(building_type, market_instance);
+	return goods + get_defines().construction_wage_share.of(goods);
+}
+
+fixed_point_t FactoryInstance::calculate_construction_wages(
+	BuildingType const& building_type, MarketInstance const& market_instance
+) {
+	return get_defines().construction_wage_share.of(construction_goods_cost(building_type, market_instance));
 }
 
 Timespan FactoryInstance::calculate_construction_time(BuildingType const& building_type) {
@@ -602,6 +616,9 @@ void FactoryInstance::try_auto_expansion(State& state, const Date today, MarketI
 	if (expansion_fund >= cost) {
 		expansion_fund -= cost;
 		MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -cost);
+		if (CountryInstance* const contractor = state.get_owner()) {
+			contractor->take_construction_order(building_type, state, cost);
+		}
 		profitable_days = 0;
 		expansion_wanted = false;
 		start_construction(today);
@@ -614,6 +631,9 @@ void FactoryInstance::try_auto_expansion(State& state, const Date today, MarketI
 		const fixed_point_t paid = state.take_capitalist_money(cost, Loan::purpose_t::CONSTRUCTION, construction_days);
 		if (paid >= cost) {
 			MoneyLedger::record(MoneyLedger::label_t::expansion_fund_spent, -paid);
+			if (CountryInstance* const contractor = state.get_owner()) {
+				contractor->take_construction_order(building_type, state, paid);
+			}
 			const std::int32_t level_value = static_cast<std::int32_t>(type_safe::get(level));
 			state_share = state_share * level_value / (level_value + 1);
 			profitable_days = 0;

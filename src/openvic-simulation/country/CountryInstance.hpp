@@ -278,6 +278,9 @@ namespace OpenVic {
 		// Average (about a month) of the daily balance of the treasury before the deposit to the investment fund; the AI
 		// sets its allocation from it so that the budget does not go into a loss
 		fixed_point_t PROPERTY(balance_before_investment_average);
+		// The part of the treasury that is the money of the constructions the country builds for a fund (take_construction_order): the budget
+		// does not spend it, the goods of the constructions are bought with it
+		fixed_point_t PROPERTY(construction_money);
 		std::int32_t balance_samples = 0;
 		atomic_fixed_point_t actual_tax_income;
 		atomic_fixed_point_t PROPERTY(actual_national_stockpile_spending);
@@ -430,6 +433,10 @@ namespace OpenVic {
 			fixed_point_t factory_demand;
 			fixed_point_t pop_demand;
 			fixed_point_t available_amount;
+			// The goods of the constructions the treasury builds for a fund (take_construction_order) that are still to be ordered, and what was
+			// ordered for them yesterday (what of it was bought is in the stockpile today, the rest is given up)
+			fixed_point_t construction_due;
+			fixed_point_t construction_ordered;
 
 			ordered_map<PopType const*, fixed_point_t> need_consumption_per_pop_type;
 			// The consumption of the pops is added up by the index of the type of pop while the day is played (millions of reports a day are
@@ -811,6 +818,11 @@ namespace OpenVic {
 			MoneyLedger::record(MoneyLedger::label_t::country_other_debit, -amount);
 			free_funds -= amount;
 		}
+		// A construction that a fund paid (paid: its price, FactoryInstance::calculate_construction_cost): the wages of the builders go to the pops
+		// of the state, the rest to the treasury (construction_money), which buys the goods of the building on the market (docs/ECONOMY_CONSTRUCTION.md)
+		void take_construction_order(BuildingType const& building_type, State& state, const fixed_point_t paid);
+		// Pays the wages of the builders to the pops of the state by their size; returns what was paid (the rounding stays with the payer)
+		static fixed_point_t pay_construction_wages(State& state, const fixed_point_t amount);
 		// The same, but the money covers the losses of the subsidised factories
 		void spend_cash_for_subsidy(const fixed_point_t amount) {
 			cash_stockpile -= amount;

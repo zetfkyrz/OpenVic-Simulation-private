@@ -7825,7 +7825,7 @@ namespace {
 
 		// What is created: the gold (the rules of Victoria 2), the starting budget of new factories, the rounding up of the sellers.
 		// The total must not grow by anything else. (It may grow by less: money is in flight in the factories for a day, and
-		// the money of slaves and the cost of the expansions of the factories leave the economy.)
+		// the money of slaves leaves the economy; the money of the constructions goes to the treasuries and the builders since version 73.)
 		const std::int64_t created = flow(MoneyLedger::label_t::gold_worker_pay) + flow(MoneyLedger::label_t::gold_income)
 			+ flow(MoneyLedger::label_t::factory_starting_budget) + flow(MoneyLedger::label_t::market_sellers_get)
 			+ flow(MoneyLedger::label_t::market_buyers_pay) + flow(MoneyLedger::label_t::transport_fee_income)
