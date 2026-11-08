@@ -94,6 +94,8 @@ static std::string defines_dump_path;
 static bool money_ledger_report = false, close_all_factories = false;
 // --selftest: the self tests (SelfTest.hpp), --selftest-pure: only those that need no game files
 static bool run_selftest = false, run_selftest_pure = false;
+// --determinism-loop N: the game of the determinism test N times in one process (SelfTest.hpp, run_determinism_loop)
+static int determinism_runs = 0;
 // -C: print the CHECKSUM after every day, also of the first ticks before the economy report (to find the first day two runs differ)
 static bool checksum_every_day = false;
 // -o group.KEY=value (repeated): overrides a value of openvic_defines.lua for this run (for calibration experiments)
@@ -1021,6 +1023,8 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-pop : Print the POP lines: the population of the biggest countries, the world and the check against the history of the start.");
 	fmt::println(file, "    --dump-unit : Print the UNIT lines: the types of land units (the data of OpenVic first) with the stats, the weapons, the scopes and the cost.");
 	fmt::println(file, "    --dump-battle : Print the BATTLE lines: the damage a day and the days to destroy of divisions against each other (the formulas of military/BattleFormulas.cpp).");
+	fmt::println(file, "    --determinism-loop N : Play the game of the determinism self-test (the orders of the first day, 40 days) N times and compare every day");
+	fmt::println(file, "      with the first run (DETERMINISM lines; for the rare divergences, run several processes at once).");
 	fmt::println(file, "    -h : Print this help message and exit the program.");
 	fmt::println(file, "    -t : Run tests after loading defines.");
 	fmt::println(file, "    -b : Use the following path as the base directory (instead of searching for one).");
@@ -2594,6 +2598,10 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 		openvic_defines.update_hash();
 	}
 
+	if (determinism_runs > 0) {
+		auto const& loop_bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
+		return bookmark_index < loop_bookmarks.size() && run_determinism_loop(game_manager, loop_bookmarks[bookmark_index], determinism_runs);
+	}
 	if (run_selftest) {
 		auto const& test_bookmarks = game_manager.get_definition_manager().get_history_manager().get_bookmark_manager().get_bookmarks();
 		if (bookmark_index >= test_bookmarks.size()) {
@@ -3003,6 +3011,12 @@ int main(int argc, char const* argv[]) {
 			run_selftest = true;
 		} else if (strcmp(arg, "--selftest-pure") == 0) {
 			run_selftest_pure = true;
+		} else if (strcmp(arg, "--determinism-loop") == 0) {
+			if (++argn >= argc) {
+				fmt::println(stderr, "Missing number of runs after \"--determinism-loop\".");
+				return -1;
+			}
+			determinism_runs = std::max(0, std::atoi(argv[argn]));
 		} else if (strcmp(arg, "-M") == 0) {
 			money_ledger_report = true;
 		} else if (strcmp(arg, "-N") == 0) {

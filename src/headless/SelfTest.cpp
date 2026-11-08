@@ -7938,6 +7938,55 @@ bool OpenVic::run_pure_selftests() {
 	return r.failed == 0;
 }
 
+bool OpenVic::run_determinism_loop(GameManager& game_manager, Bookmark const& bookmark, const int runs) {
+	constexpr int DAYS = 40;
+	Game game { game_manager, bookmark };
+	std::vector<std::uint64_t> first_hashes;
+	std::vector<DayDetails> first_details;
+	int differing = 0;
+	for (int run = 0; run < runs; ++run) {
+		InstanceManager* const im = game.start();
+		if (im == nullptr) {
+			fmt::println("DETERMINISM run {}: the instance does not start", run);
+			return false;
+		}
+		const std::uint64_t start_hash = StateHash::compute(*im);
+		give_orders(*im);
+		std::vector<std::uint64_t> hashes;
+		std::vector<DayDetails> details;
+		play_recording(*im, DAYS, hashes, details);
+		game.end();
+		if (run == 0) {
+			first_hashes = std::move(hashes);
+			first_details = std::move(details);
+			fmt::println("DETERMINISM run 0: start {} end {}", hex(start_hash), hex(first_hashes.back()));
+			continue;
+		}
+		std::size_t day = 0;
+		while (day < hashes.size() && day < first_hashes.size() && hashes[day] == first_hashes[day]) {
+			day++;
+		}
+		if (day == hashes.size()) {
+			fmt::println("DETERMINISM run {}: same", run);
+			std::fflush(stdout);
+			continue;
+		}
+		differing++;
+		DayDetails const& a = first_details[day];
+		DayDetails const& b = details[day];
+		fmt::println("DETERMINISM run {}: differs from day {} (start {}): pop cash {} vs {}, factory budgets {} vs {}, capitalist funds {} vs {}, prices {} vs {}",
+			run, day + 1, hex(start_hash), a.pop_cash, b.pop_cash, a.factory_budget, b.factory_budget, a.capitalist_fund, b.capitalist_fund, a.price_sum, b.price_sum);
+		for (std::size_t c = 0; c < a.country_cash.size() && c < b.country_cash.size(); ++c) {
+			if (a.country_cash[c] != b.country_cash[c]) {
+				fmt::println("DETERMINISM run {}: country {} cash {} vs {}", run, c, a.country_cash[c], b.country_cash[c]);
+			}
+		}
+		std::fflush(stdout);
+	}
+	fmt::println("DETERMINISM SUMMARY runs={} differing={}", runs, differing);
+	return differing == 0;
+}
+
 bool OpenVic::run_data_selftests(GameManager& game_manager, Bookmark const& bookmark) {
 	Results r;
 	Game game { game_manager, bookmark };

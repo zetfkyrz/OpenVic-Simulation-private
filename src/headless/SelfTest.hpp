@@ -11,4 +11,7 @@ namespace OpenVic {
 	 * The exit code is not 0 if anything failed. */
 	bool run_pure_selftests();
 	bool run_data_selftests(GameManager& game_manager, Bookmark const& bookmark);
+	/* The game of the determinism test (the orders of the first day, 40 days) played `runs` times in one process: every run is compared day by day
+	 * with the first one (a line DETERMINISM per run; the first day that differs and the sums of that day). The rare divergences need many runs. */
+	bool run_determinism_loop(GameManager& game_manager, Bookmark const& bookmark, int runs);
 }
