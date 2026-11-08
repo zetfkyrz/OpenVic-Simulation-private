@@ -119,7 +119,9 @@ namespace OpenVic {
 		//     naval base); the AI fleets at war blockade, attack weaker fleets and repair in port
 		// 69: the orders of the armies: the stances (entrench, raid, rest), follow another army, to the port (game actions set_army_stance, follow_army,
 		//     army_to_port)
-		inline constexpr int SIMULATION_VERSION = 69;
+		// 70: the field marshals of the AI are on by default (PLAN_AI_ENABLED): their mode by the forces, the offensive drawn again when it is taken, the minimal
+		//     plan for a country without the generals for its groups
+		inline constexpr int SIMULATION_VERSION = 70;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -7084,14 +7084,14 @@ namespace {
 		delete_army_group(im, *country, group_id);
 	}
 
-	// ---- the field marshals of the AI countries (P11, docs/WAR_ASSUMPTIONS.md, section 6): off by default; on, an AI country at war makes a group, a
+	// ---- the field marshals of the AI countries (P11, docs/WAR_ASSUMPTIONS.md, section 6): on by default; an AI country at war makes a group, a
 	// front and an offensive against the enemy it borders and executes it
 
 	void test_ai_marshals(Results& r, InstanceManager& im) {
 		WarManager& war_manager = im.get_war_manager();
 		MapInstance& map_instance = im.get_map_instance();
 		OpenVicWarDefines& defines = const_cast<OpenVicWarDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().war);
-		r.check(defines.plan_ai_enabled == 0, "ai marshals: off by default (the AI plans as before)");
+		r.check(defines.plan_ai_enabled == 1, "ai marshals: on by default (the AI countries with the command fight by the plans of their marshals)");
 		CountryInstance* country = nullptr;
 		CountryInstance* enemy = nullptr;
 		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
@@ -7117,17 +7117,15 @@ namespace {
 			fmt::println("TEST INFO ai marshals: no AI country with command and a neighbour to make war on, not checked");
 			return;
 		}
-		defines.plan_ai_enabled = 1;
 		for (int day = 0; day < 12; ++day) {
 			im.force_tick_and_update();
 		}
-		defines.plan_ai_enabled = 0;
 		Front const* const front = !country->get_army_groups().empty() ? war_manager.find_front_of_group(*country, country->get_army_groups().front().id) : nullptr;
 		bool offensive = false;
 		for (PlanLine const& line : war_manager.get_plan_lines()) {
 			offensive |= line.country == country && line.type == PlanLine::type_t::OFFENSIVE;
 		}
-		r.check(!country->get_army_groups().empty() && front != nullptr && front->enemy == enemy && offensive,
+		r.check(!country->get_army_groups().empty() && country->get_army_groups().front().ai_made && front != nullptr && front->enemy == enemy && offensive,
 			"ai marshals: on, an AI country at war makes a group, a front against its enemy and an offensive", fmt::format("{} groups", country->get_army_groups().size()));
 		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
 			war_manager.end_war(im, war->id);

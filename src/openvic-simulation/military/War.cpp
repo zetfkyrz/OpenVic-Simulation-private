@@ -1,5 +1,6 @@
 #include "War.hpp"
 
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
 
 #include <algorithm>
@@ -2575,7 +2576,10 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	// The ways by sea of the armies (P4d): the ones in their boarding port sail, the ones at sea land
 	instance_manager.get_unit_instance_manager().update_sea_transfers(instance_manager.get_map_instance());
 
-	update_combat(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "land battles");
+		update_combat(instance_manager);
+	}
 
 	// Delete regiments that lost all their men
 	{
@@ -2657,6 +2661,12 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	update_justifications(instance_manager);
 	update_leaders(instance_manager);
 	update_ai_peace(instance_manager);
-	update_auto_plan(instance_manager);
-	update_fronts(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "plans of the AI (every 10 days)");
+		update_auto_plan(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "fronts and plans");
+		update_fronts(instance_manager);
+	}
 }

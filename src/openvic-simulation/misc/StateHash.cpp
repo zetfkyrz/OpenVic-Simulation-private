@@ -178,6 +178,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(army_group.planning);
 			hasher.add(army_group.planning_effect);
 			hasher.add(static_cast<std::uint64_t>(army_group.theatre_id));
+			hasher.add(army_group.ai_made ? 1 : 0);
 		}
 		// The experience of the generals (section 7 of docs/WAR_ASSUMPTIONS.md); only the ones that have some
 		for (LeaderInstance const& leader : country.get_leaders<unit_branch_t::LAND>()) {

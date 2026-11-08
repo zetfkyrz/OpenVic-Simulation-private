@@ -320,13 +320,18 @@ namespace OpenVic {
 		void update_fronts(InstanceManager& instance_manager);
 	public:
 		// The state of the executed plan of a group (ArmyGroup::plan_status): the war with the countries of its front, the targets, the free divisions, the
-		// chance; with dry_run the executor gives no orders. Every day from update_fronts and at once when the execution is pressed
-		void update_plan_status(InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool dry_run);
+		// chance; with dry_run the executor gives no orders. Every day from update_fronts (with the zone and the targets of the offensives it already
+		// has) and at once when the execution is pressed
+		void update_plan_status(
+			InstanceManager& instance_manager, CountryInstance& country, std::uint32_t group_id, bool dry_run,
+			memory::vector<ProvinceInstance*> const* known_zone = nullptr, memory::vector<ProvinceInstance*> const* known_targets = nullptr
+		);
 	private:
 		void update_auto_plan(InstanceManager& instance_manager);
 		// The plans of the field marshals for an AI country (P11, behind PLAN_AI_ENABLED): a group with a marshal for every enemy it borders, its armies
 		// shared among them, a front along the border and an offensive two provinces deep, executed in the balanced mode
-		void update_ai_marshals(InstanceManager& instance_manager, CountryInstance& country);
+		// False when the country has no field marshal for a group (no free general): it fights by the minimal plan of the AI then
+		bool update_ai_marshals(InstanceManager& instance_manager, CountryInstance& country);
 		// The zone (when limited) holds the provinces the armies may attack: the offensives of a field marshal
 		void order_front_armies(InstanceManager& instance_manager, Front& front, std::span<ProvinceInstance* const> zone = {}, bool limited = false);
 		// Spreads the divisions of the armies of the front over its line: while the front has fewer armies than sectors (the provinces

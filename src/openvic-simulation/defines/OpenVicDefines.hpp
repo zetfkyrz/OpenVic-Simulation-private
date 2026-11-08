@@ -387,6 +387,10 @@ namespace OpenVic {
 	RATE(PLAN_WIN_BALANCED, plan_win_balanced, Rate(65, 100), 0, 1) \
 	RATE(PLAN_WIN_AGGRESSIVE, plan_win_aggressive, Rate(50, 100), 0, 1) \
 	INT(PLAN_MIN_HOLD, plan_min_hold, 1, 0, 100) \
+	/* The field marshals of the AI (P11): the mode by the land regiments of the country over the ones of the enemy — at least AI_MARSHAL_AGGRESSIVE_RATIO */ \
+	/* aggressive, at least AI_MARSHAL_BALANCED_RATIO balanced, else careful; an offensive that is taken is drawn again from the front of the day */ \
+	RATE(AI_MARSHAL_AGGRESSIVE_RATIO, ai_marshal_aggressive_ratio, Rate(150, 100), 0, 100) \
+	RATE(AI_MARSHAL_BALANCED_RATIO, ai_marshal_balanced_ratio, Rate(100, 100), 0, 100) \
 	/* The breakthrough (P7): this share of the divisions of the field marshal (the strongest by their attack, at least one) goes along its way of */ \
 	/* provinces into the enemy land with the threshold of the aggressive mode, without the minimum to hold */ \
 	RATE(PLAN_BREAKTHROUGH_SHARE, plan_breakthrough_share, Rate(1, 3), 0, 1) \
@@ -417,8 +421,8 @@ namespace OpenVic {
 	/* (1 - the bonus of the planning x NAVAL_PLAN_PENALTY_REDUCTION) (a landing by hand: the whole of it) */ \
 	INT(NAVAL_PLAN_PREP_DAYS, naval_plan_prep_days, 10, 0, 365) \
 	/* The AI countries with mechanic:command use the field marshals (P11): 1 makes them, a group, a front and an offensive for every enemy */ \
-	/* they border; 0 (the default) keeps their earlier plan (docs/PENDING_PLANS.md) */ \
-	INT(PLAN_AI_ENABLED, plan_ai_enabled, 0, 0, 1) \
+	/* they border (the default since 2026-11-08, version 70; without the generals for all the groups the minimal plan); 0 keeps their earlier minimal plan */ \
+	INT(PLAN_AI_ENABLED, plan_ai_enabled, 1, 0, 1) \
 	FIXED(NAVAL_PLAN_PENALTY_REDUCTION, naval_plan_penalty_reduction, fixed_point_t(2), 0, 100) \
 	FIXED(PLAN_POCKET_WEIGHT, plan_pocket_weight, fixed_point_t(3), 0, 1000) \
 	/* The experience of the leaders (docs/WAR_ASSUMPTIONS.md, section 7, military/LeaderSkills.*). A general learns in battles: every day of a */ \

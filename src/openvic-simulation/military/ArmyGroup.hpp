@@ -70,6 +70,8 @@ namespace OpenVic {
 		fixed_point_t plan_best_chance;
 		std::uint32_t plan_attacks = 0;
 		std::uint32_t theatre_id = 0; // the theatre of the marshal (0 until the first update gives him the main one)
+		// Made by the field marshals of the AI (WarManager::update_ai_marshals): only these groups are taken, changed and deleted by them
+		bool ai_made = false;
 	};
 
 	// The palette of the colours of the field marshals (ov_data/common/ov_command/palette.txt: colour = { r g b } lines). A new group takes the first

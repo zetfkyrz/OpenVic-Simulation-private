@@ -1013,6 +1013,8 @@ static void print_help(FILE* file, std::string_view program_name) {
 	fmt::println(file, "    --dump-front : Stage a war of two neighbours (the AI plans for both), run 60 days and print the FRONT lines: the fronts, the armies on them, the provinces that changed hands.");
 	fmt::println(file, "    --dump-command : Print the COMMAND lines: the palette of the field marshals, the limit of the attached generals and the groups of the countries.");
 	fmt::println(file, "    --dump-company : Print the COMPANY lines: the support companies, and the COMPANY_TEMPLATE lines: what they add to the templates.");
+	fmt::println(file, "    --dump-wars : With -e: every 30 days print the WAR lines (the score, the days, the land held of the other side, the regiments of the sides)");
+	fmt::println(file, "      and the WAR_GROUP lines (the groups of the field marshals of the countries at war: the marshal, the divisions, the mode, the state of the plan).");
 	fmt::println(file, "    --dump-supply-goods : Print the SUPPLY_GOOD lines at the start and after the days of -e: the world market and the needs of the supply goods of the regiments.");
 	fmt::println(file, "    --dump-manpower : Print the MANPOWER lines at the start and after the days of -e: the manpower of the countries with the biggest armies,");
 	fmt::println(file, "                      and their MOBILISATION lines (the pool of the poor pops, the regiments, the days, the output while mobilised).");
@@ -1227,6 +1229,7 @@ static void print_weapon_report(InstanceManager& instance_manager) {
 
 
 // --dump-template / --dump-battle (docs/EQUIPMENT_MODDING.md): the numbers of the templates and of a battle of divisions without the interface
+static bool dump_wars = false;
 static bool dump_templates = false, dump_battles = false, dump_units = false, dump_techs = false, dump_techtree = false, dump_companies = false, dump_pop = false, dump_manpower = false, dump_supply_goods = false, dump_command = false, dump_front = false, dump_theatre = false;
 
 static std::string format_goods(memory::vector<DivisionGoodAmount> const& goods) {
@@ -2177,6 +2180,110 @@ static void run_command_dump(InstanceManager& instance_manager) {
 	fmt::println("COMMAND_SUMMARY countries_with_organisation={}", with_organisation);
 }
 
+// --dump-wars: the wars of the day (WAR) and the groups of the field marshals of the countries at war (WAR_GROUP)
+static void run_war_dump(InstanceManager& instance_manager, const size_t day) {
+	WarManager const& war_manager = instance_manager.get_war_manager();
+	const auto regiments_of = [](memory::vector<CountryInstance*> const& side) -> size_t {
+		size_t regiments = 0;
+		for (CountryInstance const* country : side) {
+			for (ArmyInstance const& army : country->get_armies()) {
+				regiments += army.get_unit_count();
+			}
+		}
+		return regiments;
+	};
+	// The provinces of the countries of the other side that the countries of a side control
+	const auto held_of = [&instance_manager](memory::vector<CountryInstance*> const& side, memory::vector<CountryInstance*> const& other) -> size_t {
+		size_t held = 0;
+		for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+			if (std::find(other.begin(), other.end(), province.get_owner()) != other.end()
+				&& std::find(side.begin(), side.end(), province.get_controller()) != side.end()) {
+				held++;
+			}
+		}
+		return held;
+	};
+	for (War const& war : war_manager.get_wars()) {
+		fmt::println(
+			"WAR day={} id={} attacker={} defender={} days={} score={:.1f}/{:.1f} held={}/{} regiments={}/{} exhaustion={:.1f}/{:.1f} manpower_combat={:.2f}/{:.2f}", day, war.id,
+			war.attackers.front()->get_identifier(), war.defenders.front()->get_identifier(), (instance_manager.get_today() - war.start_date).to_int(),
+			static_cast<double>(war.attacker_score), static_cast<double>(war.defender_score), held_of(war.attackers, war.defenders), held_of(war.defenders, war.attackers),
+			regiments_of(war.attackers), regiments_of(war.defenders), static_cast<double>(war.attackers.front()->get_war_exhaustion()),
+			static_cast<double>(war.defenders.front()->get_war_exhaustion()), static_cast<double>(war.attackers.front()->manpower_combat_multiplier),
+			static_cast<double>(war.defenders.front()->manpower_combat_multiplier)
+		);
+	}
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || !country.is_at_war()) {
+			continue;
+		}
+		for (ArmyGroup const& group : country.get_army_groups()) {
+			Front const* const front = war_manager.find_front_of_group(country, group.id);
+			size_t divisions = 0;
+			size_t moving = 0;
+			size_t on_line = 0;
+			double organisation = 0;
+			for (ArmyInstance const& army : country.get_armies()) {
+				if (army.get_army_group_id() == group.id) {
+					divisions++;
+					moving += army.is_moving();
+					on_line += front != nullptr && std::find(front->provinces.begin(), front->provinces.end(), &army.get_location()) != front->provinces.end();
+					organisation += static_cast<double>(army.get_organisation_proportion());
+				}
+			}
+			fmt::println(
+				"WAR_GROUP day={} country={} id={} ai_made={} marshal={} enemy={} divisions={} on_line={} moving={} organisation={:.2f} active={} aggression={} "
+				"status={} attacks={} best_chance={:.2f}", day,
+				country.get_identifier(), group.id, group.ai_made ? 1 : 0, group.marshal_id != 0 ? 1 : 0,
+				front != nullptr && front->enemy != nullptr ? front->enemy->get_identifier() : std::string_view { "-" }, divisions, on_line, moving,
+				divisions > 0 ? organisation / static_cast<double>(divisions) : 0.0, group.plan_active ? 1 : 0,
+				group.aggression, group.plan_status, group.plan_attacks, static_cast<double>(group.plan_best_chance)
+			);
+			// The enemy held provinces across the line with defenders: the estimate of an attack by the divisions of the group next to them
+			if (front == nullptr) {
+				continue;
+			}
+			std::vector<ProvinceInstance const*> seen;
+			for (FrontEdge const& edge : front->edges) {
+				ProvinceInstance const* const target = edge.other;
+				CountryInstance const* const controller = target->get_controller();
+				if (controller == nullptr || controller == &country || !country.is_at_war_with(*controller) || target->get_armies().empty()
+					|| std::find(seen.begin(), seen.end(), target) != seen.end()) {
+					continue;
+				}
+				seen.push_back(target);
+				std::vector<ArmyInstance const*> attacking;
+				for (FrontEdge const& other_edge : front->edges) {
+					if (other_edge.other != target) {
+						continue;
+					}
+					for (ArmyInstance const& army : other_edge.own->get_armies()) {
+						if (&army.get_country() == &country && army.get_army_group_id() == group.id
+							&& std::find(attacking.begin(), attacking.end(), &army) == attacking.end()) {
+							attacking.push_back(&army);
+						}
+					}
+				}
+				size_t defenders = 0;
+				size_t dig_in = 0;
+				for (ArmyInstance const& army : target->get_armies()) {
+					defenders += army.get_divisions().size();
+					dig_in = std::max<size_t>(dig_in, army.get_dig_in_level());
+				}
+				const BattleEstimate estimate = war_manager.estimate_battle(instance_manager, attacking, *target);
+				fmt::println(
+					"WAR_TARGET day={} country={} province={} terrain={} siege_days={} dig_in={} attackers={} defenders={} valid={} ratio={:.2f} attack={:.2f}/{:.2f} days={:.1f}/{:.1f} "
+					"breakthrough_days={} wins={} chance={:.2f}", day, country.get_identifier(), target->get_identifier(),
+					target->get_terrain_type() != nullptr ? target->get_terrain_type()->get_identifier() : std::string_view { "-" }, war_manager.get_siege_days_required(*target), dig_in,
+					attacking.size(), defenders, estimate.valid ? 1 : 0, static_cast<double>(estimate.ratio), static_cast<double>(estimate.attacker_attack),
+					static_cast<double>(estimate.defender_attack), static_cast<double>(estimate.attacker_days), static_cast<double>(estimate.defender_days),
+					estimate.breakthrough_days, estimate.attacker_wins ? 1 : 0, static_cast<double>(estimate.win_chance)
+				);
+			}
+		}
+	}
+}
+
 // --dump-company: the support companies (COMPANY lines) and what they add to the templates of the first countries (COMPANY_TEMPLATE lines)
 static void run_company_dump(InstanceManager& instance_manager) {
 	CompanyTypeManager const& companies = instance_manager.definition_manager.get_military_manager().get_company_type_manager();
@@ -2739,6 +2846,9 @@ static bool run_headless(fs::path const& root, memory::vector<memory::string>& m
 			if (dump_supply_goods && day % 30 == 0 && day < economy_report_days) {
 				run_supply_goods_dump(instance_manager, fmt::format("day{}", day));
 			}
+			if (dump_wars && day % 30 == 0) {
+				run_war_dump(instance_manager, day);
+			}
 			if (checksum_every_day) {
 				print_state_checksum(instance_manager);
 			}
@@ -2945,6 +3055,8 @@ int main(int argc, char const* argv[]) {
 			dump_pop = true;
 		} else if (strcmp(arg, "--dump-manpower") == 0) {
 			dump_manpower = true;
+		} else if (strcmp(arg, "--dump-wars") == 0) {
+			dump_wars = true;
 		} else if (strcmp(arg, "--dump-supply-goods") == 0) {
 			dump_supply_goods = true;
 		} else if (strcmp(arg, "--ov-data") == 0) {
