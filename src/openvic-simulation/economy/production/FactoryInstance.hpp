@@ -287,5 +287,17 @@ namespace OpenVic {
 		}
 
 		void tick(State& state, MarketInstance& market_instance, const Date today);
+		// A factory the player closed does not open again by itself (FACTORY_REOPEN_*)
+		void set_closed_by_player(const bool value) {
+			closed_by_player = value;
+		}
+		[[nodiscard]] bool is_closed_by_player() const {
+			return closed_by_player;
+		}
+	private:
+		bool closed_by_player = false;
+		// On the first day of a month a factory closed for its losses opens again when its goods are worth more than its inputs and the inputs are there
+		void try_reopen(MarketInstance const& market_instance);
+	public:
 	};
 }

@@ -2309,6 +2309,19 @@ void CountryInstance::country_tick_before_map(
 	// What is left is free to be spent on subsidies and loans during the day (not the money of the constructions)
 	free_funds = std::max(fixed_point_t::_0, available_funds - construction_money);
 
+	// What the government lacks: the artisans of the country weigh these goods more when they choose what to make
+	std::size_t good_count = 0;
+	for (auto [good_instance, good_data] : goods_data) {
+		good_count = std::max(good_count, static_cast<std::size_t>(type_safe::get(good_instance.index)) + 1);
+	}
+	artisan_need_share.assign(good_count, fixed_point_t::_0);
+	for (auto [good_instance, good_data] : goods_data) {
+		if (good_data.government_needs > fixed_point_t::_0 && good_data.stockpile_amount < good_data.government_needs) {
+			artisan_need_share[static_cast<std::size_t>(type_safe::get(good_instance.index))]
+				= (good_data.government_needs - good_data.stockpile_amount) / good_data.government_needs;
+		}
+	}
+
 	//TODO market maker orders
 
 	taxable_income_by_pop_type.fill(0);

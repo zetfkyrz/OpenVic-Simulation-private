@@ -5,6 +5,7 @@
 #include "openvic-simulation/core/error/ErrorMacros.hpp"
 #include "openvic-simulation/dataloader/NodeTools.hpp"
 #include "openvic-simulation/economy/GoodDefinition.hpp"
+#include "openvic-simulation/military/Equipment.hpp"
 #include "openvic-simulation/misc/GameRulesManager.hpp"
 #include "openvic-simulation/population/PopManager.hpp"
 #include "openvic-simulation/population/PopSize.hpp"
@@ -80,6 +81,38 @@ bool ProductionType::parse_scripts(DefinitionManager const& definition_manager) 
 		ret &= bonus_script.parse_script(false, definition_manager);
 	}
 	return ret;
+}
+
+void ProductionTypeManager::set_artisan_weapon_unlocks(
+	EquipmentManager const& equipment_manager, const std::int32_t free_tier, const std::int32_t tier_lag
+) {
+	for (ProductionType& production_type : production_types.get_items()) {
+		if (production_type.template_type != ProductionType::template_type_t::ARTISAN) {
+			continue;
+		}
+		EquipmentDefinition const* made = nullptr;
+		for (EquipmentDefinition const& equipment : equipment_manager.get_equipment()) {
+			if (equipment.good.identifier == production_type.output_good.get_identifier()) {
+				made = &equipment;
+				break;
+			}
+		}
+		if (made == nullptr) {
+			continue;
+		}
+		if (static_cast<std::int32_t>(made->tier) <= free_tier) {
+			production_type.artisan_unlock_key = made->unlock_key;
+			continue;
+		}
+		// The weapon tier_lag generations newer of the line opens it; no such weapon: the artisans never make it
+		production_type.artisan_unlock_key = "artisan:never";
+		for (EquipmentDefinition const& equipment : equipment_manager.get_equipment()) {
+			if (equipment.line == made->line && static_cast<std::int32_t>(equipment.tier) == static_cast<std::int32_t>(made->tier) + tier_lag) {
+				production_type.artisan_unlock_key = equipment.unlock_key;
+				break;
+			}
+		}
+	}
 }
 
 void ProductionTypeManager::scale_rgo_output(GoodDefinition const& good, const fixed_point_t multiplier) {

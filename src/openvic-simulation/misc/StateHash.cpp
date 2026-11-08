@@ -265,7 +265,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				hasher.add_signed(type_safe::get(factory.get_level()));
 				hasher.add(factory.get_budget());
 				hasher.add(factory.get_expansion_fund());
-				hasher.add(factory.is_open() ? 1 : 0);
+				hasher.add((factory.is_open() ? 1 : 0) + (factory.is_closed_by_player() ? 2 : 0));
 				if (factory.production_type != factory.building_type.production_type) {
 					for (const char character : factory.production_type->get_identifier()) {
 						hasher.add(static_cast<std::uint64_t>(static_cast<unsigned char>(character)));

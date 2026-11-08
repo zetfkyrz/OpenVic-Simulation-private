@@ -614,9 +614,18 @@ ProductionType const* ArtisanalProducer::pick_production_type(
 	fixed_point_t weights_sum = 0;
 	memory::vector<fixed_point_t> weights {};
 	weights.reserve(ranked_artisanal_production_types.size());
+	// The weapons the country of the artisan lets it make, and the goods its government lacks weigh more
+	CountryInstance const* const country = pop.get_location().get_owner();
+	const fixed_point_t need_weight = openvic_defines != nullptr ? openvic_defines->artisan_country_need_weight.fixed() : fixed_point_t::_0;
 	for (auto const& [production_type, score_estimate] : ranked_artisanal_production_types) {
-		//TODO calculate actual scores including availability of goods
-		const fixed_point_t weight = score_estimate * score_estimate;
+		if (!production_type->artisan_unlock_key.empty() && (country == nullptr || !country->has_unlock(production_type->artisan_unlock_key))) {
+			weights.push_back(fixed_point_t::_0);
+			continue;
+		}
+		fixed_point_t weight = score_estimate * score_estimate;
+		if (country != nullptr && need_weight > fixed_point_t::_0) {
+			weight += weight * need_weight * country->get_artisan_need_share(production_type->output_good.index);
+		}
 		weights.push_back(weight);
 		weights_sum += weight;
 	}

@@ -1330,6 +1330,10 @@ bool Dataloader::load_defines(
 				production_types.scale_rgo_output(*good, multiplier);
 			}
 		}
+		production_types.set_artisan_weapon_unlocks(
+			definition_manager.get_military_manager().get_equipment_manager(), openvic_economy.artisan_weapon_free_tier,
+			openvic_economy.artisan_weapon_tier_lag
+		);
 		definition_manager.get_economy_manager().get_building_type_manager().set_wood_rules(
 			openvic_economy.lumber_per_cement, fixed_point_t(openvic_economy.timber_per_cement_building)
 		);

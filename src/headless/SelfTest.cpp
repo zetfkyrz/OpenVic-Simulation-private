@@ -1122,7 +1122,14 @@ namespace {
 			fmt::format("needs {}", dbl(country->get_good_data(*rifle_1_good).government_needs))
 		);
 
-		// ---- the stock has the rifles: a day gives the best allowed weapon to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says
+		// ---- the stock has the rifles: a day gives the best allowed weapon to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says (the regiments
+		// that had rifle_1 before, from the stockpile the country bought in the days of the other tests, do not count)
+		std::size_t had_rifle_1 = 0;
+		for (ArmyInstance& army : country->get_armies()) {
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				had_rifle_1 += regiment.get_weapon() == rifle_1;
+			}
+		}
 		country->get_good_data(*rifle_1_good).stockpile_amount = fixed_point_t(1000);
 		im.force_tick_and_update();
 		std::size_t with_rifle_1 = 0;
@@ -1137,7 +1144,7 @@ namespace {
 			}
 		}
 		r.check(
-			with_rifle_1 == static_cast<std::size_t>(war.equipment_upgrades_per_day) && equipped != nullptr && equipped->get_weapon_good() == rifle_1_good,
+			with_rifle_1 - had_rifle_1 == static_cast<std::size_t>(war.equipment_upgrades_per_day) && equipped != nullptr && equipped->get_weapon_good() == rifle_1_good,
 			"regiment equipment: a day gives the better weapon to as many regiments as ov_war.EQUIPMENT_UPGRADES_PER_DAY says",
 			fmt::format("{} regiments, stock {}, needs {}, pieces {}, upgrades {}, best {}", with_rifle_1, dbl(country->get_good_data(*rifle_1_good).stockpile_amount),
 				dbl(country->get_good_data(*rifle_1_good).government_needs), dbl(pieces), war.equipment_upgrades_per_day,
@@ -4415,6 +4422,43 @@ namespace {
 		r.check(over_the_top == 0 && player_changed == 0, "AI budget: the taxes stay under BUDGET_MAX_TAX and the sliders of a player are not touched");
 	}
 
+	// The weapons of the artisans (ProductionTypeManager::set_artisan_weapon_unlocks): the generations up to ARTISAN_WEAPON_FREE_TIER need the unlock of the
+	// weapon itself, a higher one the unlock of the weapon ARTISAN_WEAPON_TIER_LAG generations newer (rifle_2 with rifle_4)
+	void test_artisan_weapons(Results& r, InstanceManager& im) {
+		OpenVicEconomyDefines const& economy = im.definition_manager.get_define_manager().get_openvic_defines().economy;
+		EquipmentManager const& equipment = im.definition_manager.get_military_manager().get_equipment_manager();
+		std::size_t checked = 0, wrong = 0;
+		for (ProductionType const& production_type : im.definition_manager.get_economy_manager().get_production_type_manager().get_production_types()) {
+			if (production_type.template_type != ProductionType::template_type_t::ARTISAN) {
+				continue;
+			}
+			EquipmentDefinition const* made = nullptr;
+			for (EquipmentDefinition const& weapon : equipment.get_equipment()) {
+				if (weapon.good.identifier == production_type.output_good.get_identifier()) {
+					made = &weapon;
+				}
+			}
+			if (made == nullptr) {
+				wrong += !production_type.artisan_unlock_key.empty();
+				continue;
+			}
+			checked++;
+			memory::string expected = "artisan:never";
+			if (static_cast<std::int32_t>(made->tier) <= economy.artisan_weapon_free_tier) {
+				expected = made->unlock_key;
+			} else {
+				for (EquipmentDefinition const& weapon : equipment.get_equipment()) {
+					if (weapon.line == made->line && static_cast<std::int32_t>(weapon.tier) == static_cast<std::int32_t>(made->tier) + economy.artisan_weapon_tier_lag) {
+						expected = weapon.unlock_key;
+					}
+				}
+			}
+			wrong += production_type.artisan_unlock_key != expected;
+		}
+		r.check(checked >= 3 && wrong == 0, "artisans: the weapons they make need the unlocks of their generation (rifle_2 with rifle_4)",
+			fmt::format("{} artisan weapon types, {} wrong", checked, wrong));
+	}
+
 	// The buildings of the RGOs (RgoBuildingData, ov_data/common/ov_rgo_buildings): the goods, the files, the levels, the payment, the staff
 	void test_rgo_buildings(Results& r, InstanceManager& im) {
 		namespace fs = std::filesystem;
@@ -7158,6 +7202,9 @@ namespace {
 			fmt::println("TEST INFO naval invasion: no country with a fleet of transports in its port and a coast to make war on, not checked");
 			return;
 		}
+		// The country plays as a player for the test: the AI of the fleets at war would sail the fleet out of the port
+		const bool was_ai = country->is_ai();
+		country->set_ai(false);
 		const std::size_t palette_size = im.definition_manager.get_military_manager().get_command_palette().size();
 		create_army_group(*country, palette_size);
 		const std::uint32_t group_id = country->get_army_groups().back().id;
@@ -7177,6 +7224,7 @@ namespace {
 		if (army == nullptr) {
 			fmt::println("TEST INFO naval invasion: no army small enough for the fleet, not checked");
 			delete_army_group(im, *country, group_id);
+			country->set_ai(was_ai);
 			return;
 		}
 		const unique_id_t army_id = army->unique_id;
@@ -7199,6 +7247,7 @@ namespace {
 		r.check(army != nullptr && army->get_transport_navy() == nullptr, "naval invasion: before NAVAL_PLAN_PREP_DAYS of the preparation nobody boards");
 		const_cast<PlanLine*>(war_manager.get_plan_line_by_id(line_id))->prepared_days = static_cast<std::uint32_t>(defines.naval_plan_prep_days);
 		bool boarded = false, sailed = false, landed = false;
+		int days_with_group = 0;
 		for (int day = 0; day < 40 && !landed; ++day) {
 			im.force_tick_and_update();
 			bool any = false;
@@ -7214,8 +7263,12 @@ namespace {
 			if (!any) {
 				break;
 			}
+			days_with_group++;
 		}
-		r.check(boarded, "naval invasion: executed and prepared, the divisions in the port board the fleet");
+		r.check(boarded, "naval invasion: executed and prepared, the divisions in the port board the fleet", fmt::format("{} from {}, {} days with armies in the group, fleet in {} with room {}, the army in {}",
+			country->get_identifier(), port->get_identifier(), days_with_group, fleet->get_location().get_identifier(), fleet->get_transport_capacity(),
+			im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id) != nullptr
+				? im.get_unit_instance_manager().get_unit_instance_group_by_unique_id(army_id)->get_location().get_identifier() : std::string_view { "-" }));
 		fmt::println("TEST INFO naval invasion: sailed {} landed {}", sailed, landed);
 		if (War* const war = war_manager.find_war_between(*country, *enemy); war != nullptr) {
 			war_manager.end_war(im, war->id);
@@ -7225,6 +7278,7 @@ namespace {
 			set_army_group(*country, *left, group_before, get_marshal_max_attached(im, *country));
 		}
 		delete_army_group(im, *country, group_id);
+		country->set_ai(was_ai);
 	}
 
 	// ---- the field marshals of the AI countries (P11, docs/WAR_ASSUMPTIONS.md, section 6): on by default; an AI country at war makes a group, a
@@ -7909,6 +7963,7 @@ namespace {
 		test_trade_and_hunger(r, *im);
 		test_population_monthly(r, *im); // ticks days too
 		test_ai_budget(r, *im);
+		test_artisan_weapons(r, *im);
 		test_job_migration(r, *im);
 		test_rgo_buildings(r, *im); // ticks days too
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game

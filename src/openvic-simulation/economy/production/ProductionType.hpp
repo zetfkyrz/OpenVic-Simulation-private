@@ -71,6 +71,9 @@ namespace OpenVic {
 		const template_type_t template_type;
 		const pop_size_t base_workforce_size;
 		fixed_point_t base_output_quantity; // not const: the multipliers of the defines are applied once after the loading (ProductionTypeManager::scale_rgo_output)
+		// An artisan type that makes a weapon: the unlock of the country its artisans need to make it (ARTISAN_WEAPON_FREE_TIER, ARTISAN_WEAPON_TIER_LAG),
+		// set once after the loading (ProductionTypeManager::set_artisan_weapon_unlocks); empty: no unlock is needed
+		memory::string artisan_unlock_key;
 
 		ProductionType(
 			GameRulesManager const& new_game_rules_manager,
@@ -108,6 +111,8 @@ namespace OpenVic {
 		ProductionType const* production_type;
 		memory::string building;
 	};
+
+	struct EquipmentManager;
 
 	struct ProductionTypeManager {
 	private:
@@ -172,6 +177,8 @@ namespace OpenVic {
 		}
 
 		// Multiplies the output of the resource gathering operation of the good (the base of the files is kept elsewhere as it is: once, after the loading)
+		// The unlocks of the artisan types of the weapons (see ProductionType::artisan_unlock_key)
+		void set_artisan_weapon_unlocks(EquipmentManager const& equipment_manager, const std::int32_t free_tier, const std::int32_t tier_lag);
 		void scale_rgo_output(GoodDefinition const& good, fixed_point_t multiplier);
 
 		bool parse_scripts(DefinitionManager const& definition_manager);

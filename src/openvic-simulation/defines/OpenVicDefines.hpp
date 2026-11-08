@@ -663,6 +663,12 @@ namespace OpenVic {
 	INT(DIVIDEND_EXCESS_DIVISOR, dividend_excess_divisor, 10, 1, 1000) \
 	INT(AVERAGE_PROFIT_DAYS, average_profit_days, 30, 1, 3650) \
 	INT(DAYS_OF_LOSS_BEFORE_CLOSING, days_of_loss_before_closing, 90, 1, 36500) \
+	/* A factory that closed for its losses opens again on the first day of a month when the goods it makes are worth more than its inputs by */ \
+	/* FACTORY_REOPEN_MARGIN at the prices of the market and the market gave at least FACTORY_REOPEN_MIN_INPUT_SHARE of the demand for each */ \
+	/* input yesterday (version 74; before, a closed factory stayed closed for ever). A factory the player closed stays closed */ \
+	INT(FACTORY_REOPEN_ENABLED, factory_reopen_enabled, 1, 0, 1) \
+	RATE(FACTORY_REOPEN_MARGIN, factory_reopen_margin, Rate(10, 100), 0, 100) \
+	RATE(FACTORY_REOPEN_MIN_INPUT_SHARE, factory_reopen_min_input_share, Rate(50, 100), 0, 1) \
 	FIXED(WAGE_SHARE, wage_share, fixed_point_t::_0_50, 0, 1) \
 	INT(EFFICIENCY_GAIN_EPSILONS, efficiency_gain_epsilons, 65, 0, 1000000) \
 	INT(EFFICIENCY_LOSS_EPSILONS, efficiency_loss_epsilons, 130, 0, 1000000) \
@@ -744,6 +750,14 @@ namespace OpenVic {
 	INT(INVESTMENT_WEIGHT_OFFICERS, investment_weight_officers, 5, 0, 10000) \
 	INT(INVESTMENT_WEIGHT_BUREAUCRATS, investment_weight_bureaucrats, 5, 0, 10000) \
 	RATE(ARTISAN_AVAILABILITY_WEIGHT, artisan_availability_weight, Rate(1, 1), 0, 1) \
+	/* The weapons of the artisans (the artisan types of ov_data/common/ov_production_types, version 74): an artisan makes the generations up to */ \
+	/* ARTISAN_WEAPON_FREE_TIER of the weapons its country has; a higher generation N when the country has the weapon N + ARTISAN_WEAPON_TIER_LAG */ \
+	/* of the line (the artisans are that many generations behind the factories) */ \
+	INT(ARTISAN_WEAPON_FREE_TIER, artisan_weapon_free_tier, 1, 0, 100) \
+	INT(ARTISAN_WEAPON_TIER_LAG, artisan_weapon_tier_lag, 2, 0, 100) \
+	/* An artisan that chooses what to make weighs a good its government lacks more: the weight of the type (its score squared) is multiplied by */ \
+	/* 1 + ARTISAN_COUNTRY_NEED_WEIGHT x the share of the needs of the government (the armies, the constructions) its stockpile lacks */ \
+	RATE(ARTISAN_COUNTRY_NEED_WEIGHT, artisan_country_need_weight, Rate(100, 100), 0, 100) \
 	/* The money of the investment fund that nobody uses: when the fund holds more than this many days of the income of the country, */ \
 	/* this share of the excess goes back to the treasury every day (and from there to the budget, the pops get it as salaries) */ \
 	INT(INVESTMENT_FUND_MAX_DAYS, investment_fund_max_days, 14, 1, 36500) \

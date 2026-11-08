@@ -258,6 +258,30 @@ bool FactoryInstance::trade_share(
 	return true;
 }
 
+void FactoryInstance::try_reopen(MarketInstance const& market_instance) {
+	OpenVicEconomyDefines const& defines = get_defines();
+	if (defines.factory_reopen_enabled == 0 || closed_by_player || is_under_construction()) {
+		return;
+	}
+	const fixed_point_t revenue = production_type->base_output_quantity * market_instance.get_good_instance(production_type->output_good.index).get_price();
+	fixed_point_t costs = fixed_point_t::_0;
+	for (auto const& [good, quantity] : production_type->input_goods) {
+		GoodInstance const& input = market_instance.get_good_instance(good->index);
+		if (!input.get_is_available()) {
+			return;
+		}
+		const fixed_point_t demand = input.get_total_demand_yesterday();
+		if (demand > fixed_point_t::_0 && input.get_total_supply_yesterday() < defines.factory_reopen_min_input_share.of(demand)) {
+			return;
+		}
+		costs += quantity * input.get_price();
+	}
+	if (revenue > costs + defines.factory_reopen_margin.of(costs)) {
+		SPDLOG_INFO("Opening again the factory {} (its goods are worth more than its inputs)", building_type);
+		set_open(true);
+	}
+}
+
 void FactoryInstance::set_open(const bool new_open) {
 	open = new_open;
 	if (open) {
@@ -744,6 +768,9 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	employee_count = pop_size_t(0);
 
 	CountryInstance* const owner = state.get_owner();
+	if (!open && owner != nullptr && level > building_level_t(0) && today.is_month_start()) {
+		try_reopen(market_instance);
+	}
 	if (owner == nullptr || level <= building_level_t(0) || !open) {
 		return;
 	}

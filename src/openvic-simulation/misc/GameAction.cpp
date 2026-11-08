@@ -662,6 +662,7 @@ bool GameActionManager::VariantVisitor::operator() (set_all_factories_open_argum
 		for (FactoryInstance& factory : state->get_mutable_factories()) {
 			if (factory.get_level() > building_level_t(0) && factory.is_open() != new_open) {
 				factory.set_open(new_open);
+				factory.set_closed_by_player(!new_open);
 				changed = true;
 			}
 		}
@@ -857,6 +858,7 @@ bool GameActionManager::VariantVisitor::operator() (set_factory_open_argument_t 
 	}
 
 	factory->set_open(new_open);
+	factory->set_closed_by_player(!new_open);
 	return true;
 }
 

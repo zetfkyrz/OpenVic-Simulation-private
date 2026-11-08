@@ -130,7 +130,9 @@ namespace OpenVic {
 		//     (before, the money left the economy); the AI counts the supplies of the army and the navy in its spending, cuts the education and the
 		//     administration first, disbands at peace what it cannot pay (BUDGET_DISBAND_SHARE), and with a surplus (or a growing treasury) lowers
 		//     the taxes to BUDGET_MIN_TAX and raises the spending to BUDGET_MAX_SPENDING
-		inline constexpr int SIMULATION_VERSION = 73;
+		// 74: the artisans make rifle_1 (and rifle_2 with rifle_4: ARTISAN_WEAPON_FREE_TIER, ARTISAN_WEAPON_TIER_LAG) and weigh the goods their government
+		//     lacks (ARTISAN_COUNTRY_NEED_WEIGHT); a factory closed for its losses opens again when it pays (FACTORY_REOPEN_*); rifle_1 needs no machine parts
+		inline constexpr int SIMULATION_VERSION = 74;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

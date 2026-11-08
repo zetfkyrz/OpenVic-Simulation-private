@@ -1148,6 +1148,14 @@ namespace OpenVic {
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 
 		void calculate_government_good_needs(const Date today);
+		// The share of the needs of the government its stockpile lacks, by good (worked out before the pops are ticked; the artisans read it)
+		memory::vector<fixed_point_t> artisan_need_share;
+	public:
+		[[nodiscard]] fixed_point_t get_artisan_need_share(const good_index_t good_index) const {
+			const std::size_t index = static_cast<std::size_t>(type_safe::get(good_index));
+			return index < artisan_need_share.size() ? artisan_need_share[index] : fixed_point_t::_0;
+		}
+	private:
 
 		void manage_national_stockpile(
 			TypedSpan<good_index_t, char> reusable_goods_mask,

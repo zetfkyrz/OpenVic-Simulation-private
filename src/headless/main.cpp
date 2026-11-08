@@ -1381,6 +1381,43 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			}
 		}
 	}
+	// The goods they are made of (the inputs of the factories and the artisans that make them), and the goods named in OV_EXTRA_GOODS
+	// (comma separated, for example cement,machine_parts)
+	const std::size_t supply_goods_count = goods.size();
+	for (ProductionType const& production_type : definitions.get_economy_manager().get_production_type_manager().get_production_types()) {
+		if (std::find(goods.begin(), goods.begin() + supply_goods_count, &production_type.output_good) == goods.begin() + supply_goods_count) {
+			continue;
+		}
+		for (auto const& [input, quantity] : production_type.input_goods) {
+			if (std::find(goods.begin(), goods.end(), input) == goods.end()) {
+				goods.push_back(input);
+			}
+		}
+	}
+	if (char const* const extra = std::getenv("OV_EXTRA_GOODS"); extra != nullptr) {
+		std::string_view rest { extra };
+		while (!rest.empty()) {
+			const std::size_t comma = rest.find(',');
+			const std::string_view name = rest.substr(0, comma);
+			if (GoodDefinition const* const good = definitions.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier(name);
+				good != nullptr && std::find(goods.begin(), goods.end(), good) == goods.end()) {
+				goods.push_back(good);
+			}
+			rest = comma == std::string_view::npos ? std::string_view {} : rest.substr(comma + 1);
+		}
+	}
+	// What the artisans made yesterday, by good, and how many people work at it
+	std::unordered_map<GoodDefinition const*, std::pair<fixed_point_t, std::int64_t>> artisan_output;
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop const& pop : province.get_pops()) {
+			ArtisanalProducer const* const artisan = pop.get_artisanal_producer();
+			if (artisan != nullptr && artisan->get_last_produced_good() != nullptr) {
+				auto& entry = artisan_output[artisan->get_last_produced_good()];
+				entry.first += artisan->get_current_production();
+				entry.second += type_safe::get(pop.get_size());
+			}
+		}
+	}
 	for (GoodDefinition const* good : goods) {
 		std::size_t factories = 0, open_factories = 0;
 		fixed_point_t produced = fixed_point_t::_0;
@@ -1408,14 +1445,32 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 		}
 		GoodInstance const& market = instance_manager.get_good_instance_manager().get_good_instance_by_definition(*good);
 		fmt::println(
-			"SUPPLY_GOOD {} {:<16} price={:.2f}/{:.2f} supply={:.1f} demand={:.1f} traded={:.1f} factories={}/{} factory_output={:.1f} government_needs={:.1f} stockpiles={:.1f} short_countries={}",
+			"SUPPLY_GOOD {} {:<16} price={:.2f}/{:.2f} supply={:.1f} demand={:.1f} traded={:.1f} factories={}/{} factory_output={:.1f} artisans={:.1f}/{} government_needs={:.1f} stockpiles={:.1f} short_countries={}",
 			label, good->get_identifier(), static_cast<double>(market.get_price()), static_cast<double>(good->base_price),
 			static_cast<double>(market.get_total_supply_yesterday()), static_cast<double>(market.get_total_demand_yesterday()),
 			static_cast<double>(market.get_quantity_traded_yesterday()), open_factories, factories, static_cast<double>(produced),
-			static_cast<double>(needs), static_cast<double>(stockpiles), short_countries
+			static_cast<double>(artisan_output[good].first), artisan_output[good].second, static_cast<double>(needs), static_cast<double>(stockpiles), short_countries
 		);
-		// The food and the drink: the countries that make the most of it (artisans and factories) and what their governments want of it
+		// The factories of the drink and the rifles, one by one (SUPPLY_FACTORY): open, level, workers, budget, output, profit
 		const std::string_view identifier = good->get_identifier();
+		if (identifier == "wine" || identifier == "liquor" || identifier.starts_with("rifle_")) {
+			for (StateSet const& state_set : instance_manager.get_map_instance().get_state_manager().get_state_sets()) {
+				for (State const& state : state_set.get_states()) {
+					for (FactoryInstance const& factory : state.get_factories()) {
+						if (factory.production_type->output_good.index != good->index) {
+							continue;
+						}
+						fmt::println("SUPPLY_FACTORY {} {} {} open={} player_closed={} level={} workers={}/{} budget={:.1f} output={:.2f} profit={:.2f} unprofitable_days={} building={}",
+							label, identifier, state.get_owner() != nullptr ? state.get_owner()->get_identifier() : std::string_view { "-" }, factory.is_open() ? 1 : 0,
+							factory.is_closed_by_player() ? 1 : 0, type_safe::get(factory.get_level()), type_safe::get(factory.get_employee_count()),
+							type_safe::get(factory.get_max_employee_count()), static_cast<double>(factory.get_budget()),
+							static_cast<double>(factory.get_output_quantity_yesterday()), static_cast<double>(factory.get_profit_yesterday()),
+							factory.get_unprofitable_days(), factory.is_under_construction() ? 1 : 0);
+					}
+				}
+			}
+		}
+		// The food and the drink: the countries that make the most of it (artisans and factories) and what their governments want of it
 		if (identifier == "canned_food" || identifier == "wine" || identifier == "liquor") {
 			std::unordered_map<CountryInstance const*, std::pair<fixed_point_t, fixed_point_t>> made; // artisans, factories
 			for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
