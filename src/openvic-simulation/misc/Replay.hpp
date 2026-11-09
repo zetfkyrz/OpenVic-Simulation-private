@@ -154,7 +154,9 @@ namespace OpenVic {
 		//     mobilisation (limited, standard, extended); new actions set_law, set_mobilisation_level
 		// 83: a law is proposed (set_law) and passes monthly by the support of the voters (the lean of the laws and the ideologies, the weights of the
 		//     strata by the distribution of power; LAW_PASS_*, LAW_STALL_MONTHS); the AI proposes laws (AI_LAW_*)
-		inline constexpr int SIMULATION_VERSION = 83;
+		// 84: the effects of more laws: the income tax by strata, the share of the owners of the RGOs, the colonial points, the growth of the militancy
+		//     and the consciousness, emigration and immigration, the freeing of the slaves, the assimilation, the room of the ships
+		inline constexpr int SIMULATION_VERSION = 84;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

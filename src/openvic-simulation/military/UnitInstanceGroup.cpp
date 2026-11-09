@@ -454,11 +454,20 @@ size_t UnitInstanceGroupBranched<NAVAL>::get_transport_capacity() const {
 	for (ShipInstance const& ship : get_ship_instances()) {
 		// The room of the type in the data (transport_capacity.txt), else REGIMENTS_PER_TRANSPORT of a transport type
 		const std::int32_t room = ship.get_ship_type().transport_capacity;
+		std::size_t ship_room = 0;
 		if (room >= 0) {
-			capacity += static_cast<size_t>(room);
+			ship_room = static_cast<size_t>(room);
 		} else if (ship.get_ship_type().is_transport) {
-			capacity += static_cast<size_t>(war_defines->regiments_per_transport);
+			ship_room = static_cast<size_t>(war_defines->regiments_per_transport);
 		}
+		// The naval model of the laws: more room on the transports (merchant navy) or on the warships that carry any (capital ships)
+		if (ship_room > 0) {
+			const fixed_point_t add = get_country().get_law_effect(
+				ship.get_ship_type().is_transport ? law_effect_t::transport_room_add : law_effect_t::warship_room_add
+			);
+			ship_room = static_cast<size_t>(std::max<std::int32_t>(0, static_cast<std::int32_t>(ship_room) + add.ceil<std::int32_t>()));
+		}
+		capacity += ship_room;
 	}
 	return capacity;
 }

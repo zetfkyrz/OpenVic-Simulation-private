@@ -109,7 +109,8 @@ fixed_point_t ColonisationManager::get_total_points(InstanceManager const& insta
 			total += ship.get_ship_type().colonial_points;
 		}
 	}
-	return total;
+	// The colonisation of the laws: more points (resettlement, exploitation) or none at all (no colonial affairs)
+	return total * std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::colonial_points));
 }
 
 fixed_point_t ColonisationManager::get_used_points(InstanceManager const& instance_manager, CountryInstance const& country) const {

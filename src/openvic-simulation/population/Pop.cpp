@@ -339,7 +339,17 @@ void Pop::pay_income_tax(fixed_point_t& income) {
 	if (tax_collector_nullable == nullptr) {
 		return;
 	}
-	const fixed_point_t effective_tax_rate = tax_collector_nullable->get_effective_tax_rate_by_strata(get_type().strata).get_untracked();
+	fixed_point_t effective_tax_rate = tax_collector_nullable->get_effective_tax_rate_by_strata(get_type().strata).get_untracked();
+	// The taxation of the laws: who pays more and who less (graduated, per capita, land...)
+	{
+		std::string_view const strata = get_type().strata.get_identifier();
+		const fixed_point_t law = tax_collector_nullable->get_law_effect(
+			strata == "rich" ? law_effect_t::tax_rich : strata == "middle" ? law_effect_t::tax_middle : law_effect_t::tax_poor
+		);
+		if (law != fixed_point_t::_0) {
+			effective_tax_rate = std::clamp(effective_tax_rate * (fixed_point_t::_1 + law), fixed_point_t::_0, fixed_point_t::_1);
+		}
+	}
 	const fixed_point_t tax = effective_tax_rate * income;
 	MoneyLedger::record(MoneyLedger::label_t::pop_tax_paid, -tax);
 	tax_collector_nullable->report_pop_income_tax(type, income, tax);

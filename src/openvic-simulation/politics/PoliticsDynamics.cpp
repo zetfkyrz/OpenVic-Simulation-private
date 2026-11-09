@@ -565,10 +565,15 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 				double pressure = std::max(0.0, defines.unrest_life_needs_threshold - life) * defines.unrest_life_needs_weight
 					+ to_double(pop.get_unemployment_fraction()) * defines.unrest_unemployment_weight;
 				pressure += to_double(exhaustion) * defines.unrest_war_exhaustion_weight;
-				double militancy = to_double(pop.get_militancy()) + (pressure - defines.militancy_pressure_offset) * defines.militancy_growth;
+				// The laws (police, internal security, free speech) speed up or slow down the militancy and the consciousness
+				const double militancy_law = std::max(0.0, 1.0 + to_double(country.get_law_effect(law_effect_t::militancy_growth)));
+				const double consciousness_law = std::max(0.0, 1.0 + to_double(country.get_law_effect(law_effect_t::consciousness_growth)));
+				const double militancy_step = (pressure - defines.militancy_pressure_offset) * defines.militancy_growth;
+				double militancy = to_double(pop.get_militancy()) + (militancy_step > 0.0 ? militancy_step * militancy_law : militancy_step);
 				militancy = std::clamp(militancy, 0.0, 10.0);
 				pop.set_militancy(fixed_point_t::parse_unsafe(static_cast<float>(militancy)));
-				double consciousness = to_double(pop.get_consciousness()) + to_double(pop.get_literacy()) * defines.consciousness_literacy_growth - defines.consciousness_decay;
+				double consciousness = to_double(pop.get_consciousness()) + to_double(pop.get_literacy()) * defines.consciousness_literacy_growth * consciousness_law
+					- defines.consciousness_decay;
 				pop.set_consciousness(fixed_point_t::parse_unsafe(static_cast<float>(std::clamp(consciousness, 0.0, 10.0))));
 
 				all_people += size;

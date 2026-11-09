@@ -502,8 +502,12 @@ void ResourceGatheringOperation::pay_employees(memory::vector<fixed_point_t>& re
 				fixed_point_t::_0_50,
 				fixed_point_t::_1 - total_minimum_wage / revenue_left
 			);
+			// The land reform of the owner country (serfdom more, homesteading less, collectivisation none)
+			CountryInstance const* const land_owner = location_ptr != nullptr ? location_ptr->get_owner() : nullptr;
+			const fixed_point_t land_law = land_owner != nullptr
+				? std::max(fixed_point_t::_0, fixed_point_t::_1 + land_owner->get_law_effect(law_effect_t::rgo_owner_share)) : fixed_point_t::_1;
 			const fixed_point_t owner_share = std::min(
-				fp::from_fraction(2 * total_owner_count_in_state_cache, total_worker_count_in_province_cache),
+				fp::from_fraction(2 * total_owner_count_in_state_cache, total_worker_count_in_province_cache) * land_law,
 				upper_limit
 			);
 

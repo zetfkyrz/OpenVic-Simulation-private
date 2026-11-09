@@ -40,7 +40,20 @@ namespace OpenVic {
 	X(no_foreign_trade) /* 1: no trade with other countries */ \
 	X(vote_poor) /* the weight of the vote of the poor, the middle and the rich strata in the laws (the distribution of power) */ \
 	X(vote_middle) \
-	X(vote_rich)
+	X(vote_rich) \
+	X(tax_poor) /* the income tax of the poor, the middle and the rich strata (taxation: graduated, per capita...) */ \
+	X(tax_middle) \
+	X(tax_rich) \
+	X(militancy_growth) /* how fast the militancy and the consciousness of the pops grow (police, security, free speech) */ \
+	X(consciousness_growth) \
+	X(rgo_owner_share) /* the share of the owners of the RGOs (land reform) */ \
+	X(no_emigration) /* 1: nobody leaves the country (closed borders) */ \
+	X(no_immigration) /* 1: nobody comes from abroad (closed borders, migration controls) */ \
+	X(colonial_points) /* the colonial points (colonisation: -1 none at all) */ \
+	X(free_slaves) /* the share of the slaves that become free every month (slavery banned) */ \
+	X(transport_room_add) /* regiments every transport carries more (naval model) */ \
+	X(warship_room_add) /* regiments every warship that carries any carries more */ \
+	X(assimilation) /* how fast the unaccepted cultures assimilate (citizenship; -1 none) */
 
 	enum struct law_effect_t : std::uint8_t {
 #define OV_LAW_EFFECT_ENUM(name) name,

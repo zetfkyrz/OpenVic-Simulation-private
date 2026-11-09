@@ -619,7 +619,8 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					// TODO the technologies raise the share of the emigrants (the research system adds a bonus here)
 					// A pop never disappears from hunger or emigration: at least one person stays
 					const std::int32_t people_that_may_go = std::max(0, type_safe::get(pop->get_size()) - 1);
-					const std::int32_t emigrants = std::min(
+					// Closed borders (the laws): nobody leaves the country, the hungry die
+					const std::int32_t emigrants = owner->get_law_effect(law_effect_t::no_emigration) > fixed_point_t::_0 ? 0 : std::min(
 						static_cast<std::int32_t>(defines.emigration_share.of_int(surplus)), people_that_may_go
 					);
 					std::int32_t placed = 0;
@@ -633,7 +634,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							std::int64_t best_free = 0;
 							for (std::size_t country = 0; country < country_count; ++country) {
 								const std::size_t slot = country * type_count + type_safe::get(type.index);
-								if (slot != own_slot && free_jobs_total[slot] > best_free) {
+								// (a country that lets nobody in takes no emigrants)
+								if (slot != own_slot && free_jobs_total[slot] > best_free
+									&& instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index_t(country))
+										.get_law_effect(law_effect_t::no_immigration) <= fixed_point_t::_0) {
 									best_free = free_jobs_total[slot];
 									best_slot = slot;
 								}
@@ -664,15 +668,40 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				Culture const& primary = *owner->get_primary_culture();
 				// Inside a culture group the assimilation is faster
 				const std::int32_t multiplier = &pop->culture.group == &primary.group ? defines.assimilation_same_group_multiplier : 1;
+				// The citizenship of the laws: faster (cultural exclusion) or none (multiculturalism)
 				pop->assimilation_remainder += defines.assimilation_per_month.of(
 					fixed_point_t(type_safe::get(pop->get_size())) * multiplier
-				);
+				) * std::max(fixed_point_t::_0, fixed_point_t::_1 + owner->get_law_effect(law_effect_t::assimilation));
 				const std::int32_t whole = std::min(take_whole(pop->assimilation_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(province, type, primary, *pop, pop_deps)) {
 						pop->change_size(-whole, 3);
 						target->change_size(whole, 3);
 						assimilated_total += whole;
+					}
+				}
+			}
+
+			// ---- The slaves of a country that banned the slavery (the laws) become free: farmers, or labourers where the RGO employs them
+			if (type.is_slave && owner != nullptr && farmers != nullptr && labourers != nullptr
+				&& owner->get_law_effect(law_effect_t::free_slaves) > fixed_point_t::_0) {
+				PopType const* free_type = farmers;
+				if (ProductionType const* const rgo_type = province.get_rgo().get_production_type_nullable(); rgo_type != nullptr) {
+					fixed_point_t most = fixed_point_t::_0;
+					for (Job const& job : rgo_type->get_jobs()) {
+						PopType const* const candidate = pop_manager.get_pop_type_by_index(job.pop_type_index);
+						if ((candidate == farmers || candidate == labourers) && job.amount > most) {
+							free_type = candidate;
+							most = job.amount;
+						}
+					}
+				}
+				pop->migration_remainder += owner->get_law_effect(law_effect_t::free_slaves) * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
+				if (whole > 0) {
+					if (Pop* target = find_or_create_pop(province, *free_type, pop->culture, *pop, pop_deps)) {
+						pop->change_size(-whole, 1);
+						target->change_size(whole, 1);
 					}
 				}
 			}
