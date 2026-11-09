@@ -174,18 +174,32 @@ std::size_t BuildingTypeManager::load_ov_buildings_file(std::string_view source,
 			return true;
 		}
 		memory::vector<memory::string> keys;
+		bool has_keys = false, has_time = false;
+		Timespan time;
 		const bool ok = NodeTools::expect_dictionary_keys_and_default(
 			[source, key](std::string_view unknown_key, ast::NodeCPtr) -> bool {
 				spdlog::warn_s("Unknown key \"{}\" in the building \"{}\" of {}", unknown_key, key, source);
 				return true;
 			},
-			"requires_unlock", ONE_EXACTLY, expect_unlock_keys(keys)
+			"requires_unlock", ZERO_OR_ONE, expect_unlock_keys(keys),
+			// The days of the construction instead of the "time" of the base game (version 75: the distilleries and the wineries)
+			"time", ZERO_OR_ONE, expect_days([&time, &has_time](const Timespan days) -> bool {
+				time = days;
+				has_time = true;
+				return true;
+			})
 		)(value);
-		if (!ok || keys.empty()) {
-			spdlog::warn_s("The building \"{}\" of {} has no usable requires_unlock, skipped", key, source);
+		has_keys = !keys.empty();
+		if (!ok || ((!has_keys || keys.empty()) && !has_time) || (has_time && time.to_int() <= 0)) {
+			spdlog::warn_s("The building \"{}\" of {} has no usable requires_unlock or time, skipped", key, source);
 			return true;
 		}
-		building_type->requires_unlock = std::move(keys);
+		if (has_keys && !keys.empty()) {
+			building_type->requires_unlock = std::move(keys);
+		}
+		if (has_time) {
+			building_type->build_time = time;
+		}
 		changed++;
 		return true;
 	})(root);

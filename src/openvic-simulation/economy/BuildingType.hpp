@@ -84,7 +84,7 @@ namespace OpenVic {
 
 		//costs
 		const fixed_point_t cost;
-		const Timespan build_time;
+		Timespan build_time; // not const: the files of ov_data/common/ov_buildings may change it (load_ov_buildings_file)
 		const fixed_point_map_t<GoodDefinition const*> goods_cost;
 
 		//effects
