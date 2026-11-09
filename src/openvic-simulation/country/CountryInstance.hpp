@@ -538,6 +538,11 @@ namespace OpenVic {
 		std::uint8_t PROPERTY_RW(mobilisation_level, 1);
 		// The taxes the bureaucrats keep (the corruption of the laws), paid to the bureaucrats of the country once a month (PopDynamics)
 		fixed_point_t PROPERTY_RW(corruption_owed, fixed_point_t::_0);
+		// The law that is being passed (docs/LAWS_DESIGN.md, the way (b)): every month it passes with a chance that grows with the support of the
+		// voters over the law in force; months without support are a stall, after LAW_STALL_MONTHS of them it is given up. nullptr: none
+		LawVariant const* PROPERTY_RW(law_proposal, nullptr);
+		std::uint32_t PROPERTY_RW(law_stall_months, 0);
+		fixed_point_t PROPERTY_RW(law_support, fixed_point_t::_0); // the support of the last month (-1..1)
 		// The laws in force (one variant of every law group, by the group index; docs/LAWS_DESIGN.md) and the sum of their effects of OpenVic
 		memory::vector<LawVariant const*> PROPERTY(laws);
 		law_effects_t PROPERTY(law_effects);

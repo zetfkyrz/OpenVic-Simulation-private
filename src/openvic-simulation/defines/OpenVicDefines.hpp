@@ -315,7 +315,19 @@ namespace OpenVic {
 	INT(MAX_REBEL_REGIMENTS, max_rebel_regiments, 6, 1, 1000) \
 	DOUBLE(MIN_MILITANT_SHARE, min_militant_share, 0.15, 0, 1) \
 	INT(UPRISING_COOLDOWN_DAYS, uprising_cooldown_days, 365, 0, 36500) \
-	INT(AI_SUPPRESSION_DAYS, ai_suppression_days, 90, 0, 36500)
+	INT(AI_SUPPRESSION_DAYS, ai_suppression_days, 90, 0, 36500) \
+	/* The passing of the laws (docs/LAWS_DESIGN.md, version 83): the support of a law that is being passed is the share of the voters (weights of the */ \
+	/* strata by the distribution of power) that like it more than the law in force, less the ones that like it less (-1..1). With support it passes */ \
+	/* every month with the chance LAW_PASS_BASE + LAW_PASS_PER_SUPPORT x support; a month without support is a stall, after LAW_STALL_MONTHS of them */ \
+	/* it is given up. The AI proposes, in the month AI_LAW_MONTH (1 = January), the change with the most support over AI_LAW_MIN_SUPPORT */ \
+	RATE(LAW_PASS_BASE, law_pass_base, Rate(5, 100), 0, 1) \
+	RATE(LAW_PASS_PER_SUPPORT, law_pass_per_support, Rate(100, 100), 0, 10) \
+	INT(LAW_STALL_MONTHS, law_stall_months, 12, 1, 1200) \
+	INT(AI_LAW_MONTH, ai_law_month, 1, 0, 12) \
+	RATE(AI_LAW_MIN_SUPPORT, ai_law_min_support, Rate(10, 100), 0, 1) \
+	/* The habit: the law in force is liked this much more than it would be by its lean alone. A law of a lower lean than the law in force (back */ \
+	/* towards the reaction) passes only under a reactionary or fascist ruling party (as the reforms of Vic2) */ \
+	RATE(LAW_STATUS_QUO, law_status_quo, Rate(10, 100), 0, 1)
 #define OV_COLONISATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	INT(MAX_COLONIAL_RANK, max_colonial_rank, 16, 1, 1000) \
 	INT(SEA_RANGE_BASE, sea_range_base, 3, 0, 1000) \

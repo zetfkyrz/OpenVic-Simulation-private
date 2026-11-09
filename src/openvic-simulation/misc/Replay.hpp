@@ -152,7 +152,9 @@ namespace OpenVic {
 		//     lands on an enemy it reaches only by sea (AI_LANDING_*); the ports the country took supply by the sea and take the ships of its armies
 		// 82: the laws of OpenVic (ov_data/common/ov_laws, docs/LAWS_DESIGN.md) replace the Vic2 reforms and party policies they name; the kind of the
 		//     mobilisation (limited, standard, extended); new actions set_law, set_mobilisation_level
-		inline constexpr int SIMULATION_VERSION = 82;
+		// 83: a law is proposed (set_law) and passes monthly by the support of the voters (the lean of the laws and the ideologies, the weights of the
+		//     strata by the distribution of power; LAW_PASS_*, LAW_STALL_MONTHS); the AI proposes laws (AI_LAW_*)
+		inline constexpr int SIMULATION_VERSION = 83;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -7,6 +7,7 @@
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/population/PopDynamics.hpp"
+#include "openvic-simulation/politics/LawDynamics.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/console/ConsoleInstance.hpp"
@@ -351,6 +352,8 @@ void InstanceManager::tick() {
 			{
 				OV_PROFILE_SCOPE(tick_profiler, "politics");
 				PoliticsDynamics::monthly_update(*this);
+				// The laws that are being passed, the proposals of the AI (docs/LAWS_DESIGN.md)
+				LawDynamics::monthly_update(*this);
 			}
 			{
 				OV_PROFILE_SCOPE(tick_profiler, "rebels");

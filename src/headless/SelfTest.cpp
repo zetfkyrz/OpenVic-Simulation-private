@@ -16,6 +16,7 @@
 #include <openvic-simulation/GameManager.hpp>
 #include <openvic-simulation/DefinitionManager.hpp>
 #include <openvic-simulation/InstanceManager.hpp>
+#include <openvic-simulation/politics/LawDynamics.hpp>
 #include <openvic-simulation/country/CountryInstance.hpp>
 #include <openvic-simulation/economy/GoodInstance.hpp>
 #include <openvic-simulation/economy/GoodDefinition.hpp>
@@ -6212,6 +6213,19 @@ namespace {
 		russia->set_mobilisation_level(level_before);
 		if (before != nullptr) {
 			russia->set_law(*before);
+		}
+
+		// Back towards the reaction only under a reactionary or fascist government (England: not reactionary, slavery banned)
+		CountryInstance* const england = im.get_country_instance_manager().get_country_instance_by_identifier("ENG");
+		LawVariant const* const banned = law_manager.get_variant("slavery_banned");
+		LawVariant const* const debt = law_manager.get_variant("debt_slavery");
+		if (england != nullptr && banned != nullptr && debt != nullptr && england->get_law(banned->group_index) == banned) {
+			CountryParty const* const ruling = england->get_ruling_party_untracked();
+			const std::string_view ideology = ruling != nullptr && ruling->ideology != nullptr ? std::string_view { ruling->ideology->get_identifier() } : "";
+			if (ideology != "reactionary" && ideology != "fascist") {
+				r.check(!LawDynamics::may_pass(*england, *debt, banned) && LawDynamics::may_pass(*england, *banned, debt),
+					"laws: a law back towards the reaction does not pass under a government that is not reactionary");
+			}
 		}
 	}
 

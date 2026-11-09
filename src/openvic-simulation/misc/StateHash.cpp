@@ -157,6 +157,8 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		}
 		hasher.add(static_cast<std::uint64_t>(country.get_mobilisation_level()) + 0x6d6f62ULL);
 		hasher.add(country.get_corruption_owed());
+		hasher.add(country.get_law_proposal() != nullptr ? static_cast<std::uint64_t>(country.get_law_proposal()->index) + 1 : 0);
+		hasher.add(static_cast<std::uint64_t>(country.get_law_stall_months()));
 		{
 			// The constructions the treasury builds for a fund (version 73)
 			fixed_point_t due = fixed_point_t::_0;

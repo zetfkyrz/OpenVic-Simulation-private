@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "openvic-simulation/modifier/ModifierManager.hpp"
+#include "openvic-simulation/politics/Ideology.hpp"
 #include "openvic-simulation/politics/IssueManager.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -30,8 +31,16 @@ namespace {
 std::size_t LawManager::load_file(std::string_view source, ast::NodeCPtr root, ModifierManager const& modifier_manager) {
 	std::size_t loaded = 0;
 	expect_dictionary([&](std::string_view key, ast::NodeCPtr group_node) -> bool {
+		if (key == "ideology_lean") {
+			return expect_dictionary([this](std::string_view ideology, ast::NodeCPtr node) -> bool {
+				return expect_fixed_point([this, ideology](fixed_point_t lean) -> bool {
+					ideology_lean[memory::string { ideology }] = std::clamp(lean, -fixed_point_t::_1, fixed_point_t::_1);
+					return true;
+				})(node);
+			})(group_node);
+		}
 		if (key != "law_group") {
-			spdlog::warn_s("Unknown key \"{}\" in {}, skipped (only law_group)", key, source);
+			spdlog::warn_s("Unknown key \"{}\" in {}, skipped (only law_group and ideology_lean)", key, source);
 			return true;
 		}
 		LawGroup group;
@@ -103,6 +112,7 @@ std::size_t LawManager::load_file(std::string_view source, ast::NodeCPtr root, M
 			RuleSet rules;
 			law_effects_t effects {};
 			bool is_default = false;
+			fixed_point_t lean = fixed_point_t::_0;
 			memory::vector<memory::string> start_from, inherit;
 			memory::string name_key;
 			bool effects_ok = true;
@@ -117,6 +127,7 @@ std::size_t LawManager::load_file(std::string_view source, ast::NodeCPtr root, M
 					return true;
 				}),
 				"default", ZERO_OR_ONE, expect_bool(assign_variable_callback(is_default)),
+				"lean", ZERO_OR_ONE, expect_fixed_point(assign_variable_callback(lean)),
 				"modifier", ZERO_OR_ONE, expect_dictionary(modifier_manager.expect_base_country_modifier(values)),
 				"rules", ZERO_OR_ONE, RuleSet::expect_rule_set(move_variable_callback(rules)),
 				"start_from", ZERO_OR_ONE, expect_list(expect_identifier_or_string(push_string(start_from))),
@@ -141,6 +152,7 @@ std::size_t LawManager::load_file(std::string_view source, ast::NodeCPtr root, M
 			variant.group_index = group_index;
 			variant.order = order++;
 			variant.is_default = is_default;
+			variant.lean = std::clamp(lean, -fixed_point_t::_1, fixed_point_t::_1);
 			variant.rules = std::move(rules);
 			variant.effects = effects;
 			variant.start_from = std::move(start_from);
@@ -160,8 +172,18 @@ std::size_t LawManager::load_file(std::string_view source, ast::NodeCPtr root, M
 	return loaded;
 }
 
-std::size_t LawManager::resolve(IssueManager const& issue_manager) {
+std::size_t LawManager::resolve(IssueManager const& issue_manager, IdeologyManager const& ideology_manager) {
 	std::size_t problems = 0;
+	lean_by_ideology.assign(ideology_manager.get_ideologies().size(), fixed_point_t::_0);
+	for (Ideology const& ideology : ideology_manager.get_ideologies()) {
+		const auto it = ideology_lean.find(ideology.get_identifier());
+		if (it != ideology_lean.end()) {
+			lean_by_ideology[type_safe::get(ideology.index)] = it->second;
+		} else if (!groups.empty()) {
+			spdlog::warn_s("The ideology \"{}\" has no lean for the laws (ideology_lean of ov_laws), 0 is taken", ideology.get_identifier());
+			problems++;
+		}
+	}
 	for (LawVariant& variant : variants) {
 		variant.inherited_modifiers.clear();
 		variant.inherited_rules.clear();
@@ -197,6 +219,12 @@ std::size_t LawManager::resolve(IssueManager const& issue_manager) {
 		}
 	}
 	return problems;
+}
+
+fixed_point_t LawManager::get_approval(const std::size_t ideology_index, LawVariant const& variant) const {
+	const fixed_point_t lean = ideology_index < lean_by_ideology.size() ? lean_by_ideology[ideology_index] : fixed_point_t::_0;
+	const fixed_point_t distance = lean > variant.lean ? lean - variant.lean : variant.lean - lean;
+	return fixed_point_t::_1 - distance / 2;
 }
 
 LawVariant const* LawManager::get_variant(std::string_view identifier) const {

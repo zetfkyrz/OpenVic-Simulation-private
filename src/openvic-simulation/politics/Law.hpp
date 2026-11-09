@@ -12,8 +12,10 @@
 #include "openvic-simulation/dataloader/NodeTools.hpp"
 #include "openvic-simulation/modifier/Modifier.hpp"
 #include "openvic-simulation/politics/RuleSet.hpp"
+#include "openvic-simulation/types/OrderedContainers.hpp"
 
 namespace OpenVic {
+	struct IdeologyManager;
 	struct IssueManager;
 	struct ModifierManager;
 
@@ -35,7 +37,10 @@ namespace OpenVic {
 	X(bureaucrat_promotion) /* how many pops become bureaucrats */ \
 	X(corruption) /* the share of the collected taxes the bureaucrats keep */ \
 	X(bureaucrat_wage) /* the pay of the bureaucrats */ \
-	X(no_foreign_trade) /* 1: no trade with other countries */
+	X(no_foreign_trade) /* 1: no trade with other countries */ \
+	X(vote_poor) /* the weight of the vote of the poor, the middle and the rich strata in the laws (the distribution of power) */ \
+	X(vote_middle) \
+	X(vote_rich)
 
 	enum struct law_effect_t : std::uint8_t {
 #define OV_LAW_EFFECT_ENUM(name) name,
@@ -52,6 +57,7 @@ namespace OpenVic {
 		std::size_t group_index = 0;
 		std::size_t order = 0; // in its group, from the old to the new
 		bool is_default = false; // the variant of a country the start keys do not choose
+		fixed_point_t lean = fixed_point_t::_0; // -1 the most reactionary .. 1 the most radical: the ideologies of the same lean like it
 		RuleSet rules;
 		law_effects_t effects {};
 		memory::vector<memory::string> start_from; // Vic2 reforms, party policies, government types that choose it at the start
@@ -85,12 +91,16 @@ namespace OpenVic {
 	private:
 		std::deque<LawVariant> variants; // the countries point to them
 		memory::vector<LawGroup> groups;
+		string_map_t<fixed_point_t> ideology_lean; // ideology_lean = { reactionary = -1 ... } of the files
+		memory::vector<fixed_point_t> lean_by_ideology; // by the index of the ideology (resolve)
 
 	public:
 		// A file of law groups (law_group = { ... } one or more). A broken group or variant is skipped with a warning. Returns the variants loaded.
 		std::size_t load_file(std::string_view source, ast::NodeCPtr root, ModifierManager const& modifier_manager);
 		// After the issues of Vic2: the inherited modifiers and rules, the checks. Returns the problems found.
-		std::size_t resolve(IssueManager const& issue_manager);
+		std::size_t resolve(IssueManager const& issue_manager, IdeologyManager const& ideology_manager);
+		// How much the ideology likes the variant: 1 - |lean of the ideology - lean of the variant| / 2 (0..1)
+		[[nodiscard]] fixed_point_t get_approval(std::size_t ideology_index, LawVariant const& variant) const;
 
 		[[nodiscard]] std::deque<LawVariant> const& get_variants() const {
 			return variants;

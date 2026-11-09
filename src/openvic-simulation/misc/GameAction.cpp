@@ -301,7 +301,8 @@ bool GameActionManager::VariantVisitor::operator() (set_auto_assign_leaders_argu
 	return old_auto_assign != country.get_auto_assign_leaders();
 }
 
-// A law in force (docs/LAWS_DESIGN.md): for now at once; the variant by its index in the law manager
+// A law is proposed (docs/LAWS_DESIGN.md, the way (b): it passes later by the support of the voters); the law in force withdraws the proposal; the
+// variant by its index in the law manager
 bool GameActionManager::VariantVisitor::operator() (set_law_argument_t const& argument) const {
 	const auto [country_index, variant_index] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
@@ -309,7 +310,22 @@ bool GameActionManager::VariantVisitor::operator() (set_law_argument_t const& ar
 	if (variant_index >= law_manager.get_variants().size()) {
 		return false;
 	}
-	return country.set_law(law_manager.get_variants()[variant_index]);
+	LawVariant const& variant = law_manager.get_variants()[variant_index];
+	if (country.get_law(variant.group_index) == &variant) {
+		const bool had = country.get_law_proposal() != nullptr && country.get_law_proposal()->group_index == variant.group_index;
+		if (had) {
+			country.set_law_proposal(nullptr);
+			country.set_law_stall_months(0);
+		}
+		return had;
+	}
+	if (country.get_law_proposal() == &variant) {
+		return false;
+	}
+	country.set_law_proposal(&variant);
+	country.set_law_stall_months(0);
+	country.set_law_support(fixed_point_t::_0);
+	return true;
 }
 
 // The kind of the mobilisation (decision of the owner 2026-11-10): 0 limited, 1 standard, 2 extended (the share of the pool: ov_war.MOBILISATION_LEVEL_*)

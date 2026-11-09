@@ -1417,7 +1417,9 @@ bool Dataloader::load_defines(
 			}
 			loaded += law_manager.load_file(file.string(), parser.get_file_node(), definition_manager.get_modifier_manager());
 		}
-		const std::size_t problems = law_manager.resolve(definition_manager.get_politics_manager().get_issue_manager());
+		const std::size_t problems = law_manager.resolve(
+			definition_manager.get_politics_manager().get_issue_manager(), definition_manager.get_politics_manager().get_ideology_manager()
+		);
 		SPDLOG_INFO("Loaded {} laws in {} groups ({} problems found)", loaded, law_manager.get_groups().size(), problems);
 	}
 	if (!definition_manager.get_pop_manager().load_delayed_parse_pop_type_data(
