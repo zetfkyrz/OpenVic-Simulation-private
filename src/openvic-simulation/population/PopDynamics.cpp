@@ -114,6 +114,9 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	PopType const* const farmers = pop_manager.get_pop_type_by_identifier("farmers");
 	PopType const* const labourers = pop_manager.get_pop_type_by_identifier("labourers");
 	PopType const* const craftsmen = pop_manager.get_pop_type_by_identifier("craftsmen");
+	PopType const* const artisans = pop_manager.get_pop_type_by_identifier("artisans");
+	// The free jobs of the RGOs the hungry artisans of this month took (by province)
+	std::unordered_map<ProvinceInstance const*, std::int32_t> rgo_jobs_taken;
 
 	// The money goes round: a pop that holds more than SAVINGS_MAX_DAYS days of what it earns or spends in a day (today's income and spending: the
 	// month starts after the market) passes SAVINGS_SHARE of the rest to the pops of its state that hold less, by their size (the pay for their
@@ -624,6 +627,49 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							target->change_size(whole, 1);
 							vacancies[state] -= whole;
 							promoted_total += whole;
+						}
+					}
+				}
+			}
+
+			// ---- The hungry artisans take the free jobs of the factories of the state (craftsmen), else of the RGO of the province
+			if (artisans != nullptr && &type == artisans && defines.artisan_demotion_share.numerator > 0
+				&& pop->get_life_needs_fulfilled() < defines.artisan_demotion_life_needs.fixed()) {
+				PopType const* target_type = nullptr;
+				std::int32_t room = 0;
+				bool to_factory = false;
+				if (craftsmen != nullptr && state != nullptr && vacancies[state] > 0) {
+					target_type = craftsmen;
+					room = vacancies[state];
+					to_factory = true;
+				} else {
+					ResourceGatheringOperation const& rgo = province.get_rgo();
+					ProductionType const* const rgo_type = rgo.get_production_type_nullable();
+					if (rgo_type != nullptr) {
+						room = type_safe::get(rgo.get_max_employee_count_cache()) - type_safe::get(rgo.get_total_employees_count_cache())
+							- rgo_jobs_taken[&province];
+						fixed_point_t most = fixed_point_t::_0;
+						for (Job const& job : rgo_type->get_jobs()) {
+							PopType const* const candidate = pop_manager.get_pop_type_by_index(job.pop_type_index);
+							if (candidate != nullptr && candidate->can_be_unemployed && !candidate->is_slave && job.amount > most) {
+								target_type = candidate;
+								most = job.amount;
+							}
+						}
+					}
+				}
+				if (target_type != nullptr && room > 0) {
+					pop->migration_remainder += defines.artisan_demotion_share.of(fixed_point_t(type_safe::get(pop->get_size())));
+					const std::int32_t whole = std::min({ take_whole(pop->migration_remainder), type_safe::get(pop->get_size()), room });
+					if (whole > 0) {
+						if (Pop* target = find_or_create_pop(province, *target_type, pop->culture, *pop, pop_deps)) {
+							pop->change_size(-whole, 2);
+							target->change_size(whole, 2);
+							if (to_factory) {
+								vacancies[state] -= whole;
+							} else {
+								rgo_jobs_taken[&province] += whole;
+							}
 						}
 					}
 				}

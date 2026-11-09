@@ -142,7 +142,9 @@ namespace OpenVic {
 		//     while their everyday needs are under BUDGET_POOR_NEEDS_MIN; the artisans keep the money of their life needs before the inputs
 		//     (ARTISAN_LIFE_NEEDS_FIRST) and eat before they fill the stockpile of their inputs; the pops pass their money over SAVINGS_MAX_DAYS to the
 		//     other pops of their state (SAVINGS_SHARE, "services_income"); the pops need a half of the needs of the data (POP_NEEDS_MULTIPLIER)
-		inline constexpr int SIMULATION_VERSION = 78;
+		// 79: an artisan whose profit does not pay for its life needs picks a new good now and then (ARTISAN_POOR_SWITCH_CHANCE); the hungry artisans
+		//     take the free jobs of the factories of their state, else of the RGO of their province (ARTISAN_DEMOTION_*)
+		inline constexpr int SIMULATION_VERSION = 79;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

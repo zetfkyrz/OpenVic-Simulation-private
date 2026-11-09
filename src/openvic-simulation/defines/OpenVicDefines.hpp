@@ -174,6 +174,11 @@ namespace OpenVic {
 	/* The artisans keep the money of their life needs before they buy the goods of their work (version 78): before, all the cash went to the */ \
 	/* inputs, the market did not give them, and the artisans starved with the money in their hands. 0 = the inputs first, as before */ \
 	INT(ARTISAN_LIFE_NEEDS_FIRST, artisan_life_needs_first, 1, 0, 1) \
+	/* The hungry artisans (version 79): ARTISAN_DEMOTION_SHARE a month of the artisans whose life needs are under ARTISAN_DEMOTION_LIFE_NEEDS */ \
+	/* take the free jobs of the factories of their state (they become craftsmen), else the free jobs of the RGO of their province (farmers or */ \
+	/* labourers, who it employs most). Without free jobs they stay. 0 = off */ \
+	RATE(ARTISAN_DEMOTION_SHARE, artisan_demotion_share, Rate(5, 100), 0, 1) \
+	RATE(ARTISAN_DEMOTION_LIFE_NEEDS, artisan_demotion_life_needs, Rate(50, 100), 0, 1) \
 	/* The money goes round (version 78, decision of the owner 2026-11-09): a pop that holds more than SAVINGS_MAX_DAYS days of what it earns (or */ \
 	/* spends) in a day passes SAVINGS_SHARE of the rest every month to the other pops of its state that hold less than that, by their size, */ \
 	/* as the pay for their services (income "services_income", taxed). The money does not stay with the few pops whose needs are full (the */ \
@@ -786,6 +791,9 @@ namespace OpenVic {
 	/* An artisan that chooses what to make weighs a good its government lacks more: the weight of the type (its score squared) is multiplied by */ \
 	/* 1 + ARTISAN_COUNTRY_NEED_WEIGHT x the share of the needs of the government (the armies, the constructions) its stockpile lacks */ \
 	RATE(ARTISAN_COUNTRY_NEED_WEIGHT, artisan_country_need_weight, Rate(100, 100), 0, 100) \
+	/* An artisan whose profit of yesterday does not pay for its life needs picks a new good with this chance a day (version 79). Before, it */ \
+	/* changed only at a loss: the artisans of the cheap goods (lumber, furniture, cloth) starved with a tiny profit for ever. 0 = off */ \
+	RATE(ARTISAN_POOR_SWITCH_CHANCE, artisan_poor_switch_chance, Rate(5, 100), 0, 1) \
 	/* The money of the investment fund that nobody uses: when the fund holds more than this many days of the income of the country, */ \
 	/* this share of the excess goes back to the treasury every day (and from there to the budget, the pops get it as salaries) */ \
 	INT(INVESTMENT_FUND_MAX_DAYS, investment_fund_max_days, 14, 1, 36500) \

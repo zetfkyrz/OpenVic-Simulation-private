@@ -609,6 +609,18 @@ ProductionType const* ArtisanalProducer::pick_production_type(
 		}
 	}
 
+	// The good does not feed the artisan (the profit of yesterday is under what its life needs cost today): it looks for another one now and then
+	if (!should_pick_new_production_type && openvic_defines != nullptr && openvic_defines->artisan_poor_switch_chance.numerator > 0
+		&& pop.get_cash_reserved_for_life_needs() > fixed_point_t::_0 && revenue - costs < pop.get_cash_reserved_for_life_needs()) {
+		const fixed_point_t chance = openvic_defines->artisan_poor_switch_chance.fixed();
+		if (chance >= fixed_point_t::_1) {
+			should_pick_new_production_type = true;
+		} else {
+			const std::array<fixed_point_t, 2> chances { fixed_point_t::_1 - chance, chance };
+			should_pick_new_production_type = sample_weighted_index(random_number_generator(), chances, fixed_point_t::_1) == 1;
+		}
+	}
+
 	if (!should_pick_new_production_type) {
 		return production_type_nullable;
 	}
