@@ -730,6 +730,10 @@ fixed_point_t GoodMarket::plan_routes() {
 	// What is left on offer in one country and wanted in another (min of the two sums, as every pair of them had no route or no room left)
 	// is cut off from the market: it does not count for the price. What is left on offer when nobody wants it is a glut, it does count.
 	cut_off_quantity = std::max(std::min(total_supply, total_desire) - sold_at_home - planned, fixed_point_t::_0);
+	desire_yesterday = total_desire;
+	sold_at_home_yesterday = sold_at_home;
+	routed_yesterday = planned;
+	cut_off_yesterday = cut_off_quantity;
 	if (cut_off_quantity > fixed_point_t::_0) {
 		trade_network->add_stat(trade_network->get_outside_node(), 4, cut_off_quantity * price);
 	}

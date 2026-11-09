@@ -1508,72 +1508,126 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 	const std::size_t count = map_instance.get_province_instances().size();
 	supply_reach.clear();
 	std::deque<ProvinceInstance const*> queue;
+	std::vector<std::uint8_t> peace_reach;
+	// Over land and over the straits (Constantinople and Anatolia, Denmark and Scania...)
+	const auto connects = [](ProvinceDefinition::adjacency_t const& adjacency) -> bool {
+		return !adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
+			|| adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT);
+	};
+	const auto has_naval_base = [](ProvinceInstance const& province) -> bool {
+		for (BuildingInstance const& building : province.get_buildings()) {
+			if (building.building_type.get_identifier() == "naval_base" && type_safe::get(building.get_level()) > 0) {
+				return true;
+			}
+		}
+		return false;
+	};
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (!country.exists() || !country.has_armies()) {
 			continue;
 		}
-		if (!country.is_at_war()) {
+		const bool at_war = country.is_at_war();
+		const SupplyFriends friends = SupplyFriends::build(country, countries, *this);
+		// 1: reached over land from the capital; 2: by the sea, from a port (ov_supply.SUPPLY_SEA_LOSS of the supply is lost on the way). A country at
+		// peace is never cut off: it only needs to know which of its armies are supplied by the sea
+		std::vector<std::uint8_t>& reach = at_war ? supply_reach[&country] : peace_reach;
+		reach.assign(count, 0);
+		queue.clear();
+		bool any_source = false;
+		const auto add_source = [&](ProvinceInstance const& province, const std::uint8_t mark) {
+			const std::size_t index = type_safe::get(province.index);
+			if (reach[index] == 0) {
+				reach[index] = mark;
+				queue.push_back(&province);
+				any_source = true;
+			}
+		};
+		const auto spread = [&](const std::uint8_t mark) {
+			while (!queue.empty()) {
+				ProvinceInstance const* const current = queue.front();
+				queue.pop_front();
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+					if (!connects(adjacency)) {
+						continue;
+					}
+					ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					const std::size_t index = type_safe::get(next.index);
+					if (reach[index] == 0 && is_supply_held(next, friends)) {
+						reach[index] = mark;
+						queue.push_back(&next);
+					}
+				}
+			}
+		};
+		// The land: from the capital (held by a friend)
+		if (country.get_capital() != nullptr && is_supply_held(*country.get_capital(), friends)) {
+			add_source(*country.get_capital(), 1);
+			spread(1);
+		}
+		// The sea: the ports the country holds that no enemy blockades and the land does not reach (an island, a colony, a province cut off from the rest
+		// of the country). A port with a naval base always; any other port when the land reached from the capital has a free port the ships sail from
+		bool home_port = false;
+		for (ProvinceInstance* province : country.get_owned_provinces()) {
+			if (reach[type_safe::get(province->index)] == 1 && province->get_controller() == &country && province->province_definition.has_port()
+				&& !is_blockaded(*province)) {
+				home_port = true;
+				break;
+			}
+		}
+		for (ProvinceInstance* province : country.get_owned_provinces()) {
+			if (province->get_controller() != &country || !province->province_definition.has_port() || is_blockaded(*province)
+				|| reach[type_safe::get(province->index)] != 0) {
+				continue;
+			}
+			if (home_port || has_naval_base(*province)) {
+				add_source(*province, 2);
+			}
+		}
+		spread(2);
+		// How an army is reached: in its province, or next to it (it stands on the land of the enemy at the edge of ours: the last step leads to it);
+		// over land when any way is over land
+		const auto army_reach = [&](ArmyInstance const& army) -> std::uint8_t {
+			ProvinceInstance const& at = army.get_location();
+			if (army.get_transport_navy() != nullptr || at.province_definition.is_water()) {
+				return 1;
+			}
+			const std::uint8_t here = reach[type_safe::get(at.index)];
+			if (here != 0 || is_supply_held(at, friends)) {
+				return here;
+			}
+			std::uint8_t best = 0;
+			for (ProvinceDefinition::adjacency_t const& adjacency : at.province_definition.get_adjacencies()) {
+				if (!connects(adjacency)) {
+					continue;
+				}
+				const std::uint8_t next = reach[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)];
+				if (next == 1) {
+					return 1;
+				}
+				best = std::max(best, next);
+			}
+			return best;
+		};
+		// A country without any source (its capital and its ports are lost) is not cut off as a whole: its armies keep what they have
+		if (!any_source) {
+			if (at_war) {
+				supply_reach.erase(&country);
+			}
+			for (ArmyInstance& army : country.get_armies()) {
+				army.set_cut_off(false);
+				army.set_encircled(false);
+				army.set_supply_by_sea(false);
+			}
+			continue;
+		}
+		if (!at_war) {
 			for (ArmyInstance& army : country.get_armies()) {
 				army.set_cut_off(false);
 				army.set_encircled(false);
 				army.set_encircled_days(0);
+				army.set_supply_by_sea(army_reach(army) == 2);
 			}
 			continue;
-		}
-		const SupplyFriends friends = SupplyFriends::build(country, countries, *this);
-		std::vector<std::uint8_t>& reach = supply_reach[&country];
-		reach.assign(count, 0);
-		queue.clear();
-		// The sources: the capital (held by a friend) and the ports with a naval base the country holds that no enemy blockades
-		const auto add_source = [&](ProvinceInstance const& province) {
-			const std::size_t index = type_safe::get(province.index);
-			if (reach[index] == 0) {
-				reach[index] = 1;
-				queue.push_back(&province);
-			}
-		};
-		if (country.get_capital() != nullptr && is_supply_held(*country.get_capital(), friends)) {
-			add_source(*country.get_capital());
-		}
-		for (ProvinceInstance* province : country.get_owned_provinces()) {
-			if (province->get_controller() != &country || !province->province_definition.has_port() || is_blockaded(*province)) {
-				continue;
-			}
-			for (BuildingInstance const& building : province->get_buildings()) {
-				if (building.building_type.get_identifier() == "naval_base" && type_safe::get(building.get_level()) > 0) {
-					add_source(*province);
-					break;
-				}
-			}
-		}
-		// A country without any source (its capital and its ports are lost) is not cut off as a whole: its armies keep what they have
-		if (queue.empty()) {
-			supply_reach.erase(&country);
-			for (ArmyInstance& army : country.get_armies()) {
-				army.set_cut_off(false);
-				army.set_encircled(false);
-			}
-			continue;
-		}
-		// Over land and over the straits (Constantinople and Anatolia, Denmark and Scania...)
-		const auto connects = [](ProvinceDefinition::adjacency_t const& adjacency) -> bool {
-			return !adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
-				|| adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT);
-		};
-		while (!queue.empty()) {
-			ProvinceInstance const* const current = queue.front();
-			queue.pop_front();
-			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
-				if (!connects(adjacency)) {
-					continue;
-				}
-				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
-				const std::size_t index = type_safe::get(next.index);
-				if (reach[index] == 0 && is_supply_held(next, friends)) {
-					reach[index] = 1;
-					queue.push_back(&next);
-				}
-			}
 		}
 		// The pockets: the land of the friends that is not reached, by its connected parts; a part next to the land of an enemy at war is a pocket (the
 		// others, a colony far from the war, are only cut off from the supply)
@@ -1611,22 +1665,15 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 			}
 			return part_touches_enemy[static_cast<std::size_t>(id)] != 0;
 		};
-		// An army is reached in its province, or next to it (it stands on the land of the enemy at the edge of ours: the last step leads to it)
 		for (ArmyInstance& army : country.get_armies()) {
 			ProvinceInstance const& at = army.get_location();
-			bool reached = army.get_transport_navy() != nullptr || at.province_definition.is_water() || reach[type_safe::get(at.index)] != 0;
-			if (!reached && !is_supply_held(at, friends)) {
-				for (ProvinceDefinition::adjacency_t const& adjacency : at.province_definition.get_adjacencies()) {
-					if (connects(adjacency) && reach[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)] != 0) {
-						reached = true;
-						break;
-					}
-				}
-			}
+			const std::uint8_t got = army_reach(army);
+			const bool reached = got != 0;
 			// Cut off: no supply; in a pocket (deep in the land of the enemy, or on the land of the friends that touches the enemy): it loses organisation too
 			const bool pocket = !reached && (!is_supply_held(at, friends) || pocket_of(at));
 			army.set_cut_off(!reached);
 			army.set_encircled(pocket);
+			army.set_supply_by_sea(got == 2);
 			if (!pocket) {
 				army.set_encircled_days(0);
 			}

@@ -2607,25 +2607,38 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	}
 	canned_food_from_grain_yesterday = cans_from_grain;
 
-	// The rifles of the next generation for the old muskets the stockpile lacks, one for one (the countries with the unlock of the post-Napoleonic
-	// tactics): what the rifle_1 of the stockpile has left after its own needs; the government buys rifle_1 for the missing muskets too
+	// The rifles with the post-Napoleonic tactics (supply:rifle_1_first, one for one): rifle_1 goes first, to the regiments armed with it and then, from
+	// what is left, for the rifle_0 of the regiments with the old muskets (before the stockpile gives its own rifle_0); what rifle_1 the regiments armed
+	// with it lack is taken from the rifle_0 left after their own needs, and those regiments lose a share of their attack and defence (below). The
+	// government buys rifle_1 for the regiments with muskets too, and rifle_0 for the rifle_1 it lacks
 	GoodDefinition const* const musket = good_definition_manager != nullptr ? good_definition_manager->get_good_definition_by_identifier("rifle_0") : nullptr;
 	GoodDefinition const* const rifle = good_definition_manager != nullptr ? good_definition_manager->get_good_definition_by_identifier("rifle_1") : nullptr;
 	fixed_point_t muskets_from_rifles = fixed_point_t::_0;
-	if (musket != nullptr && rifle != nullptr && !give_start_stockpile && has_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0)) {
+	fixed_point_t rifles_from_muskets = fixed_point_t::_0;
+	fixed_point_t rifles_due = fixed_point_t::_0;
+	if (musket != nullptr && rifle != nullptr && !give_start_stockpile && has_unlock(UNLOCK_SUPPLY_RIFLE_1_FIRST)) {
 		good_data_t& muskets = goods_data.at_index(musket->index);
 		good_data_t& rifles = goods_data.at_index(rifle->index);
-		const fixed_point_t missing = std::max(fixed_point_t::_0, muskets.army_due - muskets.stockpile_amount);
-		if (missing > fixed_point_t::_0) {
-			const fixed_point_t rifles_free = std::max(fixed_point_t::_0, rifles.stockpile_amount - rifles.army_due - rifles.navy_due);
-			muskets_from_rifles = std::min(missing, rifles_free);
-			rifles.stockpile_amount -= muskets_from_rifles;
-			rifles.stockpile_change_yesterday -= muskets_from_rifles;
-			rifles.government_needs += missing * DAYS_OF_SUPPLY;
-			rifles.max_government_consumption += missing * DAYS_OF_SUPPLY;
+		rifles_due = rifles.army_due;
+		const fixed_point_t rifles_missing = std::max(fixed_point_t::_0, rifles.army_due + rifles.navy_due - rifles.stockpile_amount);
+		const fixed_point_t rifles_free = std::max(fixed_point_t::_0, rifles.stockpile_amount - rifles.army_due - rifles.navy_due);
+		muskets_from_rifles = std::min(muskets.army_due, rifles_free);
+		rifles.stockpile_amount -= muskets_from_rifles;
+		rifles.stockpile_change_yesterday -= muskets_from_rifles;
+		const fixed_point_t muskets_free = std::max(fixed_point_t::_0,
+			muskets.stockpile_amount - (muskets.army_due - muskets_from_rifles) - muskets.navy_due);
+		rifles_from_muskets = std::min(std::min(rifles_missing, rifles.army_due), muskets_free);
+		muskets.stockpile_amount -= rifles_from_muskets;
+		muskets.stockpile_change_yesterday -= rifles_from_muskets;
+		rifles.government_needs += muskets.army_due * DAYS_OF_SUPPLY;
+		rifles.max_government_consumption += muskets.army_due * DAYS_OF_SUPPLY;
+		if (rifles_missing > fixed_point_t::_0) {
+			muskets.government_needs += rifles_missing * DAYS_OF_SUPPLY;
+			muskets.max_government_consumption += rifles_missing * DAYS_OF_SUPPLY;
 		}
 	}
 	rifle_1_for_rifle_0_yesterday = muskets_from_rifles;
+	rifle_0_for_rifle_1_yesterday = rifles_from_muskets;
 
 	fixed_point_t construction_value = fixed_point_t::_0;
 	for (auto [good_instance, good_data] : goods_data) {
@@ -2637,20 +2650,23 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 
 		// The supplies of the day are used up
 		if (due > fixed_point_t::_0) {
-			const fixed_point_t consumed = std::min(due, good_data.stockpile_amount);
-			// The cans the grain stood in for (the armies only)
+			// Given before the own stockpile (rifle_1 for the rifle_0 of the regiments with muskets, the armies only)
+			const fixed_point_t before = std::min(good_data.army_due,
+				musket != nullptr && good_instance.index == musket->index ? muskets_from_rifles : fixed_point_t::_0);
+			const fixed_point_t consumed = std::min(due - before, good_data.stockpile_amount);
+			// Given for what the own stockpile lacks (the armies only): the cans the grain stood in for, the rifle_1 that rifle_0 stood in for
 			const fixed_point_t substitute = canned_food != nullptr && good_instance.index == canned_food->index ? cans_from_grain
-				: musket != nullptr && good_instance.index == musket->index ? muskets_from_rifles : fixed_point_t::_0;
-			const fixed_point_t substituted = std::min(substitute, good_data.army_due - std::min(good_data.army_due, consumed));
-			supplied_share[static_cast<std::size_t>(type_safe::get(good_instance.index))] = (consumed + substituted) / due;
+				: rifle != nullptr && good_instance.index == rifle->index ? rifles_from_muskets : fixed_point_t::_0;
+			const fixed_point_t substituted = std::min(substitute, good_data.army_due - std::min(good_data.army_due, before + consumed));
+			supplied_share[static_cast<std::size_t>(type_safe::get(good_instance.index))] = (before + consumed + substituted) / due;
 			good_data.stockpile_amount -= consumed;
 			good_data.stockpile_change_yesterday -= consumed;
 
 			// What the units got of what they needed
 			army_needed_total += good_data.army_due;
-			army_supplied_total += consumed * good_data.army_due / due + substituted;
+			army_supplied_total += before + substituted + (due > before ? consumed * (good_data.army_due - before) / (due - before) : fixed_point_t::_0);
 			navy_needed_total += good_data.navy_due;
-			navy_supplied_total += consumed * good_data.navy_due / due;
+			navy_supplied_total += due > before ? consumed * good_data.navy_due / (due - before) : fixed_point_t::_0;
 		}
 
 		if (daily_need > fixed_point_t::_0) {
@@ -2686,6 +2702,27 @@ void CountryInstance::calculate_government_good_needs(const Date today) {
 	}
 	// The money of the constructions is not more than what their goods still cost: what the market did not give is free
 	construction_money = std::min(construction_money, construction_value);
+
+	// The regiments armed with rifle_1 that got rifle_0 today lose RIFLE_0_FOR_RIFLE_1_PENALTY of their attack and defence times the share of it
+	// (the ratios of the weapons were set today by update_regiment_equipment)
+	if (rifles_from_muskets > fixed_point_t::_0 && rifles_due > fixed_point_t::_0 && openvic_war_defines != nullptr) {
+		const fixed_point_t keep = fixed_point_t::_1
+			- openvic_war_defines->rifle_0_for_rifle_1_penalty.fixed() * std::min(fixed_point_t::_1, rifles_from_muskets / rifles_due);
+		for (ArmyInstance& army : armies) {
+			for (RegimentInstance& regiment : army.get_regiment_instances()) {
+				bool armed_with_rifle = regiment.get_weapon_good() == rifle;
+				if (regiment.get_weapon_good() == nullptr) {
+					for (UnitType::supply_item_t const& item : regiment.unit_type.get_supply_items()) {
+						armed_with_rifle |= item.good == rifle;
+					}
+				}
+				if (armed_with_rifle) {
+					regiment.set_weapon_attack_ratio(regiment.get_weapon_attack_ratio() * keep);
+					regiment.set_weapon_defence_ratio(regiment.get_weapon_defence_ratio() * keep);
+				}
+			}
+		}
+	}
 
 	// The companies: what each type works as today and how much of its goods it got (the slider of the army counts as it does for the regiments)
 	if (!company_works_as.empty()) {

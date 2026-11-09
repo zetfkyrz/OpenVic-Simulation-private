@@ -190,6 +190,8 @@ namespace OpenVic {
 		bool PROPERTY_RW_CUSTOM_NAME(cut_off, is_cut_off, set_cut_off, false);
 		bool PROPERTY_RW_CUSTOM_NAME(encircled, is_encircled, set_encircled, false);
 		std::uint32_t PROPERTY_RW(encircled_days, 0);
+		// The supply reaches the army only by the sea (WarManager::update_encirclements): ov_supply.SUPPLY_SEA_LOSS of it is lost on the way
+		bool PROPERTY_RW_CUSTOM_NAME(supply_by_sea, is_supply_by_sea, set_supply_by_sea, false);
 		// The bonus of the general of the army and the field marshal of its group to its supply, worked out every day
 		fixed_point_t PROPERTY_RW(supply_leader_bonus, fixed_point_t::_0);
 		// The way by sea (P4d): the army goes to the port sea_transfer_from, sails for sea_transfer_days_total days (sea_transfer_days_left > 0: at

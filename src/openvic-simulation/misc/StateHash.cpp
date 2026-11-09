@@ -93,6 +93,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			if (army.is_cut_off()) {
 				hasher.add(0x63757430ULL);
 			}
+			if (army.is_supply_by_sea()) {
+				hasher.add(0x73656131ULL);
+			}
 			if (army.has_sea_transfer()) {
 				hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_to()->index)));
 				hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_destination()->index)));

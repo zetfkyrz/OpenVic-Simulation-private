@@ -38,8 +38,9 @@ namespace OpenVic {
 	inline constexpr std::string_view UNLOCK_MECHANIC_DIVISION_TEMPLATES = "mechanic:division_templates"; // create, change and delete templates (without it the default one is fixed)
 	inline constexpr std::string_view UNLOCK_MECHANIC_COMMAND = "mechanic:command"; // generals, field marshals, fronts and plans
 	inline constexpr std::string_view UNLOCK_MECHANIC_MOBILISATION = "mechanic:mobilisation"; // mobilise (demobilising is always possible)
-	// the supply of the regiments may take rifle_1 for the rifle_0 the stockpile lacks (post-Napoleonic tactics; the AI in 1845)
-	inline constexpr std::string_view UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0 = "supply:rifle_1_for_rifle_0";
+	// the rifles of the supply: rifle_1 first (for the regiments with rifle_0 too), what it lacks as rifle_0 with a penalty to the regiments armed with
+	// rifle_1 (post-Napoleonic tactics; the AI in 1845)
+	inline constexpr std::string_view UNLOCK_SUPPLY_RIFLE_1_FIRST = "supply:rifle_1_first";
 	inline constexpr std::string_view UNLOCK_MECHANIC_INSTANT_OCCUPATION = "mechanic:instant_occupation"; // the divisions take a province at once
 
 	// A modifier of the provisional unlocks (the type is a technology: the effects are the ones of the technologies)

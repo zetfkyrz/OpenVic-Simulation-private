@@ -135,7 +135,10 @@ namespace OpenVic {
 		// 75: the files of ov_data/common/ov_buildings may give the days of the construction ("time"): a distillery 165 days, a winery 365
 		// 76: the employed farmers and labourers become craftsmen for the free jobs of the factories (FACTORY_JOB_PROMOTION_SHARE); the supply takes
 		//     rifle_1 for the missing rifle_0 with the post-Napoleonic tactics (supply:rifle_1_for_rifle_0; the AI in 1845)
-		inline constexpr int SIMULATION_VERSION = 76;
+		// 77: the rifles of the supply with the post-Napoleonic tactics: rifle_1 first, what it lacks as rifle_0 with a penalty to the regiments armed
+		//     with rifle_1 (supply:rifle_1_first, RIFLE_0_FOR_RIFLE_1_PENALTY); the land the capital does not reach is supplied by the sea through a free
+		//     port, SUPPLY_SEA_LOSS of the supply is lost on the way
+		inline constexpr int SIMULATION_VERSION = 77;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

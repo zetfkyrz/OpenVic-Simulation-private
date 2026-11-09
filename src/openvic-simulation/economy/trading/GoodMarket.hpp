@@ -77,6 +77,12 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(total_demand_yesterday);
 		fixed_point_t PROPERTY(total_supply_yesterday);
 		fixed_point_t PROPERTY(quantity_traded_yesterday);
+		// The routed market of yesterday (the trade network, docs/TRADE.md): what the buyers could pay for at the highest price, what the countries
+		// sold to their own buyers, what the routes carried and what was on offer in one country and wanted in another but no route could carry
+		fixed_point_t PROPERTY(desire_yesterday);
+		fixed_point_t PROPERTY(sold_at_home_yesterday);
+		fixed_point_t PROPERTY(routed_yesterday);
+		fixed_point_t PROPERTY(cut_off_yesterday);
 		ValueHistory<fixed_point_t> PROPERTY(price_history);
 
 		void update_next_price_limits();

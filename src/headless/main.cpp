@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <array>
 #include <map>
 #include <memory>
 #include <random>
@@ -1445,10 +1446,12 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 		}
 		GoodInstance const& market = instance_manager.get_good_instance_manager().get_good_instance_by_definition(*good);
 		fmt::println(
-			"SUPPLY_GOOD {} {:<16} price={:.2f}/{:.2f} supply={:.1f} demand={:.1f} traded={:.1f} factories={}/{} factory_output={:.1f} artisans={:.1f}/{} government_needs={:.1f} stockpiles={:.1f} short_countries={}",
+			"SUPPLY_GOOD {} {:<16} price={:.2f}/{:.2f} supply={:.1f} demand={:.1f} traded={:.1f} (paid_wishes={:.1f} at_home={:.1f} routed={:.1f} cut_off={:.1f}) factories={}/{} factory_output={:.1f} artisans={:.1f}/{} government_needs={:.1f} stockpiles={:.1f} short_countries={}",
 			label, good->get_identifier(), static_cast<double>(market.get_price()), static_cast<double>(good->base_price),
 			static_cast<double>(market.get_total_supply_yesterday()), static_cast<double>(market.get_total_demand_yesterday()),
-			static_cast<double>(market.get_quantity_traded_yesterday()), open_factories, factories, static_cast<double>(produced),
+			static_cast<double>(market.get_quantity_traded_yesterday()), static_cast<double>(market.get_desire_yesterday()),
+			static_cast<double>(market.get_sold_at_home_yesterday()), static_cast<double>(market.get_routed_yesterday()),
+			static_cast<double>(market.get_cut_off_yesterday()), open_factories, factories, static_cast<double>(produced),
 			static_cast<double>(artisan_output[good].first), artisan_output[good].second, static_cast<double>(needs), static_cast<double>(stockpiles), short_countries
 		);
 		// The factories of the drink and the rifles, one by one (SUPPLY_FACTORY): open, level, workers, budget, output, profit
@@ -1551,6 +1554,27 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			static_cast<double>(country.get_tax_efficiency_untracked()), static_cast<double>(country.get_tariff_income()),
 			type_safe::get(country.get_total_population()),
 			short_goods.empty() ? std::string { "-" } : short_goods);
+	}
+	// The money of the pops by their type (POP_MONEY): the people, the cash, the income of yesterday, what they paid for goods yesterday, the needs
+	// fulfilled (averages weighted by the size): who can pay for the goods of the market
+	std::map<std::string, std::array<double, 7>> by_type;
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop const& pop : province.get_pops()) {
+			const double size = static_cast<double>(type_safe::get(pop.get_size()));
+			std::array<double, 7>& row = by_type[std::string(pop.get_type().get_identifier())];
+			row[0] += size;
+			row[1] += static_cast<double>(pop.get_cash().get_copy_of_value());
+			row[2] += static_cast<double>(pop.get_income());
+			row[3] += static_cast<double>(pop.get_expenses().get_copy_of_value());
+			row[4] += static_cast<double>(pop.get_life_needs_fulfilled()) * size;
+			row[5] += static_cast<double>(pop.get_everyday_needs_fulfilled()) * size;
+			row[6] += static_cast<double>(pop.get_luxury_needs_fulfilled()) * size;
+		}
+	}
+	for (auto const& [type, row] : by_type) {
+		const double people = std::max(1.0, row[0]);
+		fmt::println("POP_MONEY {} {:<14} people={:.0f} cash={:.0f} cash_per_1000={:.2f} income={:.0f} spent={:.0f} life={:.2f} everyday={:.2f} luxury={:.2f}",
+			label, type, row[0], row[1], row[1] * 1000.0 / people, row[2], row[3], row[4] / people, row[5] / people, row[6] / people);
 	}
 }
 

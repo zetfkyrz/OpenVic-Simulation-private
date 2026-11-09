@@ -512,6 +512,9 @@ namespace OpenVic {
 	/* breakthrough a unit loses for every generation below the lowest weapon its type may have, when the country has none of them */ \
 	INT(EQUIPMENT_UPGRADES_PER_DAY, equipment_upgrades_per_day, 1, 0, 1000) \
 	RATE(EQUIPMENT_BELOW_MIN_PENALTY, equipment_below_min_penalty, Rate(25, 100), 0, 1) \
+	/* The rifles of the supply with the post-Napoleonic tactics (supply:rifle_1_first, version 77): rifle_1 goes first, what it lacks is taken as */ \
+	/* rifle_0; the regiments armed with rifle_1 lose this share of their attack and defence times the share of their rifles that were rifle_0 */ \
+	RATE(RIFLE_0_FOR_RIFLE_1_PENALTY, rifle_0_for_rifle_1_penalty, Rate(10, 100), 0, 1) \
 	/* A level of the fortification adds this share to the defence */ \
 	RATE(FORTIFICATION_PER_LEVEL, fortification_per_level, Rate(5, 100), 0, 10) \
 	/* The density of a division (military/BattleFormulas.cpp): density = DENSITY_DEPTH_FACTOR x depth / width (a width twice the depth is 1.0); x = |1 - density|; */ \
@@ -901,6 +904,9 @@ namespace OpenVic {
 	/* A province that cannot feed the regiments in it takes the free supply limit of its neighbours (that are held by the country or its */ \
 	/* friends) with this efficiency */ \
 	RATE(SUPPLY_NEIGHBOUR_EFFICIENCY, supply_neighbour_efficiency, Rate(75, 100), 0, 1) \
+	/* The supply by the sea (version 77): an army on land that the land of its country does not reach from the capital (an island, a colony, a */ \
+	/* province cut off from the rest) is supplied through a port of the country that no enemy blockades; this share of it is lost on the way */ \
+	RATE(SUPPLY_SEA_LOSS, supply_sea_loss, Rate(10, 100), 0, 1) \
 	/* The bonus of a general to the supply of his army (the third factor of the supply limit): the traits that reduce the attrition give the */ \
 	/* attrition times this, every point of prestige gives this share. A field marshal gives his bonus times SUPPLY_MARSHAL_SHARE to all the */ \
 	/* armies of his group */ \

@@ -122,6 +122,7 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
 	const fixed_point_t efficiency = defines.supply_neighbour_efficiency.fixed();
 	const fixed_point_t alert_level = defines.supply_alert_level.fixed();
+	const fixed_point_t sea_keep = fixed_point_t::_1 - defines.supply_sea_loss.fixed(); // what the supply by the sea brings
 	ModifierEffectCache const& modifier_effect_cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 
 	// How much of the free limit of a province was taken by the neighbours in the work of this country (reset after every country)
@@ -234,8 +235,10 @@ void OpenVic::update_army_supply_delivery(InstanceManager& instance_manager) {
 				const fixed_point_t throughput = supply_level > 0
 					? fixed_point_t::_1 + instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.marshal_skill_step.fixed() * supply_level
 					: fixed_point_t::_1;
+				// The supply by the sea loses SUPPLY_SEA_LOSS on the way (the priority sends more to make up for it, as for the limit)
+				const fixed_point_t sea = army.is_supply_by_sea() ? sea_keep : fixed_point_t::_1;
 				const SupplyDeliveryResult result = calculate_supply_delivery(
-					std::clamp(share * throughput * third_factor, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
+					std::clamp(share * throughput * third_factor * sea, fixed_point_t::_0, fixed_point_t::_1), get_supply_priority_multiplier(defines, priority)
 				);
 				army.set_supply_send_multiplier(result.send_multiplier);
 				// Cut off from every source of the supply (P8): nothing arrives

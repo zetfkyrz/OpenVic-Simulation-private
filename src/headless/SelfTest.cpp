@@ -5562,6 +5562,30 @@ namespace {
 	// The orders of the armies (docs/WAR_ASSUMPTIONS.md, section 10): an entrenched army digs in faster, an army follows another one, to the port
 	void test_army_orders(Results& r, InstanceManager& im) {
 		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		// The second army must be reachable over the land of the country (not on an island or in a colony across the sea)
+		const auto land_connected = [&im](ProvinceInstance const& from, ProvinceInstance const& to, CountryInstance const& owner) -> bool {
+			std::vector<std::uint8_t> seen(im.get_map_instance().get_province_instances().size(), 0);
+			std::deque<ProvinceInstance const*> queue { &from };
+			seen[type_safe::get(from.index)] = 1;
+			while (!queue.empty()) {
+				ProvinceInstance const* const current = queue.front();
+				queue.pop_front();
+				if (current == &to) {
+					return true;
+				}
+				for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+					if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
+						continue;
+					}
+					ProvinceInstance const& next = im.get_map_instance().get_province_instance_by_definition(adjacency.get_to());
+					if (seen[type_safe::get(next.index)] == 0 && next.get_owner() == &owner) {
+						seen[type_safe::get(next.index)] = 1;
+						queue.push_back(&next);
+					}
+				}
+			}
+			return false;
+		};
 		CountryInstance* country = nullptr;
 		ArmyInstance* first = nullptr;
 		ArmyInstance* second = nullptr;
@@ -5577,7 +5601,7 @@ namespace {
 				}
 				if (first == nullptr) {
 					first = &army;
-				} else if (&army.get_location() != &first->get_location()) {
+				} else if (&army.get_location() != &first->get_location() && land_connected(first->get_location(), army.get_location(), candidate)) {
 					second = &army;
 					break;
 				}
@@ -5661,28 +5685,57 @@ namespace {
 			fmt::format("cans due {:.3f}, cans from grain {:.3f}, grain used {:.3f} (its own need {:.3f})", static_cast<double>(cans_due),
 				static_cast<double>(from_grain), static_cast<double>(grain_used), static_cast<double>(grain_due)));
 
-		// The muskets (rifle_0) the stockpile lacks are replaced by rifle_1 only with the unlock of the post-Napoleonic tactics
+		// The rifles with the post-Napoleonic tactics (supply:rifle_1_first): rifle_1 goes first, for the regiments with muskets too; what the regiments
+		// armed with rifle_1 lack is taken as rifle_0, and they lose a share of their attack
 		GoodDefinition const* const musket = goods.get_good_definition_by_identifier("rifle_0");
 		GoodDefinition const* const rifle = goods.get_good_definition_by_identifier("rifle_1");
+		RegimentType const* const rifle_type =
+			im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_type_by_identifier("infantry");
 		if (musket != nullptr && rifle != nullptr) {
-			const bool had_unlock = country->has_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
-			country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
-			country->get_good_data(*musket).stockpile_amount = fixed_point_t::_0;
-			country->get_good_data(*rifle).stockpile_amount += fixed_point_t(1000);
+			const bool had_unlock = country->has_unlock(UNLOCK_SUPPLY_RIFLE_1_FIRST);
+			country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FIRST);
+			country->get_good_data(*musket).stockpile_amount = fixed_point_t(1000);
+			country->get_good_data(*rifle).stockpile_amount = fixed_point_t(1000);
 			im.force_tick_and_update();
 			const fixed_point_t without_unlock = country->get_rifle_1_for_rifle_0_yesterday();
-			country->grant_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
-			country->get_good_data(*musket).stockpile_amount = fixed_point_t::_0;
-			country->get_good_data(*rifle).stockpile_amount += fixed_point_t(1000);
+			country->grant_unlock(UNLOCK_SUPPLY_RIFLE_1_FIRST);
+			country->get_good_data(*musket).stockpile_amount = fixed_point_t(1000);
+			country->get_good_data(*rifle).stockpile_amount = fixed_point_t(1000);
 			im.force_tick_and_update();
 			const fixed_point_t with_unlock = country->get_rifle_1_for_rifle_0_yesterday();
 			const fixed_point_t muskets_due = country->get_good_data(*musket).army_due;
 			r.check(without_unlock == fixed_point_t::_0 && with_unlock > fixed_point_t::_0 && with_unlock <= muskets_due + fixed_point_t::_0_01,
-				"muskets and rifles: the missing rifle_0 of the supply is replaced by rifle_1 only with supply:rifle_1_for_rifle_0",
+				"muskets and rifles: with supply:rifle_1_first the regiments with muskets get rifle_1 first, even with rifle_0 in the stockpile",
 				fmt::format("without {:.4f}, with {:.4f}, muskets due {:.4f}", static_cast<double>(without_unlock), static_cast<double>(with_unlock),
 					static_cast<double>(muskets_due)));
+
+			ArmyInstance* const rifle_army = rifle_type != nullptr
+				? unit_manager.create_army_with_regiments(*country, *country->get_capital(), *rifle_type, 2, "rifle test") : nullptr;
+			if (rifle_army != nullptr) {
+				const unique_id_t rifle_army_id = rifle_army->unique_id;
+				country->get_good_data(*rifle).stockpile_amount = fixed_point_t(1000);
+				im.force_tick_and_update();
+				ArmyInstance* army_now = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(rifle_army_id));
+				const fixed_point_t ratio_with_rifles = army_now != nullptr && !army_now->get_regiment_instances().empty()
+					? army_now->get_regiment_instances().front().get().get_weapon_attack_ratio() : fixed_point_t::_0;
+				country->get_good_data(*rifle).stockpile_amount = fixed_point_t::_0;
+				country->get_good_data(*musket).stockpile_amount = fixed_point_t(1000);
+				im.force_tick_and_update();
+				army_now = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(rifle_army_id));
+				const fixed_point_t ratio_with_muskets = army_now != nullptr && !army_now->get_regiment_instances().empty()
+					? army_now->get_regiment_instances().front().get().get_weapon_attack_ratio() : fixed_point_t::_0;
+				const fixed_point_t muskets_for_rifles = country->get_rifle_0_for_rifle_1_yesterday();
+				r.check(muskets_for_rifles > fixed_point_t::_0 && ratio_with_muskets < ratio_with_rifles
+						&& ratio_with_muskets >= ratio_with_rifles * fixed_point_t::_0_50,
+					"muskets and rifles: without rifle_1 the regiments armed with it take rifle_0 and lose a share of their attack",
+					fmt::format("rifle_0 for rifle_1 {:.4f}, attack ratio {:.4f} -> {:.4f}", static_cast<double>(muskets_for_rifles),
+						static_cast<double>(ratio_with_rifles), static_cast<double>(ratio_with_muskets)));
+				if (army_now != nullptr) {
+					unit_manager.destroy_group(*army_now);
+				}
+			}
 			if (!had_unlock) {
-				country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
+				country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FIRST);
 			}
 		}
 		if (UnitInstanceGroup* const made = unit_manager.get_unit_instance_group_by_unique_id(army_id)) {
