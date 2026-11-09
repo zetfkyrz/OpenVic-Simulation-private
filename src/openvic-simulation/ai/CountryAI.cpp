@@ -443,7 +443,7 @@ namespace {
 		};
 		std::vector<NavyInstance*> navies;
 		for (NavyInstance& navy : country.get_navies()) {
-			if (!navy.empty() && !navy.is_moving() && !navy.is_in_combat() && navy.get_carried_armies().empty()) {
+			if (!navy.empty() && !navy.is_moving() && !navy.is_in_combat() && navy.get_carried_armies().empty() && !unit_manager.is_navy_booked(navy)) {
 				navies.push_back(&navy);
 			}
 		}

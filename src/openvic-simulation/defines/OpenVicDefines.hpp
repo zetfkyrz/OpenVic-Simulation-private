@@ -531,8 +531,9 @@ namespace OpenVic {
 	INT(MARSHAL_MAX_ATTACHED_LIMIT, marshal_max_attached_limit, 48, 1, 64) \
 	/* How many theatres of the field marshals a country can have (the main one included) */ \
 	INT(THEATRES_MAX, theatres_max, 8, 1, 32) \
-	/* 1: the transports carry any number of regiments (for now); 0: REGIMENTS_PER_TRANSPORT of every transport ship */ \
-	INT(TRANSPORT_UNLIMITED, transport_unlimited, 1, 0, 1) \
+	/* 1: the ships carry any number of regiments; 0 (version 80): every ship carries the regiments of ov_data/common/ov_units/transport_capacity.txt */ \
+	/* (a clipper 1, a steamer and an ironclad 2, the others none; a transport type of a mod that is not in the file: REGIMENTS_PER_TRANSPORT) */ \
+	INT(TRANSPORT_UNLIMITED, transport_unlimited, 0, 0, 1) \
 	/* The weapons of the regiments (military/RegimentEquipment in CountryInstance.cpp): how many regiments a day get a weapon of a better */ \
 	/* generation out of the national stockpile (the government buys the goods for them), and the share of the attack, the defence and the */ \
 	/* breakthrough a unit loses for every generation below the lowest weapon its type may have, when the country has none of them */ \
@@ -632,6 +633,9 @@ namespace OpenVic {
 	/* country, sails (SEA_TRANSFER_SPEED x MOVEMENT_SPEED_SCALE of the distance a day, past no navy of an enemy at war) to the port of its */ \
 	/* country nearest to the destination and goes on over the land; at sea it does not fight. 0 turns it off */ \
 	INT(SEA_TRANSFER_ENABLED, sea_transfer_enabled, 1, 0, 1) \
+	/* The way by sea needs ships (version 80): a navy of the country, not busy, with room for the whole army, comes to the port, takes the army on */ \
+	/* board and sails to the landing port (an enemy that sinks the ships sinks the army); no such navy: no way by sea. 0: the army sails alone */ \
+	INT(SEA_TRANSFER_NEEDS_SHIPS, sea_transfer_needs_ships, 1, 0, 1) \
 	FIXED(SEA_TRANSFER_SPEED, sea_transfer_speed, fixed_point_t(8), 0.1, 1000) \
 	INT(LANDING_ORGANISATION_DIVISOR, landing_organisation_divisor, 2, 1, 1000)
 #define OV_PEACE_DEFINES(INT, FIXED, RATE, DOUBLE) \

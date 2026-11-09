@@ -144,7 +144,10 @@ namespace OpenVic {
 		//     other pops of their state (SAVINGS_SHARE, "services_income"); the pops need a half of the needs of the data (POP_NEEDS_MULTIPLIER)
 		// 79: an artisan whose profit does not pay for its life needs picks a new good now and then (ARTISAN_POOR_SWITCH_CHANCE); the hungry artisans
 		//     take the free jobs of the factories of their state, else of the RGO of their province (ARTISAN_DEMOTION_*)
-		inline constexpr int SIMULATION_VERSION = 79;
+		// 80: the ships carry the regiments of ov_units/transport_capacity.txt (a clipper 1, a steamer and an ironclad 2, the others none;
+		//     TRANSPORT_UNLIMITED 0); the way by sea of an army needs a navy with room for it (SEA_TRANSFER_NEEDS_SHIPS): it comes to the port, takes the
+		//     army on board, sails to the landing port and puts it ashore
+		inline constexpr int SIMULATION_VERSION = 80;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

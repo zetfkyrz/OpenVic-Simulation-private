@@ -201,6 +201,8 @@ namespace OpenVic {
 		ProvinceInstance* PROPERTY_PTR(sea_transfer_destination, nullptr);
 		std::uint32_t PROPERTY(sea_transfer_days_total, 0);
 		std::uint32_t PROPERTY_RW(sea_transfer_days_left, 0);
+		// The navy that carries the army on its way by sea (SEA_TRANSFER_NEEDS_SHIPS, version 80); 0: the army sails alone
+		unique_id_t PROPERTY(sea_transfer_navy_id, 0);
 
 	public:
 		[[nodiscard]] bool is_at_sea() const {
@@ -209,7 +211,9 @@ namespace OpenVic {
 		[[nodiscard]] bool has_sea_transfer() const {
 			return sea_transfer_to != nullptr;
 		}
-		void set_sea_transfer(ProvinceInstance& from, ProvinceInstance& to, ProvinceInstance& destination, const std::uint32_t days) {
+		void set_sea_transfer(ProvinceInstance& from, ProvinceInstance& to, ProvinceInstance& destination, const std::uint32_t days,
+			const unique_id_t navy_id = 0) {
+			sea_transfer_navy_id = navy_id;
 			sea_transfer_from = &from;
 			sea_transfer_to = &to;
 			sea_transfer_destination = &destination;
@@ -217,6 +221,7 @@ namespace OpenVic {
 			sea_transfer_days_left = 0;
 		}
 		void clear_sea_transfer() {
+			sea_transfer_navy_id = 0;
 			sea_transfer_from = nullptr;
 			sea_transfer_to = nullptr;
 			sea_transfer_destination = nullptr;
@@ -476,6 +481,11 @@ namespace OpenVic {
 		// The way by sea of an army that has no way over the land (P4d): to the nearest port of its country, by sea to the port of its country nearest
 		// to the destination (no sea with a navy of an enemy at war), then over the land; false if there is none
 		bool order_sea_transfer(ArmyInstance& army, ProvinceInstance& destination, MapInstance& map_instance);
+		// The navy that carries an army on its way by sea: not busy, room for the whole army; it is ordered to the boarding port (nullptr: none)
+		NavyInstance* find_transfer_navy(ArmyInstance const& army, ProvinceInstance& boarding, MapInstance& map_instance);
+		// The navy waits for or carries an army on its way by sea: the AI and the field marshals leave it alone
+		[[nodiscard]] bool is_navy_booked(NavyInstance const& navy) const;
+		void update_ship_transfer(ArmyInstance& army, MapInstance& map_instance);
 		// Set while a way by sea is planned
 		bool planning_sea_transfer = false;
 		// Every day: an army that reached the port of its way by sea sails, one at sea counts its days and lands, then goes on

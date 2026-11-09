@@ -211,6 +211,8 @@ namespace OpenVic {
 		const fixed_point_t fire_range;
 		const fixed_point_t evasion;
 		const fixed_point_t torpedo_attack;
+		// The regiments the ship carries (ov_data/common/ov_units/transport_capacity.txt, set after the units are loaded); -1: not in the file
+		mutable std::int32_t transport_capacity = -1;
 
 		UnitTypeBranched(
 			index_t new_index, unit_type_index_t new_unit_type_index, std::string_view new_identifier,
@@ -288,6 +290,9 @@ namespace OpenVic {
 		// The ids of the units of Vic2 that are other units here (infantry is line_infantry): ov_data/common/ov_units/aliases.txt. Only the files of
 		// Vic2 (the armies of the start) use them; resolve_vic2_regiment_type gives the type
 		bool load_vic2_aliases(std::string_view source, ast::NodeCPtr root);
+		// The regiments the ship types carry: ov_data/common/ov_units/transport_capacity.txt (transport_capacity = { <ship type> = <regiments> ... }),
+		// after the ship types are loaded
+		bool load_transport_capacities(std::string_view source, ast::NodeCPtr root) const;
 		[[nodiscard]] RegimentType const* resolve_vic2_regiment_type(std::string_view identifier) const;
 		// The default template of the divisions: ov_data/common/ov_units/default_template.txt (default_template = { rank = { <type> ... } ... })
 		bool load_default_template(std::string_view source, ast::NodeCPtr root);

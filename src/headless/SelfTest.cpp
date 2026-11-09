@@ -6217,14 +6217,16 @@ namespace {
 			if (found == nullptr) {
 				break;
 			}
-			was_at_sea |= found->is_at_sea();
+			// At sea alone (SEA_TRANSFER_NEEDS_SHIPS 0) or on board of the ships that carry it
+			was_at_sea |= found->is_at_sea() || found->get_transport_navy() != nullptr;
 			if (&found->get_location() == &capital && !found->is_moving()) {
 				break;
 			}
 		}
 		r.check(found != nullptr && was_at_sea && &found->get_location() == &capital,
 			"sea transfer: the army sails, lands and reaches its destination over the land",
-			found != nullptr ? fmt::format("at {}", found->get_location().get_identifier()) : std::string { "gone" });
+			found != nullptr ? fmt::format("at {}, at sea {}, way by sea {}, on board {}", found->get_location().get_identifier(), was_at_sea,
+				found->has_sea_transfer(), found->get_transport_navy() != nullptr) : std::string { "gone" });
 	}
 
 	// The AI countries go on taking provinces in a war (the new battles must not stop them): Russia and Turkey, 60 days
@@ -6619,6 +6621,13 @@ namespace {
 		set_army_group_modes(*country, group_id, 3, 1);
 		bool attacked = false;
 		for (int day = 0; day < 45 && target->get_controller() != country; ++day) {
+			// The test checks the executor, not the supply: the divisions of the group are kept supplied (a small country at war, its divisions
+			// gathered at the border, ran out of supply in some runs and could not win anything)
+			for (ArmyInstance& army : country->get_armies()) {
+				if (army.get_army_group_id() == group_id) {
+					army.set_supply_level(fixed_point_t::_1);
+				}
+			}
 			im.force_tick_and_update();
 			for (ArmyInstance const& army : country->get_armies()) {
 				attacked |= army.get_army_group_id() == group_id && (&army.get_location() == target
@@ -6637,8 +6646,33 @@ namespace {
 				}
 			}
 		}
+		// The regiments that defend the target and the ones of the group next to it (an attack needs a chance of victory)
+		std::size_t defenders = 0, group_regiments = 0;
+		for (ArmyInstance const& army : target->get_armies()) {
+			defenders += &army.get_country() != country ? army.get_unit_count() : 0;
+		}
+		std::size_t waiting_for_ships = 0, moving = 0;
+		std::string state_of_group;
+		for (ArmyInstance const& army : country->get_armies()) {
+			if (army.get_army_group_id() == group_id) {
+				fixed_point_t organisation = fixed_point_t::_0, max_organisation = fixed_point_t::_0, attack = fixed_point_t::_0;
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					organisation += regiment.get_organisation();
+					max_organisation += regiment.get_max_organisation();
+					attack += regiment.get_weapon_attack_ratio();
+				}
+				state_of_group += fmt::format(" [org {:.1f}/{:.1f} supply {:.2f} weapons {:.2f} cut {}]", static_cast<double>(organisation),
+					static_cast<double>(max_organisation), static_cast<double>(army.get_supply_level()), static_cast<double>(attack), army.is_cut_off());
+			}
+		}
+		for (ArmyInstance const& army : country->get_armies()) {
+			group_regiments += army.get_army_group_id() == group_id ? army.get_unit_count() : 0;
+			waiting_for_ships += army.get_army_group_id() == group_id && army.has_sea_transfer();
+			moving += army.get_army_group_id() == group_id && army.is_moving();
+		}
 		r.check(attacked, "offensive: the executed plan sends divisions into its target",
-			fmt::format("at war {} front {} armies {} next to the target {} mode {} country {} target controller {}", country->is_at_war_with(*neighbour), front != nullptr,
+			fmt::format("{} defenders {} regiments of the group {} (way by sea {}, moving {}); at war {} front {} armies {} next to the target {} mode {} country {} target controller {}",
+				state_of_group, defenders, group_regiments, waiting_for_ships, moving, country->is_at_war_with(*neighbour), front != nullptr,
 				front != nullptr ? front->army_ids.size() : 0, next_to_target, front != nullptr ? static_cast<int>(front->mode) : -1, country->get_identifier(),
 				target->get_controller() != nullptr ? target->get_controller()->get_identifier() : "none"));
 		std::string outside_names;

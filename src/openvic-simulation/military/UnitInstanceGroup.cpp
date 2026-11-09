@@ -452,7 +452,11 @@ void UnitInstanceGroupBranched<NAVAL>::tick() {
 size_t UnitInstanceGroupBranched<NAVAL>::get_transport_capacity() const {
 	size_t capacity = 0;
 	for (ShipInstance const& ship : get_ship_instances()) {
-		if (ship.get_ship_type().is_transport) {
+		// The room of the type in the data (transport_capacity.txt), else REGIMENTS_PER_TRANSPORT of a transport type
+		const std::int32_t room = ship.get_ship_type().transport_capacity;
+		if (room >= 0) {
+			capacity += static_cast<size_t>(room);
+		} else if (ship.get_ship_type().is_transport) {
 			capacity += static_cast<size_t>(war_defines->regiments_per_transport);
 		}
 	}
@@ -1179,19 +1183,121 @@ bool UnitInstanceManager::order_sea_transfer(ArmyInstance& army, ProvinceInstanc
 	if (landing == nullptr) {
 		return false;
 	}
+	// The ships (SEA_TRANSFER_NEEDS_SHIPS): a navy of the country with room for the whole army comes to the boarding port
+	unique_id_t navy_id = 0;
+	if (UnitInstanceGroup::war_defines->sea_transfer_needs_ships != 0) {
+		NavyInstance* const navy = find_transfer_navy(army, *boarding, map_instance);
+		if (navy == nullptr) {
+			return false;
+		}
+		navy_id = navy->unique_id;
+	}
 	// Over the land to the boarding port first (it may be where the army is)
 	if (&army.get_location() != boarding && !order_move(army, *boarding, map_instance)) {
 		return false;
 	}
 	const fixed_point_t per_day = std::max(fixed_point_t::_0_01, UnitInstanceGroup::war_defines->sea_transfer_speed * UnitInstanceGroup::war_defines->movement_speed_scale);
 	const std::uint32_t days = static_cast<std::uint32_t>(std::max(1, (landing_sea / per_day).ceil<std::int32_t>()));
-	army.set_sea_transfer(*boarding, *landing, destination, days);
+	army.set_sea_transfer(*boarding, *landing, destination, days, navy_id);
 	return true;
+}
+
+bool UnitInstanceManager::is_navy_booked(NavyInstance const& navy) const {
+	for (ArmyInstance const& army : navy.get_country().get_armies()) {
+		if (army.get_sea_transfer_navy_id() == navy.unique_id) {
+			return true;
+		}
+	}
+	return false;
+}
+
+NavyInstance* UnitInstanceManager::find_transfer_navy(ArmyInstance const& army, ProvinceInstance& boarding, MapInstance& map_instance) {
+	// A navy of the country that carries nothing, is booked by no other army, does not fight and has room for the whole army (a division is not
+	// split): the one that waits in the boarding port, else the first one that stands still and can sail there
+	const size_t need = army.get_unit_count();
+	const bool unlimited = UnitInstanceGroup::war_defines->transport_unlimited != 0;
+	std::vector<NavyInstance*> elsewhere;
+	for (NavyInstance& navy : navies) {
+		if (&navy.get_country() != &army.get_country() || navy.empty() || navy.is_in_combat() || navy.is_moving()
+			|| !navy.get_carried_armies().empty() || is_navy_booked(navy) || (!unlimited && navy.get_transport_capacity() < need)) {
+			continue;
+		}
+		if (&navy.get_location() == &boarding) {
+			return &navy;
+		}
+		elsewhere.push_back(&navy);
+	}
+	for (NavyInstance* navy : elsewhere) {
+		if (order_move(*navy, boarding, map_instance)) {
+			return navy;
+		}
+	}
+	return nullptr;
+}
+
+void UnitInstanceManager::update_ship_transfer(ArmyInstance& army, MapInstance& map_instance) {
+	UnitInstanceGroup* const group = get_unit_instance_group_by_unique_id(army.get_sea_transfer_navy_id());
+	NavyInstance* const navy = group != nullptr && group->branch == NAVAL ? static_cast<NavyInstance*>(group) : nullptr;
+	ProvinceInstance& boarding = *army.get_sea_transfer_from();
+	ProvinceInstance& landing = *army.get_sea_transfer_to();
+	ProvinceInstance& destination = *army.get_sea_transfer_destination();
+	if (navy == nullptr || navy->empty()) {
+		// The ships are gone (an army on board went down with them)
+		if (army.get_transport_navy() == nullptr) {
+			army.clear_sea_transfer();
+		}
+		return;
+	}
+	if (army.get_transport_navy() == navy) {
+		// On board: in the landing port it goes ashore and on over the land; a navy that stopped elsewhere (a battle) sails on
+		if (navy->is_moving() || navy->is_in_combat()) {
+			return;
+		}
+		if (&navy->get_location() == &landing) {
+			navy->unload_army(army);
+			army.clear_sea_transfer();
+			if (&landing != &destination) {
+				order_move(army, destination, map_instance);
+			}
+		} else if (!order_move(*navy, landing, map_instance) && !navy->get_location().province_definition.is_water()) {
+			// No way on to the landing port: ashore in the port the navy is in
+			navy->unload_army(army);
+			army.clear_sea_transfer();
+		}
+		return;
+	}
+	if (army.get_transport_navy() != nullptr) {
+		army.clear_sea_transfer();
+		return;
+	}
+	if (army.is_moving() || army.is_in_combat() || navy->is_moving() || navy->is_in_combat()) {
+		return;
+	}
+	if (&army.get_location() != &boarding) {
+		army.clear_sea_transfer(); // stopped elsewhere: the way by sea is given up
+		return;
+	}
+	if (&navy->get_location() == &boarding) {
+		// Both in the port: on board and away
+		if (!navy->load_army(army) || !order_move(*navy, landing, map_instance)) {
+			if (army.get_transport_navy() == navy) {
+				navy->unload_army(army);
+			}
+			army.clear_sea_transfer();
+		}
+	} else if (!order_move(*navy, boarding, map_instance)) {
+		army.clear_sea_transfer(); // the ships cannot come
+	}
 }
 
 void UnitInstanceManager::update_sea_transfers(MapInstance& map_instance) {
 	for (ArmyInstance& army : armies) {
 		if (!army.has_sea_transfer()) {
+			continue;
+		}
+		// On ships (SEA_TRANSFER_NEEDS_SHIPS)
+		if (army.get_sea_transfer_navy_id() != 0) {
+			update_ship_transfer(army, map_instance);
 			continue;
 		}
 		if (army.is_at_sea()) {

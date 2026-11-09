@@ -1727,8 +1727,12 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 			free_divisions.push_back(index);
 		}
 	}
+	// The divisions that gathered at the focus of a concentration stay there until the attack (the share of the focus may be smaller when the other
+	// provinces are at PLAN_MIN_HOLD: they were sent back the next day, the concentration ended after PLAN_FOCUS_MAX_DAYS, began again, and the
+	// offensive never attacked)
+	const std::size_t focus_place = front.focus != nullptr ? place_of(front.focus) : province_count;
 	for (std::size_t province = 0; province < province_count; ++province) {
-		if (placed[province] - shares[province] < threshold) {
+		if (province == focus_place || placed[province] - shares[province] < threshold) {
 			continue;
 		}
 		// The last ones of the line go first (the order of the armies: the same in every run)
@@ -2365,7 +2369,7 @@ void WarManager::execute_naval_invasion(InstanceManager& instance_manager, PlanL
 	// The fleets: carrying divisions of the marshal at the sea of the target land them; carrying them in the port sail there
 	if (go && target != nullptr && sea != nullptr) {
 		for (NavyInstance& navy : country.get_navies()) {
-			if (navy.is_moving() || navy.is_in_combat()) {
+			if (navy.is_moving() || navy.is_in_combat() || unit_manager.is_navy_booked(navy)) {
 				continue;
 			}
 			std::vector<ArmyInstance*> carried;
@@ -2414,7 +2418,8 @@ void WarManager::execute_naval_invasion(InstanceManager& instance_manager, PlanL
 		}
 		if (go && target != nullptr) {
 			for (NavyInstance& navy : country.get_navies()) {
-				if (&navy.get_location() == line.port && !navy.is_moving() && !navy.is_in_combat() && navy.load_army(army)) {
+				if (&navy.get_location() == line.port && !navy.is_moving() && !navy.is_in_combat() && !unit_manager.is_navy_booked(navy)
+					&& navy.load_army(army)) {
 					break;
 				}
 			}

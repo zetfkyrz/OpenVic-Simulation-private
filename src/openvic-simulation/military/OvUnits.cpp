@@ -67,6 +67,31 @@ bool UnitTypeManager::load_vic2_aliases(std::string_view source, ast::NodeCPtr r
 	return parsed;
 }
 
+bool UnitTypeManager::load_transport_capacities(std::string_view source, ast::NodeCPtr root) const {
+	std::size_t set = 0;
+	const bool parsed = expect_dictionary_keys(
+		"transport_capacity", ONE_EXACTLY, expect_dictionary(
+			[this, source, &set](std::string_view identifier, ast::NodeCPtr value) -> bool {
+				ShipType const* const ship_type = get_ship_type_by_identifier(identifier);
+				if (ship_type == nullptr) {
+					spdlog::warn_s("Unknown ship type \"{}\" in {}, skipped", identifier, source);
+					return true;
+				}
+				return expect_int64([ship_type, &set](int64_t regiments) -> bool {
+					ship_type->transport_capacity = static_cast<std::int32_t>(std::clamp<int64_t>(regiments, 0, 1000));
+					set++;
+					return true;
+				})(value);
+			}
+		)
+	)(root);
+	if (!parsed) {
+		spdlog::warn_s("The transport capacities {} are broken, what could be read is loaded", source);
+	}
+	SPDLOG_INFO("Loaded the transport capacity of {} ship types", set);
+	return parsed;
+}
+
 bool UnitTypeManager::load_default_template(std::string_view source, ast::NodeCPtr root) {
 	default_template_ranks.clear();
 	const bool parsed = expect_dictionary_keys(

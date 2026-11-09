@@ -560,7 +560,13 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 	const path_vector_t ov_unit_files = lookup_files_in_dir_load_order("common/ov_units", ".txt", false);
 	unit_type_manager.reserve_all_unit_types(unit_files.size() + ov_unit_files.size());
 	std::size_t ov_unit_count = 0;
+	std::optional<fs::path> transport_capacity_file;
 	for (fs::path const& file : ov_unit_files) {
+		// The room of the ship types: after the ship types of Vic2 are loaded (below)
+		if (file.filename() == "transport_capacity.txt") {
+			transport_capacity_file = file;
+			continue;
+		}
 		const v2script::Parser parser = parse_defines(file);
 		if (parser.has_fatal_error() || parser.has_error()) {
 			spdlog::warn_s("The unit file {} is skipped, it has errors", file);
@@ -598,6 +604,14 @@ bool Dataloader::_load_units(DefinitionManager& definition_manager) const {
 	);
 
 	unit_type_manager.lock_all_unit_types();
+	if (transport_capacity_file.has_value()) {
+		const v2script::Parser parser = parse_defines(*transport_capacity_file);
+		if (parser.has_fatal_error() || parser.has_error()) {
+			spdlog::warn_s("The file {} is skipped, it has errors", *transport_capacity_file);
+		} else {
+			unit_type_manager.load_transport_capacities(transport_capacity_file->string(), parser.get_file_node());
+		}
+	}
 	if (GoodDefinition const* const lumber = definition_manager.get_economy_manager().get_good_definition_manager().get_good_definition_by_identifier("lumber")) {
 		unit_type_manager.add_ship_construction_good(*lumber, definition_manager.get_define_manager().get_openvic_defines().economy.ship_lumber_per_piece);
 	}
