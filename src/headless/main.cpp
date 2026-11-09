@@ -1555,6 +1555,34 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			type_safe::get(country.get_total_population()),
 			short_goods.empty() ? std::string { "-" } : short_goods);
 	}
+	// The taxes of the same countries (COUNTRY_TAX): civilised or not, the tax of every strata, the tariff (slider and what is collected of a pound of
+	// imports), the efficiency of the taxes, and the needs of the poor, the middle and the rich (life/everyday/luxury, weighted by the size)
+	for (std::size_t index = 0; index < armies.size() && index < 25; ++index) {
+		CountryInstance& country = *armies[index].first;
+		std::string taxes;
+		for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+			std::array<double, 4> needs {};
+			for (ProvinceInstance const* province : country.get_owned_provinces()) {
+				for (Pop const& pop : province->get_pops()) {
+					if (&pop.get_type().strata != &strata) {
+						continue;
+					}
+					const double size = static_cast<double>(type_safe::get(pop.get_size()));
+					needs[0] += size;
+					needs[1] += static_cast<double>(pop.get_life_needs_fulfilled()) * size;
+					needs[2] += static_cast<double>(pop.get_everyday_needs_fulfilled()) * size;
+					needs[3] += static_cast<double>(pop.get_luxury_needs_fulfilled()) * size;
+				}
+			}
+			const double people = std::max(1.0, needs[0]);
+			taxes += fmt::format(" {}: tax={:.2f} needs={:.2f}/{:.2f}/{:.2f}", strata.get_identifier(),
+				static_cast<double>(country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked()),
+				needs[1] / people, needs[2] / people, needs[3] / people);
+		}
+		fmt::println("COUNTRY_TAX {} {} civilised={} tariff={:.2f} (collected {:.3f}) tax_eff={:.2f}{}", label, country.get_identifier(),
+			country.is_civilised() ? 1 : 0, static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
+			static_cast<double>(country.effective_tariff_rate.get_untracked()), static_cast<double>(country.get_tax_efficiency_untracked()), taxes);
+	}
 	// The money of the pops by their type (POP_MONEY): the people, the cash, the income of yesterday, what they paid for goods yesterday, the needs
 	// fulfilled (averages weighted by the size): who can pay for the goods of the market
 	std::map<std::string, std::array<double, 7>> by_type;
@@ -1570,6 +1598,29 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			row[5] += static_cast<double>(pop.get_everyday_needs_fulfilled()) * size;
 			row[6] += static_cast<double>(pop.get_luxury_needs_fulfilled()) * size;
 		}
+	}
+	// The artisans by the good they make (POP_ARTISANS): who of them is hungry
+	std::map<std::string, std::array<double, 5>> artisans_by_good;
+	for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+		for (Pop const& pop : province.get_pops()) {
+			ArtisanalProducer const* const artisan = pop.get_artisanal_producer();
+			if (artisan == nullptr) {
+				continue;
+			}
+			const double size = static_cast<double>(type_safe::get(pop.get_size()));
+			std::array<double, 5>& row = artisans_by_good[artisan->get_last_produced_good() != nullptr
+				? std::string(artisan->get_last_produced_good()->get_identifier()) : std::string("-")];
+			row[0] += size;
+			row[1] += static_cast<double>(pop.get_cash().get_copy_of_value());
+			row[2] += static_cast<double>(pop.get_income());
+			row[3] += static_cast<double>(pop.get_life_needs_fulfilled()) * size;
+			row[4] += static_cast<double>(pop.get_everyday_needs_fulfilled()) * size;
+		}
+	}
+	for (auto const& [good, row] : artisans_by_good) {
+		const double people = std::max(1.0, row[0]);
+		fmt::println("POP_ARTISANS {} {:<16} people={:.0f} cash={:.0f} income={:.0f} life={:.2f} everyday={:.2f}", label, good, row[0], row[1], row[2],
+			row[3] / people, row[4] / people);
 	}
 	for (auto const& [type, row] : by_type) {
 		const double people = std::max(1.0, row[0]);

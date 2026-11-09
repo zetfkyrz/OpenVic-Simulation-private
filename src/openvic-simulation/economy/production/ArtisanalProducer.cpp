@@ -185,7 +185,9 @@ void ArtisanalProducer::artisan_tick_handler::allocate_money_for_inputs(
 	PopValuesFromProvince const& values_from_province
 ) {
 	//executed once per pop while nothing else uses it.
-	const fixed_point_t total_cash_to_spend = pop.get_cash().get_copy_of_value() / values_from_province.get_max_cost_multiplier();
+	// The money of the life needs is kept back (ov_population.ARTISAN_LIFE_NEEDS_FIRST, 0 when it is off)
+	const fixed_point_t total_cash_to_spend = std::max(fixed_point_t::_0,
+		pop.get_cash().get_copy_of_value() / values_from_province.get_max_cost_multiplier() - pop.get_cash_reserved_for_life_needs());
 
 	if (total_cash_to_spend <= 0 || distinct_goods_to_buy <= 0) {
 		return;

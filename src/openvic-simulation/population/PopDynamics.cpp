@@ -115,6 +115,89 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	PopType const* const labourers = pop_manager.get_pop_type_by_identifier("labourers");
 	PopType const* const craftsmen = pop_manager.get_pop_type_by_identifier("craftsmen");
 
+	// The money goes round: a pop that holds more than SAVINGS_MAX_DAYS days of what it earns or spends in a day (today's income and spending: the
+	// month starts after the market) passes SAVINGS_SHARE of the rest to the pops of its state that hold less, by their size (the pay for their
+	// services); a state with nobody to pay puts it into the investment fund of its country. The states one by one, in the order of the map
+	if (defines.savings_max_days > 0 && defines.savings_share.numerator > 0) {
+		std::unordered_set<State const*> states_done;
+		std::vector<Pop*> givers, takers;
+		for (ProvinceInstance& first_province : map_instance.get_province_instances()) {
+			State* const state = first_province.get_state();
+			if (state == nullptr || !states_done.insert(state).second) {
+				continue;
+			}
+			givers.clear();
+			takers.clear();
+			std::int64_t taker_people = 0;
+			for (ProvinceInstance& province : state->get_provinces()) {
+				if (province.get_country_to_report_economy() == nullptr) {
+					continue;
+				}
+				for (Pop& pop : province.get_mutable_pops()) {
+					if (pop.get_size() <= pop_size_t(0)) {
+						continue;
+					}
+					const fixed_point_t keep = std::max(pop.get_income(), pop.get_expenses().get_copy_of_value()) * defines.savings_max_days;
+					if (pop.get_cash().get_copy_of_value() > keep) {
+						givers.push_back(&pop);
+					} else {
+						takers.push_back(&pop);
+						taker_people += type_safe::get(pop.get_size());
+					}
+				}
+			}
+			fixed_point_t pool = fixed_point_t::_0;
+			for (Pop* pop : givers) {
+				const fixed_point_t keep = std::max(pop->get_income(), pop->get_expenses().get_copy_of_value()) * defines.savings_max_days;
+				const fixed_point_t amount = defines.savings_share.of(pop->get_cash().get_copy_of_value() - keep);
+				if (amount > fixed_point_t::_0) {
+					pool += pop->take_cash(amount);
+				}
+			}
+			if (pool <= fixed_point_t::_0) {
+				continue;
+			}
+			CountryInstance* const country = givers.front()->get_location().get_country_to_report_economy();
+			if (taker_people <= 0 || taker_people > std::numeric_limits<std::int32_t>::max()) {
+				if (country != nullptr) {
+					country->add_savings_to_investment_fund(pool);
+				}
+				continue;
+			}
+			// SAVINGS_FUND_SHARE into the investment fund, SAVINGS_TREASURY_SHARE into the treasury, the rest to the pops
+			if (country != nullptr) {
+				const fixed_point_t to_fund = defines.savings_fund_share.of(pool);
+				const fixed_point_t to_treasury = std::min(pool - to_fund, defines.savings_treasury_share.of(pool));
+				if (to_fund > fixed_point_t::_0) {
+					country->add_savings_to_investment_fund(to_fund);
+				}
+				if (to_treasury > fixed_point_t::_0) {
+					country->add_cash(to_treasury);
+				}
+				pool -= to_fund + to_treasury;
+				if (pool <= fixed_point_t::_0) {
+					continue;
+				}
+			}
+			// The shares by size; what the rounding leaves goes to the biggest taker
+			fixed_point_t paid = fixed_point_t::_0;
+			Pop* biggest = takers.front();
+			for (Pop* pop : takers) {
+				if (pop->get_size() > biggest->get_size()) {
+					biggest = pop;
+				}
+				const fixed_point_t share = pool * static_cast<std::int32_t>(type_safe::get(pop->get_size())) / static_cast<std::int32_t>(taker_people);
+				if (share > fixed_point_t::_0) {
+					pop->add_services_income(share);
+					paid += share;
+				}
+			}
+			if (pool > paid) {
+				biggest->add_services_income(pool - paid);
+			}
+		}
+	}
+
 	// Scores of the provinces before anything moves
 	std::unordered_map<ProvinceInstance const*, ProvinceScore> scores;
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {

@@ -69,6 +69,7 @@ namespace OpenVic {
 	X(pop_loan_interest_payments, "credit") \
 	/* the wages of the builders of a construction (CONSTRUCTION_WAGE_SHARE of its price), paid to the pops of the state */ \
 	X(pop_construction_wages, "income") \
+	X(pop_services_income, "income") \
 	X(pop_import_subsidies, "subsidy") \
 	X(pop_artisanal_revenue, "income") \
 	X(pop_life_needs_expense, "trade") \
@@ -76,6 +77,8 @@ namespace OpenVic {
 	X(pop_luxury_needs_expense, "trade") \
 	X(pop_artisan_inputs_expense, "trade") \
 	X(pop_cash_taken, "credit") \
+	/* the savings of the pops put into the investment fund of their country (PopDynamics, SAVINGS_*) */ \
+	X(investment_fund_savings, "credit") \
 	/* factories */ \
 	X(factory_revenue, "factory") \
 	X(factory_spent, "factory") \

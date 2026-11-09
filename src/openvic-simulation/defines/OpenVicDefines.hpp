@@ -145,7 +145,14 @@ namespace OpenVic {
 	/* With a surplus the money goes back to the pops (version 73): the taxes go down by the step to BUDGET_MIN_TAX and the military, */ \
 	/* administration and education spending up by the step to BUDGET_MAX_SPENDING */ \
 	RATE(BUDGET_MIN_TAX, budget_min_tax, Rate(10, 100), 0, 1) \
-	RATE(BUDGET_MAX_SPENDING, budget_max_spending, Rate(100, 100), 0, 1)
+	RATE(BUDGET_MAX_SPENDING, budget_max_spending, Rate(100, 100), 0, 1) \
+	/* The tariffs and the taxes (version 78, decision of the owner 2026-11-09): with a deficit the tariffs go up first (to BUDGET_MAX_TARIFF; they */ \
+	/* fall on the trade between the countries, the home market keeps its money), then the taxes of the rich and the middle strata, the tax of */ \
+	/* the poor last; with a surplus the tax of the poor goes down first, then the others, then the tariffs (to BUDGET_MIN_TARIFF). The tax of */ \
+	/* the poor is never raised and goes down by the step every month while their everyday needs are under BUDGET_POOR_NEEDS_MIN (0 = off) */ \
+	RATE(BUDGET_MIN_TARIFF, budget_min_tariff, Rate(1, 100), 0, 1) \
+	RATE(BUDGET_MAX_TARIFF, budget_max_tariff, Rate(50, 100), 0, 1) \
+	RATE(BUDGET_POOR_NEEDS_MIN, budget_poor_needs_min, Rate(50, 100), 0, 1)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(20, 100), 0, 1) \
 	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \
@@ -164,6 +171,20 @@ namespace OpenVic {
 	/* province pays (a state whose factories have nobody yet counts as paying more), this share of the employed farmers and labourers becomes */ \
 	/* craftsmen every month (the unemployed: PROMOTION_PER_MONTH as before). Before, only the unemployed did, and there are almost none */ \
 	RATE(FACTORY_JOB_PROMOTION_SHARE, factory_job_promotion_share, Rate(5, 1000), 0, 1) \
+	/* The artisans keep the money of their life needs before they buy the goods of their work (version 78): before, all the cash went to the */ \
+	/* inputs, the market did not give them, and the artisans starved with the money in their hands. 0 = the inputs first, as before */ \
+	INT(ARTISAN_LIFE_NEEDS_FIRST, artisan_life_needs_first, 1, 0, 1) \
+	/* The money goes round (version 78, decision of the owner 2026-11-09): a pop that holds more than SAVINGS_MAX_DAYS days of what it earns (or */ \
+	/* spends) in a day passes SAVINGS_SHARE of the rest every month to the other pops of its state that hold less than that, by their size, */ \
+	/* as the pay for their services (income "services_income", taxed). The money does not stay with the few pops whose needs are full (the */ \
+	/* officers, the bureaucrats, the capitalists). Of what is passed SAVINGS_FUND_SHARE goes into the investment fund of the country and */ \
+	/* SAVINGS_TREASURY_SHARE into its treasury, the rest to the pops (85 %); a state with nobody to pay: all into the fund. 0 = off */ \
+	INT(SAVINGS_MAX_DAYS, savings_max_days, 30, 0, 3650) \
+	RATE(SAVINGS_SHARE, savings_share, Rate(25, 100), 0, 1) \
+	RATE(SAVINGS_FUND_SHARE, savings_fund_share, Rate(10, 100), 0, 1) \
+	RATE(SAVINGS_TREASURY_SHARE, savings_treasury_share, Rate(5, 100), 0, 1) \
+	/* What the pops need (version 78, decision of the owner 2026-11-09): the life, everyday and luxury needs of the data are multiplied by this */ \
+	RATE(POP_NEEDS_MULTIPLIER, pop_needs_multiplier, Rate(50, 100), 0, 10) \
 	RATE(MIGRATION_PER_MONTH, migration_per_month, Rate(3, 1000), 0, 1) \
 	RATE(MIGRATION_SCORE_MARGIN, migration_score_margin, Rate(8, 100), 0, 1) \
 	RATE(MIGRATION_UNEMPLOYMENT_THRESHOLD, migration_unemployment_threshold, Rate(1, 5), 0, 1) \

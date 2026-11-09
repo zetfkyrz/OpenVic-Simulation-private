@@ -75,7 +75,8 @@ namespace OpenVic {
 		F(government_salary_military) \
 		F(event_and_decision_income) \
 		F(loan_interest_payments) \
-		F(construction_wages)
+		F(construction_wages) \
+		F(services_income)
 
 	#define OV_DO_FOR_ALL_TYPES_OF_POP_EXPENSES(F) \
 		F(life_needs_expense) \
@@ -104,6 +105,8 @@ namespace OpenVic {
 		MarketInstance& market_instance;
 		std::optional<ArtisanalProducer> artisanal_producer_optional;
 		fixed_point_t cash_allocated_for_artisanal_spending = 0;
+		// The money an artisan keeps for its life needs before it buys its inputs (ov_population.ARTISAN_LIFE_NEEDS_FIRST), worked out every day
+		fixed_point_t PROPERTY(cash_reserved_for_life_needs, fixed_point_t::_0);
 		pop_size_t employed = 0;
 		static inline OpenVicPopulationDefines const* population_defines = nullptr;
 

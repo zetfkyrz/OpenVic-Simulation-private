@@ -789,6 +789,11 @@ namespace OpenVic {
 			return recent_investments;
 		}
 		// Pays a project out of the investment fund (the money is spent on the construction and leaves the economy)
+		// The savings of the pops (PopDynamics, ov_population.SAVINGS_*): one thread, once a month
+		void add_savings_to_investment_fund(const fixed_point_t amount) {
+			investment_fund += amount;
+			MoneyLedger::record(MoneyLedger::label_t::investment_fund_savings, amount);
+		}
 		void spend_investment_fund(const fixed_point_t amount, InvestmentRecord&& record) {
 			investment_fund -= amount;
 			investment_spent_total += amount;

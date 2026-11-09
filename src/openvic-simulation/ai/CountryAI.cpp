@@ -15,7 +15,9 @@
 #include "openvic-simulation/economy/production/ProductionType.hpp"
 #include "openvic-simulation/economy/production/RgoBuilding.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
+#include "openvic-simulation/population/Pop.hpp"
 #include "openvic-simulation/population/PopManager.hpp"
+#include "openvic-simulation/population/PopType.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/Division.hpp"
@@ -102,12 +104,134 @@ namespace {
 		}
 	}
 
+	// The revenue sliders of an AI country (version 78, decision of the owner 2026-11-09): the tariffs come first (they fall on the trade between the
+	// countries, the home market keeps its money), between BUDGET_MIN_TARIFF and BUDGET_MAX_TARIFF; the taxes come second, the rich and the middle
+	// strata before the poor; the tax of the poor is not raised, and goes down, while their everyday needs are under BUDGET_POOR_NEEDS_MIN
+	struct RevenueSliders {
+		Strata const* poor = nullptr;
+		std::vector<Strata const*> others; // the rich and the middle (and any other strata of a mod)
+		bool poor_needy = false;
+		fixed_point_t tariff_low = fixed_point_t::_0, tariff_high = fixed_point_t::_0;
+
+		RevenueSliders(InstanceManager& instance_manager, CountryInstance const& country, OpenVicAIDefines const& ai) {
+			for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
+				if (strata.get_identifier() == "poor") {
+					poor = &strata;
+				} else {
+					others.push_back(&strata);
+				}
+			}
+			ReadOnlyClampedValue const& tariff = country.get_tariff_rate_slider_value();
+			tariff_high = std::max(fixed_point_t::_0, std::min(ai.budget_max_tariff.fixed(), tariff.get_max()));
+			tariff_low = std::min(tariff_high, std::max(ai.budget_min_tariff.fixed(), tariff.get_min()));
+			// The everyday needs of the poor of the country (weighted by the size)
+			if (poor != nullptr && ai.budget_poor_needs_min.numerator > 0) {
+				fixed_point_t fulfilled = fixed_point_t::_0, people = fixed_point_t::_0;
+				for (ProvinceInstance const* province : country.get_owned_provinces()) {
+					for (Pop const& pop : province->get_pops()) {
+						if (&pop.get_type().strata == poor && pop.get_size() > pop_size_t(0)) {
+							const fixed_point_t size { static_cast<std::int32_t>(type_safe::get(pop.get_size())) };
+							fulfilled += pop.get_everyday_needs_fulfilled() * size;
+							people += size;
+						}
+					}
+				}
+				poor_needy = people > fixed_point_t::_0 && fulfilled < ai.budget_poor_needs_min.fixed() * people;
+			}
+		}
+
+		static fixed_point_t tax_top(OpenVicAIDefines const& ai, CountryInstance const& country, Strata const& strata) {
+			return std::min(ai.budget_max_tax.fixed(), country.get_tax_rate_slider_value_by_strata(strata).get_max());
+		}
+		fixed_point_t tariff_of(CountryInstance const& country) const {
+			return country.get_tariff_rate_slider_value().get_value_untracked();
+		}
+		// Nothing more can be raised: the tariffs and the taxes at the top (the tax of the poor counts as at the top while they are needy)
+		bool at_top(OpenVicAIDefines const& ai, CountryInstance const& country) const {
+			if (tariff_of(country) < tariff_high) {
+				return false;
+			}
+			for (Strata const* strata : others) {
+				if (country.get_tax_rate_slider_value_by_strata(*strata).get_value_untracked() < tax_top(ai, country, *strata)) {
+					return false;
+				}
+			}
+			return poor == nullptr || poor_needy
+				|| country.get_tax_rate_slider_value_by_strata(*poor).get_value_untracked() >= tax_top(ai, country, *poor);
+		}
+		// One step up: the tariffs, else the taxes of the rich and the middle, else the tax of the poor. False when nothing could be raised
+		bool raise(OpenVicAIDefines const& ai, CountryInstance& country, const fixed_point_t step) const {
+			const fixed_point_t tariff = tariff_of(country);
+			if (tariff < tariff_high) {
+				country.set_tariff_rate_slider_value(std::min(tariff_high, tariff + step));
+				return true;
+			}
+			bool raised = false;
+			for (Strata const* strata : others) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(*strata).get_value_untracked();
+				const fixed_point_t top = tax_top(ai, country, *strata);
+				if (rate < top) {
+					country.set_strata_tax_rate_slider_value(*strata, std::min(top, rate + step));
+					raised = true;
+				}
+			}
+			if (raised || poor == nullptr || poor_needy) {
+				return raised;
+			}
+			const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(*poor).get_value_untracked();
+			const fixed_point_t top = tax_top(ai, country, *poor);
+			if (rate < top) {
+				country.set_strata_tax_rate_slider_value(*poor, std::min(top, rate + step));
+				return true;
+			}
+			return false;
+		}
+		// One step down: the tax of the poor, else the taxes of the others, else the tariffs (to BUDGET_MIN_TAX and the lowest tariff)
+		void lower(OpenVicAIDefines const& ai, CountryInstance& country, const fixed_point_t step) const {
+			const fixed_point_t lowest = ai.budget_min_tax.fixed();
+			if (poor != nullptr) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(*poor).get_value_untracked();
+				if (rate > lowest) {
+					country.set_strata_tax_rate_slider_value(*poor, std::max(lowest, rate - step));
+					return;
+				}
+			}
+			bool lowered = false;
+			for (Strata const* strata : others) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(*strata).get_value_untracked();
+				if (rate > lowest) {
+					country.set_strata_tax_rate_slider_value(*strata, std::max(lowest, rate - step));
+					lowered = true;
+				}
+			}
+			const fixed_point_t tariff = tariff_of(country);
+			if (!lowered && tariff > tariff_low) {
+				country.set_tariff_rate_slider_value(std::max(tariff_low, tariff - step));
+			}
+		}
+	};
+
 	// The budget of the AI country (OV_AI_DEFINES BUDGET_*): the sliders of the AI used to stay at 0.5 for ever, so a poor country spent twice its income,
 	// the treasury was empty and the budgets (the army pay too) were cut every day. Deterministic: only the state of the country is read.
 	void balance_budget(InstanceManager& instance_manager, CountryInstance& country) {
 		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		if (ai.budget_enabled == 0) {
 			return;
+		}
+		const RevenueSliders revenue { instance_manager, country, ai };
+		const fixed_point_t step = ai.budget_step.fixed();
+		// The tariffs stay between their bounds, and the tax of the poor goes down while they cannot pay for their everyday needs
+		{
+			const fixed_point_t tariff = revenue.tariff_of(country);
+			if (tariff < revenue.tariff_low || tariff > revenue.tariff_high) {
+				country.set_tariff_rate_slider_value(std::clamp(tariff, revenue.tariff_low, revenue.tariff_high));
+			}
+			if (revenue.poor_needy) {
+				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(*revenue.poor).get_value_untracked();
+				if (rate > ai.budget_min_tax.fixed()) {
+					country.set_strata_tax_rate_slider_value(*revenue.poor, std::max(ai.budget_min_tax.fixed(), rate - step));
+				}
+			}
 		}
 		// The supplies of the army and the navy are bought for the national stockpile out of what is left after the other spending, so they are
 		// counted here too: without them a poor country spent all on the education and the administration and its armies got nothing
@@ -120,22 +244,12 @@ namespace {
 		// The money of the constructions in the treasury is not the money of the budget
 		const fixed_point_t cash = country.get_cash_stockpile().load() - country.get_construction_money();
 		const fixed_point_t reserve = spending * ai.budget_reserve_days;
-		const fixed_point_t step = ai.budget_step.fixed();
-		PopManager const& pop_manager = instance_manager.definition_manager.get_pop_manager();
 
 		if (cash < reserve && income < spending) {
-			bool taxes_at_top = true;
-			for (Strata const& strata : pop_manager.get_stratas()) {
-				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
-				const fixed_point_t top = std::min(ai.budget_max_tax.fixed(), country.get_tax_rate_slider_value_by_strata(strata).get_max());
-				if (rate < top) {
-					country.set_strata_tax_rate_slider_value(strata, std::min(top, rate + step));
-					taxes_at_top = false;
-				}
-			}
+			const bool raised = revenue.raise(ai, country, step);
 			// The education and the administration go down first, the pay of the military only when both are at the floor; at once when the
 			// treasury does not hold a day of the spending (the supplies of the armies are bought last, they would get nothing)
-			if (taxes_at_top || cash < spending) {
+			if (!raised || cash < spending) {
 				const fixed_point_t floor = ai.budget_min_spending.fixed();
 				const fixed_point_t administration = country.get_administration_spending_slider_value().get_value_untracked();
 				const fixed_point_t education = country.get_education_spending_slider_value().get_value_untracked();
@@ -149,15 +263,9 @@ namespace {
 		} else if (cash > reserve * 2 && (income * Rate::DENOMINATOR > spending * ai.budget_surplus_ratio.numerator
 			// the treasury grows (the freight of the trade and the tariffs are not in the income of the taxes)
 			|| country.get_balance_before_investment_average() > fixed_point_t::_0)) {
-			// A surplus: the money goes back to the pops, the taxes go down to BUDGET_MIN_TAX and the spending up to BUDGET_MAX_SPENDING (before, the
-			// treasuries of the rich countries kept the money)
-			const fixed_point_t lowest = ai.budget_min_tax.fixed();
-			for (Strata const& strata : pop_manager.get_stratas()) {
-				const fixed_point_t rate = country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked();
-				if (rate > lowest) {
-					country.set_strata_tax_rate_slider_value(strata, std::max(lowest, rate - step));
-				}
-			}
+			// A surplus: the money goes back to the pops, the taxes go down to BUDGET_MIN_TAX (the poor first), then the tariffs, and the spending goes
+			// up to BUDGET_MAX_SPENDING (before, the treasuries of the rich countries kept the money)
+			revenue.lower(ai, country, step);
 			const fixed_point_t highest = ai.budget_max_spending.fixed();
 			const auto restore = [&](fixed_point_t value) { return value < highest ? std::min(highest, value + step) : value; };
 			country.set_military_spending_slider_value(restore(country.get_military_spending_slider_value().get_value_untracked()));
@@ -477,11 +585,8 @@ namespace {
 		if (army_cost <= left) {
 			return;
 		}
-		for (Strata const& strata : instance_manager.definition_manager.get_pop_manager().get_stratas()) {
-			if (country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked()
-				< std::min(ai.budget_max_tax.fixed(), country.get_tax_rate_slider_value_by_strata(strata).get_max())) {
-				return;
-			}
+		if (!RevenueSliders { instance_manager, country, ai }.at_top(ai, country)) {
+			return;
 		}
 		const fixed_point_t floor = ai.budget_min_spending.fixed();
 		if (country.get_military_spending_slider_value().get_value_untracked() > floor

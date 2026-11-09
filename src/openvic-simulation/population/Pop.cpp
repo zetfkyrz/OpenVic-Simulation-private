@@ -580,6 +580,23 @@ void Pop::pop_tick_without_cleanup(
 	needs_fulfilled_goods_recorded = true;
 	
 	fixed_point_map_t<good_index_t> goods_to_sell {};
+	// What the life needs of an artisan cost at the highest prices of today: kept back from the money of the inputs (the goods it keeps from its
+	// work and from the RGO are not counted, a little more is kept than it will spend)
+	cash_reserved_for_life_needs = fixed_point_t::_0;
+	if (artisanal_producer_optional.has_value() && population_defines != nullptr && population_defines->artisan_life_needs_first != 0) {
+		PopType const& own_type = type;
+		const fixed_point_t life_scalar = (fixed_point_t::_1 + 2 * consciousness / shared_values.defines.get_pdef_base_con()) * size
+			* population_defines->pop_needs_multiplier.fixed() * shared_values.get_effects_by_strata()[own_type.strata.index].get_shared_life_needs_scalar();
+		if (life_scalar > fixed_point_t::_0) {
+			for (auto [good_index, quantity] : own_type.get_life_needs()) {
+				if (market_instance.get_is_available(good_index)) {
+					cash_reserved_for_life_needs += market_instance.get_max_money_to_allocate_to_buy_quantity(
+						good_index, quantity * life_scalar / size_denominator
+					);
+				}
+			}
+		}
+	}
 	if (artisanal_producer_optional.has_value()) {
 		//execute artisan_tick before needs
 		ArtisanalProducer& artisanal_producer = artisanal_producer_optional.value();
@@ -623,9 +640,10 @@ void Pop::pop_tick_without_cleanup(
 	PopType const& pop_type = type;
 	PopStrataValuesFromProvince const& shared_strata_values = shared_values.get_effects_by_strata()[pop_type.strata.index];
 	PopsDefines const& defines = shared_values.defines;
+	// POP_NEEDS_MULTIPLIER: what the pops need of the quantities of the data (version 78: a half)
 	const fixed_point_t base_needs_scalar = (
 		fixed_point_t::_1 + 2 * consciousness / defines.get_pdef_base_con()
-	) * size;
+	) * size * (population_defines != nullptr ? population_defines->pop_needs_multiplier.fixed() : fixed_point_t::_1);
 
 	// The goods the pop kept from the output of the RGO it works at (subsistence): eaten before anything is bought
 	ResourceGatheringOperation const& location_rgo = get_location().get_rgo();
@@ -765,6 +783,44 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 
 	const good_index_t good_index = buy_result.good_index;
 	fixed_point_t quantity_left_to_consume = quantity_bought;
+	CountryInstance* get_country_to_report_economy_nullable = pop.get_location().get_country_to_report_economy();
+
+	#define CONSUME_NEED(need_category) \
+		if (quantity_left_to_consume > 0) { \
+			const need_list_t::const_iterator need_category##it = std::find_if( \
+				pop.need_category##_needs.begin(), pop.need_category##_needs.end(), \
+				[good_index](std::pair<good_index_t, fixed_point_t> const& need) -> bool { return need.first == good_index; } \
+			); \
+			if (need_category##it != pop.need_category##_needs.end()) { \
+				const fixed_point_t desired_quantity = need_category##it->second; \
+				fixed_point_t consumed_quantity; \
+				if (quantity_left_to_consume >= desired_quantity) { \
+					consumed_quantity = desired_quantity; \
+					pop.need_category##_needs_fulfilled_goods_list.push_back(good_index); \
+				} else { \
+					consumed_quantity = quantity_left_to_consume; \
+				} \
+				pop.need_category##_needs_acquired_quantity += consumed_quantity; \
+				quantity_left_to_consume -= consumed_quantity; \
+				if (get_country_to_report_economy_nullable != nullptr) { \
+					get_country_to_report_economy_nullable->report_pop_need_consumption(pop.type, good_index, consumed_quantity); \
+				} \
+				const fixed_point_t expense = fp::mul_div( \
+					money_spent, \
+					consumed_quantity, \
+					quantity_bought \
+				); \
+				pop.add_##need_category##_needs_expense(expense); \
+			} \
+		}
+
+	// An artisan eats before it fills the stockpile of its work (ARTISAN_LIFE_NEEDS_FIRST): the goods of its life needs (grain, fruit, wool, cattle,
+	// fish) are the inputs of the liquor, the wine and the cloth, and when the market gave less than the order the stockpile took all of them
+	const bool life_needs_first = pop.artisanal_producer_optional.has_value() && population_defines != nullptr
+		&& population_defines->artisan_life_needs_first != 0;
+	if (life_needs_first) {
+		CONSUME_NEED(life)
+	}
 	if (pop.artisanal_producer_optional.has_value()) {
 		if (quantity_left_to_consume <= 0) {
 			return;
@@ -785,39 +841,11 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 		}
 	}
 
-	CountryInstance* get_country_to_report_economy_nullable = pop.get_location().get_country_to_report_economy();
-	
-	#define CONSUME_NEED(need_category) \
-		if (quantity_left_to_consume <= 0) { \
-			return; \
-		} \
-		const need_list_t::const_iterator need_category##it = std::find_if( \
-			pop.need_category##_needs.begin(), pop.need_category##_needs.end(), \
-			[good_index](std::pair<good_index_t, fixed_point_t> const& need) -> bool { return need.first == good_index; } \
-		); \
-		if (need_category##it != pop.need_category##_needs.end()) { \
-			const fixed_point_t desired_quantity = need_category##it->second; \
-			fixed_point_t consumed_quantity; \
-			if (quantity_left_to_consume >= desired_quantity) { \
-				consumed_quantity = desired_quantity; \
-				pop.need_category##_needs_fulfilled_goods_list.push_back(good_index); \
-			} else { \
-				consumed_quantity = quantity_left_to_consume; \
-			} \
-			pop.need_category##_needs_acquired_quantity += consumed_quantity; \
-			quantity_left_to_consume -= consumed_quantity; \
-			if (get_country_to_report_economy_nullable != nullptr) { \
-				get_country_to_report_economy_nullable->report_pop_need_consumption(pop.type, good_index, consumed_quantity); \
-			} \
-			const fixed_point_t expense = fp::mul_div( \
-				money_spent, \
-				consumed_quantity, \
-				quantity_bought \
-			); \
-			pop.add_##need_category##_needs_expense(expense); \
-		}
-
-	OV_DO_FOR_ALL_NEED_CATEGORIES(CONSUME_NEED)
+	if (!life_needs_first) {
+		CONSUME_NEED(life)
+	}
+	CONSUME_NEED(everyday)
+	CONSUME_NEED(luxury)
 	#undef CONSUME_NEED
 }
 
