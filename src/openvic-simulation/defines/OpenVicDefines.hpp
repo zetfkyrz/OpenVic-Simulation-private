@@ -187,6 +187,10 @@ namespace OpenVic {
 	/* The artisans keep the money of their life needs before they buy the goods of their work (version 78): before, all the cash went to the */ \
 	/* inputs, the market did not give them, and the artisans starved with the money in their hands. 0 = the inputs first, as before */ \
 	INT(ARTISAN_LIFE_NEEDS_FIRST, artisan_life_needs_first, 1, 0, 1) \
+	/* The bureaucrats (version 82): while the bureaucrats of a state are fewer than the share the country wants, this share of its literate poor */ \
+	/* (farmers, labourers, craftsmen: their men times the literacy) becomes bureaucrats every month, times 1 + bureaucrat_promotion of the laws */ \
+	/* (hereditary bureaucrats -90 %, elected +100 %). 0 = off */ \
+	RATE(BUREAUCRAT_PROMOTION_SHARE, bureaucrat_promotion_share, Rate(2, 1000), 0, 1) \
 	/* The hungry artisans (version 79): ARTISAN_DEMOTION_SHARE a month of the artisans whose life needs are under ARTISAN_DEMOTION_LIFE_NEEDS */ \
 	/* take the free jobs of the factories of their state (they become craftsmen), else the free jobs of the RGO of their province (farmers or */ \
 	/* labourers, who it employs most). Without free jobs they stay. 0 = off */ \
@@ -393,6 +397,10 @@ namespace OpenVic {
 	/* base that is mobilised (impact = MOBILISATION_ECONOMY_IMPACT_BASE + mobilisation_economy_impact of the modifiers), not below */ \
 	/* MOBILISATION_OUTPUT_MIN_MULT. A country that was at war while mobilised demobilises DEMOBILISE_DAYS after its last war ends */ \
 	RATE(MOBILISATION_POP_SHARE, mobilisation_pop_share, Rate(3, 100), 0, 1) \
+	/* The kinds of the mobilisation (decision of the owner 2026-11-10, chosen by the country): the share of the pool they raise */ \
+	RATE(MOBILISATION_LEVEL_LIMITED, mobilisation_level_limited, Rate(25, 100), 0, 1) \
+	RATE(MOBILISATION_LEVEL_STANDARD, mobilisation_level_standard, Rate(50, 100), 0, 1) \
+	RATE(MOBILISATION_LEVEL_EXTENDED, mobilisation_level_extended, Rate(100, 100), 0, 1) \
 	/* The land that is not national (not a core of the country: colonies, conquests) gives MOBILISATION_NON_NATIONAL_FACTOR of the share; a region */ \
 	/* (a state) gives at most MOBILISATION_REGION_MAX of its population, of its land that is not national MOBILISATION_REGION_MAX_NON_NATIONAL (the */ \
 	/* reforms and the technologies will change them; decision of the owner 2026-11-07) */ \

@@ -6180,6 +6180,41 @@ namespace {
 	// ---- the way by sea (P4d, docs/WAR_ASSUMPTIONS.md, section 6): an army with no way over the land (Turkey: Tripolitania behind Egypt) goes to a port
 	// of its country, sails and lands in the port nearest to its destination, then goes on over the land
 
+	// The laws (docs/LAWS_DESIGN.md): the start from the history, a law in force changes the effects, the model of the army and the kind of the
+	// mobilisation change the pool of the mobilisation
+	void test_laws(Results& r, InstanceManager& im) {
+		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
+		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
+		LawVariant const* const serfdom = law_manager.get_variant("serfdom");
+		LawVariant const* const professional = law_manager.get_variant("professional_army");
+		LawVariant const* const national = law_manager.get_variant("national_army");
+		if (law_manager.empty() || russia == nullptr || serfdom == nullptr || professional == nullptr || national == nullptr) {
+			fmt::println("TEST INFO laws: no laws or no Russia, not checked");
+			return;
+		}
+		r.check(russia->get_law(serfdom->group_index) == serfdom, "laws: the start laws come from the history (Russia starts with serfdom)");
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		LawVariant const* const before = russia->get_law(professional->group_index);
+		const std::uint8_t level_before = russia->get_mobilisation_level();
+		russia->set_law(*national);
+		russia->set_mobilisation_level(2);
+		const fixed_point_t share_national = unit_manager.get_mobilisation(*russia).share;
+		russia->set_law(*professional);
+		const fixed_point_t share_professional = unit_manager.get_mobilisation(*russia).share;
+		russia->set_mobilisation_level(0);
+		const fixed_point_t share_limited = unit_manager.get_mobilisation(*russia).share;
+		r.check(russia->get_law_effect(law_effect_t::army_attack) > fixed_point_t::_0_10 && russia->get_law_effect(law_effect_t::army_attack) < fixed_point_t::_0_50 && share_national > fixed_point_t::_0
+				&& share_professional * 2 <= share_national + fixed_point_t::epsilon * 4 && share_professional * 2 >= share_national - fixed_point_t::epsilon * 4
+				&& share_limited * 4 <= share_professional + fixed_point_t::epsilon * 4 && share_limited * 4 >= share_professional - fixed_point_t::epsilon * 4,
+			"laws: the professional army gives +20 % attack and halves the mobilisation, the limited mobilisation raises a quarter of the pool",
+			fmt::format("attack {:.2f}, share national {:.5f}, professional {:.5f}, limited {:.5f}", static_cast<double>(russia->get_law_effect(law_effect_t::army_attack)),
+				static_cast<double>(share_national), static_cast<double>(share_professional), static_cast<double>(share_limited)));
+		russia->set_mobilisation_level(level_before);
+		if (before != nullptr) {
+			russia->set_law(*before);
+		}
+	}
+
 	void test_sea_transfer(Results& r, InstanceManager& im) {
 		CountryInstance* turkey = im.get_country_instance_manager().get_country_instance_by_identifier("TUR");
 		if (turkey == nullptr || turkey->get_capital() == nullptr) {
@@ -8094,6 +8129,7 @@ namespace {
 		test_division_recruitment(r, *im);
 		test_manpower_losses(r, *im);
 		test_plan_status(r, *im);
+		test_laws(r, *im);
 		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own

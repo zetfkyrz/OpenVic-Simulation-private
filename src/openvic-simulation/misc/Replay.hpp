@@ -150,7 +150,9 @@ namespace OpenVic {
 		// 81: the AI keeps transports for AI_TRANSPORT_REGIMENT_SHARE of its regiments when it has land across the sea or an enemy it reaches only by
 		//     sea (AI_TRANSPORT_*); a fleet of transports only stays in its port; an army can land on a coast from the ships (order_sea_landing), the AI
 		//     lands on an enemy it reaches only by sea (AI_LANDING_*); the ports the country took supply by the sea and take the ships of its armies
-		inline constexpr int SIMULATION_VERSION = 81;
+		// 82: the laws of OpenVic (ov_data/common/ov_laws, docs/LAWS_DESIGN.md) replace the Vic2 reforms and party policies they name; the kind of the
+		//     mobilisation (limited, standard, extended); new actions set_law, set_mobilisation_level
+		inline constexpr int SIMULATION_VERSION = 82;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

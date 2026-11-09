@@ -301,6 +301,31 @@ bool GameActionManager::VariantVisitor::operator() (set_auto_assign_leaders_argu
 	return old_auto_assign != country.get_auto_assign_leaders();
 }
 
+// A law in force (docs/LAWS_DESIGN.md): for now at once; the variant by its index in the law manager
+bool GameActionManager::VariantVisitor::operator() (set_law_argument_t const& argument) const {
+	const auto [country_index, variant_index] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	LawManager const& law_manager = instance_manager.definition_manager.get_politics_manager().get_law_manager();
+	if (variant_index >= law_manager.get_variants().size()) {
+		return false;
+	}
+	return country.set_law(law_manager.get_variants()[variant_index]);
+}
+
+// The kind of the mobilisation (decision of the owner 2026-11-10): 0 limited, 1 standard, 2 extended (the share of the pool: ov_war.MOBILISATION_LEVEL_*)
+bool GameActionManager::VariantVisitor::operator() (set_mobilisation_level_argument_t const& argument) const {
+	const auto [country_index, level] = argument;
+	if (level > 2) {
+		return false;
+	}
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (country.get_mobilisation_level() == level) {
+		return false;
+	}
+	country.set_mobilisation_level(static_cast<std::uint8_t>(level));
+	return true;
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

@@ -3,6 +3,7 @@
 #include "openvic-simulation/politics/Government.hpp"
 #include "openvic-simulation/politics/Ideology.hpp"
 #include "openvic-simulation/politics/IssueManager.hpp"
+#include "openvic-simulation/politics/Law.hpp"
 #include "openvic-simulation/politics/NationalFocus.hpp"
 #include "openvic-simulation/politics/NationalValue.hpp"
 #include "openvic-simulation/politics/Rebel.hpp"
@@ -16,6 +17,7 @@ namespace OpenVic {
 		NationalValueManager PROPERTY_REF(national_value_manager);
 		NationalFocusManager PROPERTY_REF(national_focus_manager);
 		RebelManager PROPERTY_REF(rebel_manager);
+		LawManager PROPERTY_REF(law_manager);
 
 	public:
 		inline bool load_government_types_file(ast::NodeCPtr root) {

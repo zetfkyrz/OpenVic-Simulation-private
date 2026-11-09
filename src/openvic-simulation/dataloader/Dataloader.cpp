@@ -1405,6 +1405,21 @@ bool Dataloader::load_defines(
 		spdlog::critical_s("Failed to load issues and reforms!");
 		ret = false;
 	}
+	{
+		// The laws of OpenVic (docs/LAWS_DESIGN.md): after the issues of Vic2, whose modifiers and rules they take over
+		LawManager& law_manager = definition_manager.get_politics_manager().get_law_manager();
+		std::size_t loaded = 0;
+		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_laws", ".txt", true)) {
+			const v2script::Parser parser = parse_defines(file);
+			if (parser.has_fatal_error() || parser.has_error()) {
+				spdlog::warn_s("The law file {} is skipped, it has errors", file);
+				continue;
+			}
+			loaded += law_manager.load_file(file.string(), parser.get_file_node(), definition_manager.get_modifier_manager());
+		}
+		const std::size_t problems = law_manager.resolve(definition_manager.get_politics_manager().get_issue_manager());
+		SPDLOG_INFO("Loaded {} laws in {} groups ({} problems found)", loaded, law_manager.get_groups().size(), problems);
+	}
 	if (!definition_manager.get_pop_manager().load_delayed_parse_pop_type_data(
 		definition_manager.get_military_manager().get_unit_type_manager(),
 		definition_manager.get_politics_manager().get_issue_manager()

@@ -783,7 +783,8 @@ void GoodMarket::attribute_routed_sales(const fixed_point_t new_price, memory::v
 			unplanned += node_imports[node] - node_covered[node];
 		}
 		const fixed_point_t left = node_supply[node] - node_dom[node] - node_exports[node];
-		if (left > fixed_point_t::_0) {
+		// (a country of isolationism sells nothing abroad)
+		if (left > fixed_point_t::_0 && !trade_network->is_isolated(country_index_t(node))) {
 			room += left;
 		}
 	}
@@ -792,7 +793,7 @@ void GoodMarket::attribute_routed_sales(const fixed_point_t new_price, memory::v
 		const fixed_point_t spot_cost = trade_network->get_spot_cost();
 		for (std::size_t node = 0; node < node_count; ++node) {
 			const fixed_point_t left = node_supply[node] - node_dom[node] - node_exports[node];
-			if (left <= fixed_point_t::_0) {
+			if (left <= fixed_point_t::_0 || trade_network->is_isolated(country_index_t(node))) {
 				continue;
 			}
 			fixed_point_t extra = fp::mul_div(take, left, room);

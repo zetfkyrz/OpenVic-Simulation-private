@@ -708,6 +708,14 @@ namespace {
 			// The supply level and the penalty of an army over the manpower of its country (both multiply the attack and the defence); a resting or
 			// raiding army defends worse
 			const fixed_point_t supply = unit.army->get_supply_level() * unit.army->get_country().manpower_combat_multiplier;
+			// The model of the army (the laws, docs/LAWS_DESIGN.md): its attack and defence, and the bonus on the national land of the country
+			CountryInstance const& army_country = unit.army->get_country();
+			const fixed_point_t home_bonus = province.get_owner() == &army_country && province.is_owner_core()
+				? army_country.get_law_effect(law_effect_t::army_home_bonus) : fixed_point_t::_0;
+			const fixed_point_t law_attack = std::max(fixed_point_t::_0_10,
+				fixed_point_t::_1 + army_country.get_law_effect(law_effect_t::army_attack) + home_bonus);
+			const fixed_point_t law_defence = std::max(fixed_point_t::_0_10,
+				fixed_point_t::_1 + army_country.get_law_effect(law_effect_t::army_defence) + home_bonus);
 			const fixed_point_t stance_defence = unit.army->get_stance() == ArmyInstance::STANCE_REST || unit.army->get_stance() == ArmyInstance::STANCE_RAID
 				? wd.stance_loose_defence.fixed() : fixed_point_t::_1;
 			fixed_point_t attack = fixed_point_t::_0, defence = fixed_point_t::_0, breakthrough = fixed_point_t::_0;
@@ -719,8 +727,8 @@ namespace {
 			}
 			const fixed_point_t planning = fixed_point_t::_1 + get_army_planning(*unit.army);
 			const fixed_point_t tactics = battle_formulas::recon_tactics(wd, attacking ? recon_advantage : -recon_advantage);
-			unit.attack = attack * leader_attack * skill_attack * supply * planning * tactics;
-			unit.breakthrough = breakthrough * leader_attack * supply * planning * tactics;
+			unit.attack = attack * leader_attack * skill_attack * supply * planning * tactics * law_attack;
+			unit.breakthrough = breakthrough * leader_attack * supply * planning * tactics * law_attack;
 			if (attacking) {
 				unit.protection = unit.breakthrough;
 				// Over a river: the army came from a province whose border with this one runs along a river
@@ -744,7 +752,7 @@ namespace {
 				const fixed_point_t own_terrain_defence = fixed_point_t::_1
 					+ leader_skills::scale_terrain_effect(terrain_defence - fixed_point_t::_1, skill_step, terrain_level);
 				unit.protection = battle_formulas::defender_protection(
-					wd, defence * leader_defence * skill_defence * supply * stance_defence, fortification, own_terrain_defence
+					wd, defence * leader_defence * skill_defence * supply * stance_defence * law_defence, fortification, own_terrain_defence
 				);
 			}
 		}

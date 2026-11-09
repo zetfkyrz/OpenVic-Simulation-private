@@ -38,6 +38,7 @@
 #include "openvic-simulation/types/UnitBranchType.hpp"
 #include "openvic-simulation/types/UnitVariant.hpp"
 #include "openvic-simulation/types/ValueHistory.hpp"
+#include "openvic-simulation/politics/Law.hpp"
 #include "openvic-simulation/utility/Getters.hpp"
 #include "openvic-simulation/utility/reactive/DerivedState.hpp"
 #include "openvic-simulation/utility/reactive/MutableState.hpp"
@@ -155,6 +156,11 @@ namespace OpenVic {
 			equipment_manager = &new_equipment_manager;
 			good_definition_manager = &new_good_definition_manager;
 			openvic_war_defines = &war_defines;
+		}
+		// The laws (set by the InstanceManager, they belong to the definitions; docs/LAWS_DESIGN.md)
+		static inline LawManager const* law_manager = nullptr;
+		static void set_law_manager(LawManager const& manager) {
+			law_manager = &manager;
 		}
 		static inline OpenVicSupplyDefines const* openvic_supply_defines = nullptr;
 		static void set_openvic_supply_defines(OpenVicSupplyDefines const& defines) {
@@ -527,6 +533,28 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(canned_food_from_grain_yesterday);
 		// The ship the AI saves the goods for (its transports, version 81): the government buys its build cost for the stockpile; nullptr: none
 		ShipType const* PROPERTY_RW(ai_ship_order, nullptr);
+		// The kind of the mobilisation (decision of the owner 2026-11-10): 0 limited, 1 standard, 2 extended; the share of the pool it raises is
+		// ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED
+		std::uint8_t PROPERTY_RW(mobilisation_level, 1);
+		// The taxes the bureaucrats keep (the corruption of the laws), paid to the bureaucrats of the country once a month (PopDynamics)
+		fixed_point_t PROPERTY_RW(corruption_owed, fixed_point_t::_0);
+		// The laws in force (one variant of every law group, by the group index; docs/LAWS_DESIGN.md) and the sum of their effects of OpenVic
+		memory::vector<LawVariant const*> PROPERTY(laws);
+		law_effects_t PROPERTY(law_effects);
+	public:
+		// The law in force of a group (nullptr: no laws loaded)
+		[[nodiscard]] LawVariant const* get_law(const std::size_t group_index) const {
+			return group_index < laws.size() ? laws[group_index] : nullptr;
+		}
+		[[nodiscard]] fixed_point_t get_law_effect(const law_effect_t effect) const {
+			return law_effects[static_cast<std::size_t>(effect)];
+		}
+		// Puts the law in force (its group's law goes); false when it is in force already or unknown
+		bool set_law(LawVariant const& variant);
+		// The laws of the start: the variant every group chooses by the Vic2 history (start_from), else its default
+		void init_laws_from_history();
+	private:
+		void sum_law_effects();
 		// The rifles of the supply with supply:rifle_1_first yesterday: the rifle_0 of the regiments with muskets that rifle_1 stood in for, the rifle_1 of
 		// the regiments with rifle_1 that rifle_0 stood in for (they lose a share of their attack and defence: RIFLE_0_FOR_RIFLE_1_PENALTY)
 		fixed_point_t PROPERTY(rifle_1_for_rifle_0_yesterday);

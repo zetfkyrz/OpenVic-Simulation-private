@@ -151,6 +151,12 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		hasher.add(country.get_cash_stockpile().load());
 		hasher.add(country.get_investment_fund());
+		// The laws in force and the kind of the mobilisation (docs/LAWS_DESIGN.md)
+		for (LawVariant const* law : country.get_laws()) {
+			hasher.add(law != nullptr ? static_cast<std::uint64_t>(law->index) + 1 : 0);
+		}
+		hasher.add(static_cast<std::uint64_t>(country.get_mobilisation_level()) + 0x6d6f62ULL);
+		hasher.add(country.get_corruption_owed());
 		{
 			// The constructions the treasury builds for a fund (version 73)
 			fixed_point_t due = fixed_point_t::_0;

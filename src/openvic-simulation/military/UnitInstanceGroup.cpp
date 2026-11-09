@@ -1356,6 +1356,11 @@ void UnitInstanceManager::update_ship_transfer(ArmyInstance& army, MapInstance& 
 		army.clear_sea_transfer();
 		return;
 	}
+	// The navy took other armies on board (an order of the player, a field marshal): it is not ours any more, it is not led away
+	if (!navy->get_carried_armies().empty()) {
+		army.clear_sea_transfer();
+		return;
+	}
 	if (army.is_moving() || army.is_in_combat() || navy->is_moving() || navy->is_in_combat()) {
 		return;
 	}
@@ -1699,6 +1704,12 @@ Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const
 	Rate const& base_bonus = UnitInstanceGroup::war_defines->manpower_base_bonus;
 	manpower.multiplier += base_bonus.fixed();
 	manpower.max_men = manpower.pop_men + base_bonus.of_int(manpower.pop_men);
+	// The model of the army (the laws): the national militia +50 %
+	if (const fixed_point_t law_manpower = country.get_law_effect(law_effect_t::manpower); law_manpower != fixed_point_t::_0) {
+		manpower.multiplier += law_manpower;
+		const std::int64_t per_mille = (law_manpower * 1000).ceil<std::int32_t>();
+		manpower.max_men = std::max<std::int64_t>(0, manpower.max_men + manpower.pop_men * per_mille / 1000);
+	}
 	if (country.is_at_war()) {
 		Rate const& bonus = UnitInstanceGroup::war_defines->manpower_war_bonus;
 		manpower.multiplier += bonus.fixed();
@@ -2609,6 +2620,14 @@ Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& countr
 		}
 	}
 	mobilisation.share = std::max(fixed_point_t::_0, share * std::max(fixed_point_t::_0, fixed_point_t::_1 + share_pct));
+	// The model of the army (the laws: professional -50 %, mobilisation army +100 %) and the kind of the mobilisation the country chose (limited,
+	// standard, extended: the share of the pool it raises)
+	mobilisation.share = mobilisation.share * std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::mobilisation_size));
+	{
+		Rate const& level = country.get_mobilisation_level() == 0 ? wd.mobilisation_level_limited
+			: country.get_mobilisation_level() == 2 ? wd.mobilisation_level_extended : wd.mobilisation_level_standard;
+		mobilisation.share = mobilisation.share * level.fixed();
+	}
 	bool first_province = true;
 	for (ProvinceInstance const* province : country.get_owned_provinces()) {
 		if (province->get_controller() != &country) {
@@ -2657,7 +2676,7 @@ Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& countr
 	mobilisation.free_men = mobilisation.pool_men - mobilisation.men - mobilisation.pending_men;
 	mobilisation.economy_impact = std::max(
 		fixed_point_t::_0, wd.mobilisation_economy_impact_base.fixed() + country.get_mobilisation_economy_impact()
-	);
+	) * std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::mobilisation_impact));
 	// In ten-thousandths, so that the share of millions of men fits
 	const auto output_of = [&mobilisation, &wd](const std::int64_t taken_men) -> std::pair<fixed_point_t, fixed_point_t> {
 		if (mobilisation.pop_men <= 0 || taken_men <= 0) {

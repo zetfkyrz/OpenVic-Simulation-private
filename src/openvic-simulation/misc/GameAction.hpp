@@ -179,7 +179,9 @@ X(set_recruitment_priority, country_index_t, unique_id_t, std::uint32_t) \
 X(separate_peace, country_index_t, std::uint32_t) \
 X(set_army_stance, unique_id_t, std::uint32_t) \
 X(follow_army, unique_id_t, unique_id_t) \
-X(army_to_port, unique_id_t)
+X(army_to_port, unique_id_t) \
+X(set_law, country_index_t, std::uint32_t) \
+X(set_mobilisation_level, country_index_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

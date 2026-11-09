@@ -52,6 +52,7 @@ namespace OpenVic {
 		bool ready = false;
 
 		std::vector<route_t> routes; // (country_count + 1) squared, [from * node_count + to]
+		std::vector<char> isolated; // by node: the country trades with no other country (isolationism, the laws)
 		std::vector<fixed_point_t> sea_capacity; // by country: the sum of its ports
 		std::vector<std::int32_t> land_crossings; // by country: neighbouring pairs of provinces with other countries
 		std::vector<fixed_point_t> best_rail; // by country: the best railroad level at the border (0..1)
@@ -107,6 +108,10 @@ namespace OpenVic {
 		}
 		// The freight of the goods that the plan of the day did not foresee
 		fixed_point_t get_spot_cost() const;
+		[[nodiscard]] bool is_isolated(const country_index_t node) const {
+			const std::size_t index = type_safe::get(node);
+			return index < isolated.size() && isolated[index] != 0;
+		}
 		fixed_point_t get_sea_capacity(const country_index_t country) const {
 			return sea_capacity[type_safe::get(country)];
 		}

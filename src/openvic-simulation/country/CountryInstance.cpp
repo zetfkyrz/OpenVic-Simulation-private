@@ -1339,6 +1339,8 @@ bool CountryInstance::apply_history_to_country(
 	for (Decision const* decision : entry.get_decisions()) {
 		// TODO - take decision
 	}
+	// The laws of the start follow the history (docs/LAWS_DESIGN.md)
+	init_laws_from_history();
 
 	return ret;
 }
@@ -1478,7 +1480,9 @@ void CountryInstance::_update_budget() {
 			? fixed_point_t::_1
 			: std::min(
 				fp::from_fraction(effective_administrators, desired_administrators)
-					* (fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_administrative_efficiency_modifier())),
+					* (fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_administrative_efficiency_modifier()))
+					// how well the bureaucrats work by the laws (hereditary bureaucrats +5 %)
+					* std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::bureaucrat_efficiency)),
 				fixed_point_t::_1
 			);
 
@@ -1498,6 +1502,9 @@ void CountryInstance::_update_budget() {
 	{
 		// The same for every type of pop: looked up once, not for every type
 		const fixed_point_t corruption_cost_multiplier_copy = corruption_cost_multiplier.get_untracked();
+		// The pay of the bureaucrats and of the military by the laws (the same factor as in request_salaries_and_welfare_and_import_subsidies)
+		const fixed_point_t administration_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::bureaucrat_wage));
+		const fixed_point_t military_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::military_wage));
 		const fixed_point_t pension_level = get_modifier_effect_value(*modifier_effect_cache.get_pension_level());
 		const fixed_point_t unemployment_benefit = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
 
@@ -1509,11 +1516,11 @@ void CountryInstance::_update_budget() {
 			const fixed_point_t social_income_variant_base =
 				corruption_cost_multiplier_copy * pop_type_values.get_social_income_variant_base_untracked();
 			projected_administration_spending_unscaled_by_slider_running_total += size
-				* (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked()).get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked() * administration_pay).get_raw_value();
 			projected_education_spending_unscaled_by_slider_running_total += size
 				* (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()).get_raw_value();
 			projected_military_spending_unscaled_by_slider_running_total += size
-				* (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked()).get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked() * military_pay).get_raw_value();
 			projected_pensions_spending_unscaled_by_slider_running_total += size
 				* (pension_level * social_income_variant_base).get_raw_value();
 			projected_unemployment_subsidies_spending_unscaled_by_slider_running_total += type_safe::get(
@@ -1834,19 +1841,98 @@ bool CountryInstance::update_rule_set() {
 	CountryParty const* ruling_party_copy = ruling_party.get_untracked();
 	if (ruling_party_copy != nullptr) {
 		for (PartyPolicy const* party_policy : ruling_party_copy->get_policies()) {
-			if (party_policy != nullptr) {
+			if (party_policy != nullptr && (law_manager == nullptr || !law_manager->replaces(party_policy->group.get_identifier()))) {
 				rule_set.add_ruleset(party_policy->rules);
 			}
 		}
 	}
 
 	for (Reform const* reform : reforms.get_values()) {
-		if (reform != nullptr) {
+		if (reform != nullptr && (law_manager == nullptr || !law_manager->replaces(reform->group.get_identifier()))) {
 			rule_set.add_ruleset(reform->rules);
 		}
 	}
 
+	for (LawVariant const* law : laws) {
+		if (law != nullptr) {
+			rule_set.add_ruleset(law->rules);
+			for (RuleSet const* inherited : law->inherited_rules) {
+				rule_set.add_ruleset(*inherited);
+			}
+		}
+	}
+
 	return true;
+}
+
+bool CountryInstance::set_law(LawVariant const& variant) {
+	if (law_manager == nullptr || variant.group_index >= law_manager->get_groups().size()) {
+		return false;
+	}
+	if (laws.size() != law_manager->get_groups().size()) {
+		init_laws_from_history();
+	}
+	if (laws[variant.group_index] == &variant) {
+		return false;
+	}
+	laws[variant.group_index] = &variant;
+	sum_law_effects();
+	update_rule_set();
+	return true;
+}
+
+void CountryInstance::sum_law_effects() {
+	law_effects = {};
+	for (LawVariant const* law : laws) {
+		if (law != nullptr) {
+			for (std::size_t index = 0; index < LAW_EFFECT_COUNT; ++index) {
+				law_effects[index] += law->effects[index];
+			}
+		}
+	}
+}
+
+void CountryInstance::init_laws_from_history() {
+	if (law_manager == nullptr || law_manager->empty()) {
+		laws.clear();
+		law_effects = {};
+		return;
+	}
+	// What the history of Vic2 says: the reforms, the policies of the ruling party, the government, civilised or not
+	memory::vector<std::string_view> keys;
+	for (Reform const* reform : reforms.get_values()) {
+		if (reform != nullptr) {
+			keys.push_back(reform->get_identifier());
+		}
+	}
+	if (CountryParty const* const party = ruling_party.get_untracked(); party != nullptr) {
+		for (PartyPolicy const* policy : party->get_policies()) {
+			if (policy != nullptr) {
+				keys.push_back(policy->get_identifier());
+			}
+		}
+	}
+	if (GovernmentType const* const government = government_type.get_untracked(); government != nullptr) {
+		keys.push_back(government->get_identifier());
+	}
+	keys.push_back(is_civilised() ? std::string_view { "civilised" } : std::string_view { "uncivilised" });
+	keys.push_back(get_identifier()); // a law may name the countries that start with it (start_from = { RUS AUS })
+	laws.assign(law_manager->get_groups().size(), nullptr);
+	for (std::size_t group_index = 0; group_index < law_manager->get_groups().size(); ++group_index) {
+		LawGroup const& group = law_manager->get_groups()[group_index];
+		LawVariant const* chosen = nullptr;
+		for (const std::size_t variant_index : group.variants) {
+			LawVariant const& variant = law_manager->get_variants()[variant_index];
+			for (memory::string const& key : variant.start_from) {
+				if (chosen == nullptr && std::find(keys.begin(), keys.end(), std::string_view { key }) != keys.end()) {
+					chosen = &variant;
+				}
+			}
+		}
+		laws[group_index] = chosen != nullptr ? chosen : &law_manager->get_default_variant(group);
+	}
+	sum_law_effects();
+	update_rule_set();
 }
 
 static constexpr Modifier const& get_country_status_static_effect(
@@ -1891,7 +1977,8 @@ void CountryInstance::update_modifier_sum(Date today, StaticModifierCache const&
 		for (PartyPolicy const* party_policy : ruling_party_copy->get_policies()) {
 			// The ruling party's issues here could be null as they're stored in an FixedVector which has
 			// values for every PartyPolicyGroup regardless of whether or not they have a policy set.
-			if (party_policy != nullptr) {
+			// (a group the laws replace has no effect of its own: the laws give it)
+			if (party_policy != nullptr && (law_manager == nullptr || !law_manager->replaces(party_policy->group.get_identifier()))) {
 				modifier_sum.add_modifier(*party_policy);
 			}
 		}
@@ -1900,8 +1987,18 @@ void CountryInstance::update_modifier_sum(Date today, StaticModifierCache const&
 	for (Reform const* reform : reforms.get_values()) {
 		// The country's reforms here could be null as they're stored in an FixedVector which has
 		// values for every ReformGroup regardless of whether or not they have a reform set.
-		if (reform != nullptr) {
+		if (reform != nullptr && (law_manager == nullptr || !law_manager->replaces(reform->group.get_identifier()))) {
 			modifier_sum.add_modifier(*reform);
+		}
+	}
+
+	// The laws in force and what they take over from Vic2
+	for (LawVariant const* law : laws) {
+		if (law != nullptr) {
+			modifier_sum.add_modifier(*law);
+			for (Modifier const* inherited : law->inherited_modifiers) {
+				modifier_sum.add_modifier(*inherited);
+			}
 		}
 	}
 
@@ -3279,6 +3376,10 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 	const std::lock_guard<spin_mutex> lock_guard { taxable_income_mutex };
 	taxable_income_by_pop_type.at(pop_type) += gross_income;
 	cash_stockpile += paid_as_tax;
+	// The corruption of the laws (hereditary bureaucrats keep 5 % of the taxes): owed to the bureaucrats of the country, paid to them once a month
+	if (const fixed_point_t corruption = get_law_effect(law_effect_t::corruption); corruption > fixed_point_t::_0) {
+		corruption_owed += paid_as_tax * corruption;
+	}
 	actual_tax_income += paid_as_tax;
 	MoneyLedger::record(MoneyLedger::label_t::tax_income, paid_as_tax);
 }
@@ -3344,8 +3445,9 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 	const fixed_point_t corruption_cost_multiplier_copy = corruption_cost_multiplier.get_untracked();
 
 	if (actual_administration_budget > 0) {
+		const fixed_point_t administration_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::bureaucrat_wage));
 		const fixed_point_t administration_salary = fp::mul_div(
-			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked()),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked() * administration_pay),
 			actual_administration_budget,
 			projected_administration_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -3368,8 +3470,9 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 	}
 
 	if (actual_military_budget > 0) {
+		const fixed_point_t military_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::military_wage));
 		const fixed_point_t military_salary = fp::mul_div(
-			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked()),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked() * military_pay),
 			actual_military_budget,
 			projected_military_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;

@@ -735,6 +735,8 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 					instance_manager.force_tick_and_update();
 					++d;
 				}
+				fmt::println("NAVY carrier after {} days: at {}, moving {}, in combat {}, army at {}, on board {}", d, carrier->get_location().get_identifier(),
+					carrier->is_moving(), carrier->is_in_combat(), army->get_location().get_identifier(), army->get_transport_navy() == carrier);
 				check(&army->get_location() == &sea, "the army travels with the ships");
 				carrier->set_in_combat(false);
 				check(carrier->land_army(*army, dock), "land_army on the coast");
@@ -1579,6 +1581,17 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 				static_cast<double>(country.get_tax_rate_slider_value_by_strata(strata).get_value_untracked()),
 				needs[1] / people, needs[2] / people, needs[3] / people);
 		}
+		// The laws in force (COUNTRY_LAWS) and the sum of their effects of OpenVic
+		std::string laws_text, effects_text;
+		for (LawVariant const* law : country.get_laws()) {
+			laws_text += fmt::format(" {}", law != nullptr ? law->get_identifier() : std::string_view { "-" });
+		}
+		for (std::size_t effect = 0; effect < LAW_EFFECT_COUNT; ++effect) {
+			if (country.get_law_effects()[effect] != fixed_point_t::_0) {
+				effects_text += fmt::format(" {}={:.2f}", law_effect_name(static_cast<law_effect_t>(effect)), static_cast<double>(country.get_law_effects()[effect]));
+			}
+		}
+		fmt::println("COUNTRY_LAWS {} {}{} | effects{}", label, country.get_identifier(), laws_text, effects_text.empty() ? std::string { " -" } : effects_text);
 		fmt::println("COUNTRY_TAX {} {} civilised={} tariff={:.2f} (collected {:.3f}) tax_eff={:.2f}{}", label, country.get_identifier(),
 			country.is_civilised() ? 1 : 0, static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
 			static_cast<double>(country.effective_tariff_rate.get_untracked()), static_cast<double>(country.get_tax_efficiency_untracked()), taxes);

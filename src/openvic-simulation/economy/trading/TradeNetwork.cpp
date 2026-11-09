@@ -268,9 +268,17 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 	const fixed_point_t max_route_cost = defines.max_route_cost.fixed();
 	const fixed_point_t transit_cost = defines.transit_cost_per_hop.fixed();
 	const double map_width = std::max<double>(1.0, static_cast<double>(instance_manager.definition_manager.get_map_definition().get_width()));
+	// Isolationism (the laws): no link with any other country, no transit through it
+	isolated.assign(n, 0);
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		const std::size_t index = type_safe::get(country.index);
+		if (index < country_count && country.get_law_effect(law_effect_t::no_foreign_trade) > fixed_point_t::_0) {
+			isolated[index] = 1;
+		}
+	}
 	for (std::size_t a = 0; a < country_count; ++a) {
 		for (std::size_t b = 0; b < country_count; ++b) {
-			if (a == b) {
+			if (a == b || isolated[a] != 0 || isolated[b] != 0) {
 				continue;
 			}
 			route_t& link = direct[a * n + b];
@@ -378,6 +386,9 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 	// ---- The outside: provinces that nobody owns trade with everyone at a fixed price, without a limit
 	const std::size_t outside = country_count;
 	for (std::size_t c = 0; c < country_count; ++c) {
+		if (isolated[c] != 0) {
+			continue;
+		}
 		route_t outside_route;
 		outside_route.cost = defines.outside_cost.fixed();
 		outside_route.capacity_value = -1;
