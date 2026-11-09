@@ -203,6 +203,8 @@ namespace OpenVic {
 		std::uint32_t PROPERTY_RW(sea_transfer_days_left, 0);
 		// The navy that carries the army on its way by sea (SEA_TRANSFER_NEEDS_SHIPS, version 80); 0: the army sails alone
 		unique_id_t PROPERTY(sea_transfer_navy_id, 0);
+		// A landing on a coast (version 81): the ships sail to this sea and put the army ashore in sea_transfer_to; nullptr: to a port
+		ProvinceInstance* PROPERTY_PTR(sea_transfer_landing_sea, nullptr);
 
 	public:
 		[[nodiscard]] bool is_at_sea() const {
@@ -220,8 +222,12 @@ namespace OpenVic {
 			sea_transfer_days_total = days;
 			sea_transfer_days_left = 0;
 		}
+		void set_sea_transfer_landing_sea(ProvinceInstance* sea) {
+			sea_transfer_landing_sea = sea;
+		}
 		void clear_sea_transfer() {
 			sea_transfer_navy_id = 0;
+			sea_transfer_landing_sea = nullptr;
 			sea_transfer_from = nullptr;
 			sea_transfer_to = nullptr;
 			sea_transfer_destination = nullptr;
@@ -486,6 +492,9 @@ namespace OpenVic {
 		// The navy waits for or carries an army on its way by sea: the AI and the field marshals leave it alone
 		[[nodiscard]] bool is_navy_booked(NavyInstance const& navy) const;
 		void update_ship_transfer(ArmyInstance& army, MapInstance& map_instance);
+		// A landing on a coast (version 81): the army goes to the nearest port it controls, a navy with room for it takes it to the sea next to the
+		// coast and puts it ashore there (the penalty of a landing). False: no port, no sea next to the coast it reaches, no ships
+		bool order_sea_landing(ArmyInstance& army, ProvinceInstance& coast, MapInstance& map_instance);
 		// Set while a way by sea is planned
 		bool planning_sea_transfer = false;
 		// Every day: an army that reached the port of its way by sea sails, one at sea counts its days and lands, then goes on

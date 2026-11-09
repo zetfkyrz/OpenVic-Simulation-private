@@ -525,6 +525,8 @@ namespace OpenVic {
 		bool start_supply_stockpile_given = false;
 		// The canned food of yesterday that the grain stood in for (CANNED_FOOD_GRAIN_SUBSTITUTE), for the interface
 		fixed_point_t PROPERTY(canned_food_from_grain_yesterday);
+		// The ship the AI saves the goods for (its transports, version 81): the government buys its build cost for the stockpile; nullptr: none
+		ShipType const* PROPERTY_RW(ai_ship_order, nullptr);
 		// The rifles of the supply with supply:rifle_1_first yesterday: the rifle_0 of the regiments with muskets that rifle_1 stood in for, the rifle_1 of
 		// the regiments with rifle_1 that rifle_0 stood in for (they lose a share of their attack and defence: RIFLE_0_FOR_RIFLE_1_PENALTY)
 		fixed_point_t PROPERTY(rifle_1_for_rifle_0_yesterday);

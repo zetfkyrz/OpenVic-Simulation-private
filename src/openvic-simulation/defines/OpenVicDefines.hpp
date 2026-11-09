@@ -152,7 +152,20 @@ namespace OpenVic {
 	/* the poor is never raised and goes down by the step every month while their everyday needs are under BUDGET_POOR_NEEDS_MIN (0 = off) */ \
 	RATE(BUDGET_MIN_TARIFF, budget_min_tariff, Rate(1, 100), 0, 1) \
 	RATE(BUDGET_MAX_TARIFF, budget_max_tariff, Rate(50, 100), 0, 1) \
-	RATE(BUDGET_POOR_NEEDS_MIN, budget_poor_needs_min, Rate(50, 100), 0, 1)
+	RATE(BUDGET_POOR_NEEDS_MIN, budget_poor_needs_min, Rate(50, 100), 0, 1) \
+	/* The transports of the AI (version 81): a country with land the land of its capital does not reach (an island, a colony, a province across */ \
+	/* the sea) or at war with a country it reaches only by sea keeps ships with room for AI_TRANSPORT_REGIMENT_SHARE of its regiments, at least */ \
+	/* AI_TRANSPORT_MIN_REGIMENTS (the transports of the data: the one with the most room it may build). The government buys the goods of one ship, */ \
+	/* the ship is laid down in its port with the most transports (else the best naval base reached from the capital), one a month. 0 = off */ \
+	INT(AI_TRANSPORT_ENABLED, ai_transport_enabled, 1, 0, 1) \
+	RATE(AI_TRANSPORT_REGIMENT_SHARE, ai_transport_regiment_share, Rate(25, 100), 0, 1) \
+	INT(AI_TRANSPORT_MIN_REGIMENTS, ai_transport_min_regiments, 2, 0, 1000) \
+	/* The landings of the AI (version 81): an AI country at war with an enemy it reaches only by sea, with at least AI_LANDING_MIN_RATIO of its */ \
+	/* regiments, lands an army with at least AI_LANDING_FORCE_RATIO of the regiments of the enemy in and next to the coast (a port first, the capital */ \
+	/* of the enemy first of all) once a month while no landing of it is under way. 0 = off */ \
+	INT(AI_LANDING_ENABLED, ai_landing_enabled, 1, 0, 1) \
+	RATE(AI_LANDING_MIN_RATIO, ai_landing_min_ratio, Rate(100, 100), 0, 100) \
+	RATE(AI_LANDING_FORCE_RATIO, ai_landing_force_ratio, Rate(150, 100), 0, 100)
 #define OV_POPULATION_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(GROWTH_BREAKEVEN_LIFE_NEEDS, growth_breakeven_life_needs, Rate(20, 100), 0, 1) \
 	/* The life needs at and above which a pop grows by the whole base of the data (between the breakeven and this it grows with the life needs) */ \

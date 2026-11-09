@@ -3,6 +3,8 @@
 #include "openvic-simulation/military/Unlocks.hpp"
 
 #include <algorithm>
+#include <deque>
+#include <limits>
 #include <unordered_set>
 #include <vector>
 
@@ -274,6 +276,289 @@ namespace {
 		}
 	}
 
+	// The transports of the AI (version 81, docs/WAR_ASSUMPTIONS.md, "Морская перевозка армий"): the room for AI_TRANSPORT_REGIMENT_SHARE of the regiments
+	// when the country has land across the sea or an enemy it reaches only by sea; one ship a month, its goods bought for the stockpile first
+	void build_transports(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+		if (ai.ai_transport_enabled == 0 || country.get_capital() == nullptr) {
+			country.set_ai_ship_order(nullptr);
+			return;
+		}
+		MapInstance& map_instance = instance_manager.get_map_instance();
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		// The land of the country the capital reaches over the land and the straits
+		std::vector<std::uint8_t> reached(map_instance.get_province_instances().size(), 0);
+		std::deque<ProvinceInstance const*> queue { country.get_capital() };
+		reached[type_safe::get(country.get_capital()->index)] = 1;
+		while (!queue.empty()) {
+			ProvinceInstance const* const current = queue.front();
+			queue.pop_front();
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				if (adjacency.get_to().is_water() || (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND
+					&& adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::STRAIT)) {
+					continue;
+				}
+				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (reached[type_safe::get(next.index)] == 0 && next.get_owner() == &country) {
+					reached[type_safe::get(next.index)] = 1;
+					queue.push_back(&next);
+				}
+			}
+		}
+		bool needs_sea = false;
+		for (ProvinceInstance const* province : country.get_owned_provinces()) {
+			needs_sea |= reached[type_safe::get(province->index)] == 0;
+		}
+		// An enemy at war with no land next to the land of the country reached from the capital: it is reached only by sea
+		if (!needs_sea && country.is_at_war()) {
+			for (CountryInstance const& enemy : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (!enemy.exists() || !country.is_at_war_with(enemy)) {
+					continue;
+				}
+				bool next_to = false;
+				for (ProvinceInstance const* province : enemy.get_owned_provinces()) {
+					for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+						if (!adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
+							|| adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT)
+							&& reached[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)] != 0) {
+							next_to = true;
+							break;
+						}
+					}
+					if (next_to) {
+						break;
+					}
+				}
+				needs_sea |= !next_to;
+			}
+		}
+		if (!needs_sea) {
+			country.set_ai_ship_order(nullptr);
+			return;
+		}
+		// The room it has (the ships and the ships laid down) and the room it wants
+		std::size_t regiments = 0;
+		for (ArmyInstance const& army : country.get_armies()) {
+			regiments += army.get_unit_count();
+		}
+		std::size_t room = 0;
+		NavyInstance* transport_fleet = nullptr;
+		std::size_t transport_fleet_room = 0;
+		for (NavyInstance& navy : country.get_navies()) {
+			const std::size_t navy_room = navy.get_transport_capacity();
+			room += navy_room;
+			if (navy_room > transport_fleet_room && !navy.get_location().province_definition.is_water()) {
+				transport_fleet = &navy;
+				transport_fleet_room = navy_room;
+			}
+		}
+		for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+			if (order.country == &country && order.ship_type != nullptr && order.ship_type->transport_capacity > 0) {
+				room += static_cast<std::size_t>(order.ship_type->transport_capacity);
+			}
+		}
+		const std::size_t wanted = std::max(static_cast<std::size_t>(ai.ai_transport_min_regiments),
+			static_cast<std::size_t>(ai.ai_transport_regiment_share.of(fixed_point_t(static_cast<std::int32_t>(regiments))).ceil<std::int32_t>()));
+		if (room >= wanted) {
+			country.set_ai_ship_order(nullptr);
+			return;
+		}
+		// The transport with the most room the country may build (not a warship)
+		ShipType const* best = nullptr;
+		for (ShipType const& ship_type : instance_manager.definition_manager.get_military_manager().get_unit_type_manager().get_ship_types()) {
+			if (ship_type.is_transport && ship_type.transport_capacity > 0 && country.is_unit_type_unlocked(ship_type)
+				&& (best == nullptr || ship_type.transport_capacity > best->transport_capacity)) {
+				best = &ship_type;
+			}
+		}
+		if (best == nullptr) {
+			country.set_ai_ship_order(nullptr);
+			return;
+		}
+		country.set_ai_ship_order(best);
+		// The port: where its biggest transport fleet lies, else the best naval base the capital reaches; the goods must be in the stockpile
+		ProvinceInstance* port = nullptr;
+		if (transport_fleet != nullptr && unit_manager.get_ship_block_reason(country, *best, transport_fleet->get_location()).empty()) {
+			port = &transport_fleet->get_location();
+		}
+		if (port == nullptr) {
+			std::int32_t best_level = -1;
+			for (ProvinceInstance* province : country.get_owned_provinces()) {
+				if (!province->province_definition.has_port() || !unit_manager.get_ship_block_reason(country, *best, *province).empty()) {
+					continue;
+				}
+				std::int32_t level = reached[type_safe::get(province->index)] != 0 ? 1000 : 0;
+				for (BuildingInstance const& building : province->get_buildings()) {
+					if (building.building_type.get_identifier() == "naval_base") {
+						level += type_safe::get(building.get_level());
+					}
+				}
+				if (level > best_level) {
+					best_level = level;
+					port = province;
+				}
+			}
+		}
+		if (port != nullptr) {
+			SPDLOG_INFO("AI: {} lays down a {} in {} (room {} of {})", country.get_identifier(), best->get_identifier(), port->get_identifier(), room, wanted);
+			if (instance_manager.run_game_action_now<start_ship_building_argument_t>(best->index, port->index)) {
+				country.set_ai_ship_order(nullptr);
+			}
+		}
+	}
+
+	// The landings of the AI (version 81): an enemy it reaches only by sea gets an army on its coast, once a month while no landing is under way
+	void ai_landings(InstanceManager& instance_manager, CountryInstance& country) {
+		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
+		if (ai.ai_landing_enabled == 0 || country.get_capital() == nullptr || !country.is_at_war()) {
+			return;
+		}
+		MapInstance& map_instance = instance_manager.get_map_instance();
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		// A landing under way: nothing new
+		for (ArmyInstance const& army : country.get_armies()) {
+			if (army.get_sea_transfer_landing_sea() != nullptr) {
+				return;
+			}
+		}
+		// The land the country holds that the capital reaches over the land and the straits
+		std::vector<std::uint8_t> reached(map_instance.get_province_instances().size(), 0);
+		std::deque<ProvinceInstance const*> queue { country.get_capital() };
+		reached[type_safe::get(country.get_capital()->index)] = 1;
+		while (!queue.empty()) {
+			ProvinceInstance const* const current = queue.front();
+			queue.pop_front();
+			for (ProvinceDefinition::adjacency_t const& adjacency : current->province_definition.get_adjacencies()) {
+				if (adjacency.get_to().is_water() || (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND
+					&& adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::STRAIT)) {
+					continue;
+				}
+				ProvinceInstance const& next = map_instance.get_province_instance_by_definition(adjacency.get_to());
+				if (reached[type_safe::get(next.index)] == 0 && next.get_controller() == &country) {
+					reached[type_safe::get(next.index)] = 1;
+					queue.push_back(&next);
+				}
+			}
+		}
+		const auto regiments_in = [&country](ProvinceInstance const& province) -> std::size_t {
+			std::size_t count = 0;
+			for (ArmyInstance const& army : province.get_armies()) {
+				count += country.is_at_war_with(army.get_country()) ? army.get_unit_count() : 0;
+			}
+			return count;
+		};
+		std::size_t own_regiments = 0;
+		for (ArmyInstance const& army : country.get_armies()) {
+			own_regiments += army.get_unit_count();
+		}
+		for (CountryInstance const& enemy : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (!enemy.exists() || !country.is_at_war_with(enemy) || enemy.get_controlled_provinces().empty()) {
+				continue;
+			}
+			// Reached over the land (from the land the capital reaches): no landing
+			bool by_land = false;
+			for (ProvinceInstance const* province : enemy.get_controlled_provinces()) {
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					if (!adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
+						|| adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::STRAIT)
+						&& reached[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)] != 0) {
+						by_land = true;
+					}
+				}
+			}
+			std::size_t enemy_regiments = 0;
+			for (ArmyInstance const& army : enemy.get_armies()) {
+				enemy_regiments += army.get_unit_count();
+			}
+			if (by_land || own_regiments * Rate::DENOMINATOR < enemy_regiments * ai.ai_landing_min_ratio.numerator) {
+				continue;
+			}
+			// The coast: a province of the enemy by the sea; its capital first, then a port, then the fewest defenders (in and next to it)
+			ProvinceInstance* coast = nullptr;
+			std::int64_t best_score = std::numeric_limits<std::int64_t>::max();
+			std::size_t coast_defenders = 0;
+			for (ProvinceInstance* province : enemy.get_controlled_provinces()) {
+				bool by_sea = false;
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					by_sea |= adjacency.get_to().is_water();
+				}
+				if (!by_sea) {
+					continue;
+				}
+				std::size_t defenders = regiments_in(*province);
+				for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+					if (!adjacency.get_to().is_water()) {
+						defenders += regiments_in(map_instance.get_province_instance_by_definition(adjacency.get_to()));
+					}
+				}
+				const std::int64_t score = static_cast<std::int64_t>(defenders) * 4 - (province == enemy.get_capital() ? 2 : 0)
+					- (province->province_definition.has_port() ? 1 : 0);
+				if (score < best_score) {
+					best_score = score;
+					coast = province;
+					coast_defenders = defenders;
+				}
+			}
+			if (coast == nullptr) {
+				continue;
+			}
+			// The army: at home, free, big enough for the defenders; the biggest that some navy has room for
+			const std::size_t needed = std::max<std::size_t>(1, (coast_defenders * ai.ai_landing_force_ratio.numerator + Rate::DENOMINATOR - 1) / Rate::DENOMINATOR);
+			std::size_t most_room = 0;
+			for (NavyInstance const& navy : country.get_navies()) {
+				if (!navy.empty() && !navy.is_in_combat() && navy.get_carried_armies().empty() && !unit_manager.is_navy_booked(navy)) {
+					most_room = std::max(most_room, navy.get_transport_capacity());
+				}
+			}
+			ArmyInstance* chosen = nullptr;
+			for (ArmyInstance& army : country.get_armies()) {
+				const std::size_t size = army.get_unit_count();
+				if (army.empty() || army.is_moving() || army.is_in_combat() || army.has_sea_transfer() || army.get_transport_navy() != nullptr
+					|| reached[type_safe::get(army.get_location().index)] == 0 || size < needed || size > most_room) {
+					continue;
+				}
+				if (chosen == nullptr || size > chosen->get_unit_count()) {
+					chosen = &army;
+				}
+			}
+			// No army fits the ships: regiments of the biggest army at home make a landing force of the room of the ships (at least the needed ones)
+			if (chosen == nullptr && most_room >= needed) {
+				ArmyInstance* biggest = nullptr;
+				for (ArmyInstance& army : country.get_armies()) {
+					if (!army.empty() && !army.is_moving() && !army.is_in_combat() && !army.has_sea_transfer() && army.get_transport_navy() == nullptr
+						&& reached[type_safe::get(army.get_location().index)] != 0 && army.get_unit_count() > needed
+						&& (biggest == nullptr || army.get_unit_count() > biggest->get_unit_count())) {
+						biggest = &army;
+					}
+				}
+				if (biggest != nullptr) {
+					const std::size_t take = std::min(most_room, biggest->get_unit_count() - 1);
+					ArmyInstance* force = nullptr;
+					for (std::size_t taken = 0; taken < take && biggest->get_unit_count() > 1; ++taken) {
+						RegimentInstance& regiment = biggest->get_regiment_instances().back().get();
+						ArmyInstance* const piece = unit_manager.split_regiment(*biggest, regiment);
+						if (piece == nullptr) {
+							break;
+						}
+						if (force == nullptr) {
+							force = piece;
+						} else {
+							unit_manager.merge_armies(*force, *piece);
+						}
+					}
+					if (force != nullptr && force->get_unit_count() >= needed) {
+						chosen = force;
+					}
+				}
+			}
+			if (chosen != nullptr && unit_manager.order_sea_landing(*chosen, *coast, map_instance)) {
+				SPDLOG_INFO("AI: {} lands {} regiments in {} of {} ({} defend it)", country.get_identifier(), chosen->get_unit_count(), coast->get_identifier(),
+					enemy.get_identifier(), coast_defenders);
+				return;
+			}
+		}
+	}
+
 	void colonise(InstanceManager& instance_manager, CountryInstance& country) {
 		OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 		ColonisationManager& colonisation = instance_manager.get_colonisation_manager();
@@ -443,7 +728,13 @@ namespace {
 		};
 		std::vector<NavyInstance*> navies;
 		for (NavyInstance& navy : country.get_navies()) {
-			if (!navy.empty() && !navy.is_moving() && !navy.is_in_combat() && navy.get_carried_armies().empty() && !unit_manager.is_navy_booked(navy)) {
+			bool has_warship = false;
+			for (ShipInstance const& ship : navy.get_ship_instances()) {
+				has_warship |= !ship.get_ship_type().is_transport;
+			}
+			// A fleet of transports only stays in its port for the ways by sea
+			if (!navy.empty() && !navy.is_moving() && !navy.is_in_combat() && navy.get_carried_armies().empty() && !unit_manager.is_navy_booked(navy)
+				&& has_warship) {
 				navies.push_back(&navy);
 			}
 		}
@@ -732,12 +1023,14 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 
 		balance_budget(instance_manager, country);
 		build_factory(instance_manager, country);
+		build_transports(instance_manager, country);
 		choose_ai_production_types(instance_manager, country);
 		colonise(instance_manager, country);
 
 		if (country.is_at_war()) {
 			war_allies(instance_manager, country);
 			navies_at_war(instance_manager, country);
+			ai_landings(instance_manager, country);
 		}
 		if (country.is_at_war()) {
 			mobilise_if_weaker(instance_manager, country);

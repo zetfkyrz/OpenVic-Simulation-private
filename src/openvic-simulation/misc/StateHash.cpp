@@ -101,6 +101,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 				hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_destination()->index)));
 				hasher.add(static_cast<std::uint64_t>(army.get_sea_transfer_days_left()) * 1000 + army.get_sea_transfer_days_total());
 				hasher.add(static_cast<std::uint64_t>(army.get_sea_transfer_navy_id()));
+				if (army.get_sea_transfer_landing_sea() != nullptr) {
+					hasher.add(static_cast<std::uint64_t>(type_safe::get(army.get_sea_transfer_landing_sea()->index)) + 0x6c616e64ULL);
+				}
 			}
 			hasher.add(army.get_supply_leader_bonus());
 			for (DivisionInstance const& division : army.get_divisions()) {

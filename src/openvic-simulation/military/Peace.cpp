@@ -248,6 +248,9 @@ void WarManager::apply_peace_terms(
 	if (winners.empty() || losers.empty()) {
 		return;
 	}
+	SPDLOG_INFO("Peace in war {}: {} wins against {}, {} states, attackers {:.1f} defenders {:.1f}{}", war.id, winners.front()->get_identifier(),
+		losers.front()->get_identifier(), terms.states.size(), static_cast<double>(war.attacker_score), static_cast<double>(war.defender_score),
+		terms.states.empty() ? " (white peace)" : "");
 
 	std::unordered_set<CountryInstance*> changed_countries;
 	for (ProvinceInstance const* state_province : terms.states) {

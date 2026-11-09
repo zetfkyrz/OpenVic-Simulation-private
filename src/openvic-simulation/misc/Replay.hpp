@@ -147,7 +147,10 @@ namespace OpenVic {
 		// 80: the ships carry the regiments of ov_units/transport_capacity.txt (a clipper 1, a steamer and an ironclad 2, the others none;
 		//     TRANSPORT_UNLIMITED 0); the way by sea of an army needs a navy with room for it (SEA_TRANSFER_NEEDS_SHIPS): it comes to the port, takes the
 		//     army on board, sails to the landing port and puts it ashore
-		inline constexpr int SIMULATION_VERSION = 80;
+		// 81: the AI keeps transports for AI_TRANSPORT_REGIMENT_SHARE of its regiments when it has land across the sea or an enemy it reaches only by
+		//     sea (AI_TRANSPORT_*); a fleet of transports only stays in its port; an army can land on a coast from the ships (order_sea_landing), the AI
+		//     lands on an enemy it reaches only by sea (AI_LANDING_*); the ports the country took supply by the sea and take the ships of its armies
+		inline constexpr int SIMULATION_VERSION = 81;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

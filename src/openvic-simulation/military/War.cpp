@@ -1502,6 +1502,15 @@ bool WarManager::is_supply_reached(CountryInstance const& country, ProvinceInsta
 	return index < it->second.size() && it->second[index] != 0;
 }
 
+bool WarManager::is_home_land(CountryInstance const& country, ProvinceInstance const& province) const {
+	const auto it = supply_reach.find(&country);
+	if (it == supply_reach.end()) {
+		return true;
+	}
+	const std::size_t index = type_safe::get(province.index);
+	return index < it->second.size() && it->second[index] == 1;
+}
+
 void WarManager::update_encirclements(InstanceManager& instance_manager) {
 	MapInstance& map_instance = instance_manager.get_map_instance();
 	CountryInstanceManager const& countries = instance_manager.get_country_instance_manager();
@@ -1574,12 +1583,12 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 				break;
 			}
 		}
-		for (ProvinceInstance* province : country.get_owned_provinces()) {
-			if (province->get_controller() != &country || !province->province_definition.has_port() || is_blockaded(*province)
-				|| reach[type_safe::get(province->index)] != 0) {
+		// (the ports it took from the enemy too: a landing is supplied through the port it took, version 81)
+		for (ProvinceInstance* province : country.get_controlled_provinces()) {
+			if (!province->province_definition.has_port() || is_blockaded(*province) || reach[type_safe::get(province->index)] != 0) {
 				continue;
 			}
-			if (home_port || has_naval_base(*province)) {
+			if (home_port || (province->get_owner() == &country && has_naval_base(*province))) {
 				add_source(*province, 2);
 			}
 		}
@@ -1592,12 +1601,23 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 				return 1;
 			}
 			const std::uint8_t here = reach[type_safe::get(at.index)];
-			if (here != 0 || is_supply_held(at, friends)) {
+			if (here != 0) {
 				return here;
 			}
+			// Held land the supply does not reach: only over the beach (below); the land of the enemy: also next to the land reached
+			const bool held = is_supply_held(at, friends);
 			std::uint8_t best = 0;
+			bool free_sea = false;
 			for (ProvinceDefinition::adjacency_t const& adjacency : at.province_definition.get_adjacencies()) {
-				if (!connects(adjacency)) {
+				if (adjacency.get_to().is_water()) {
+					// A sea next to the army with no navy of an enemy at war (the supply over the beach of a landing, version 81)
+					ProvinceInstance const& sea = map_instance.get_province_instance_by_definition(adjacency.get_to());
+					free_sea |= std::none_of(sea.get_navies().begin(), sea.get_navies().end(), [&country](NavyInstance const& navy) -> bool {
+						return !navy.empty() && navy.get_country().is_at_war_with(country);
+					});
+					continue;
+				}
+				if (held || !connects(adjacency)) {
 					continue;
 				}
 				const std::uint8_t next = reach[type_safe::get(map_instance.get_province_instance_by_definition(adjacency.get_to()).index)];
@@ -1605,6 +1625,10 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 					return 1;
 				}
 				best = std::max(best, next);
+			}
+			// An army on the coast of the enemy (a landing) is supplied over the beach by the sea when the country has a free port of its own
+			if (best == 0 && free_sea && home_port) {
+				return 2;
 			}
 			return best;
 		};

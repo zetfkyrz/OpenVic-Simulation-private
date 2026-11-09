@@ -810,7 +810,9 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 					consumed_quantity, \
 					quantity_bought \
 				); \
-				pop.add_##need_category##_needs_expense(expense); \
+				if (expense > 0) { \
+					pop.add_##need_category##_needs_expense(expense); \
+				} \
 			} \
 		}
 

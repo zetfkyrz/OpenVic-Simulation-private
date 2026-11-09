@@ -428,6 +428,10 @@ namespace OpenVic {
 
 		// Is the province reached from a source of the supply of the country (the last update of the encirclements; true for a country at peace)
 		[[nodiscard]] bool is_supply_reached(CountryInstance const& country, ProvinceInstance const& province) const;
+		// An army the automatic plan of the AI may give to a front: on the home land, or a garrison across the sea for a front of its continent
+		[[nodiscard]] bool may_join_front(CountryInstance const& country, ArmyInstance const& army, Front const& front) const;
+		// Is the province reached over the land from the capital (not by the sea; true for a country at peace)
+		[[nodiscard]] bool is_home_land(CountryInstance const& country, ProvinceInstance const& province) const;
 		bool is_blockaded(ProvinceInstance const& port) const {
 			return blockaded_ports.contains(&port);
 		}

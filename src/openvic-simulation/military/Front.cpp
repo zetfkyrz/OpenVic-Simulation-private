@@ -1317,7 +1317,12 @@ bool WarManager::update_ai_marshals(InstanceManager& instance_manager, CountryIn
 	std::size_t next = 0;
 	for (ArmyInstance& army : country.get_armies()) {
 		if (army.get_army_group_id() == 0 && army.get_parent_army_id() == 0 && army.get_transport_navy() == nullptr && !army.empty()) {
-			set_army_group(country, army, group_ids[next++ % group_ids.size()], max_attached);
+			const std::uint32_t group_id = group_ids[next++ % group_ids.size()];
+			// A garrison across the sea joins only a group whose front is on its continent (section 6, the ways by sea)
+			Front const* const group_front = find_front_of_group(country, group_id);
+			if (group_front == nullptr || may_join_front(country, army, *group_front)) {
+				set_army_group(country, army, group_id, max_attached);
+			}
 		}
 	}
 	for (const std::uint32_t group_id : group_ids) {
@@ -1487,12 +1492,31 @@ void WarManager::update_auto_plan(InstanceManager& instance_manager) {
 				}
 			}
 			if (!on_front) {
-				if (Front* const target = find_front(own_fronts[next_front++ % own_fronts.size()]); target != nullptr) {
+				if (Front* const target = find_front(own_fronts[next_front++ % own_fronts.size()]); target != nullptr
+					&& may_join_front(country, army, *target)) {
 					target->army_ids.push_back(army.unique_id);
 				}
 			}
 		}
 	}
+}
+
+bool WarManager::may_join_front(CountryInstance const& country, ArmyInstance const& army, Front const& front) const {
+	// An army on the land the capital reaches over the land goes anywhere (by sea when it has to); a garrison across the sea only to a front of its
+	// own continent
+	// (the first days of a war, before the supply was worked out: the continent of the capital)
+	const bool reach_known = supply_reach.contains(&country);
+	if (reach_known ? is_home_land(country, army.get_location())
+		: country.get_capital() == nullptr
+			|| country.get_capital()->province_definition.get_continent() == army.get_location().province_definition.get_continent()) {
+		return true;
+	}
+	for (ProvinceInstance const* province : front.provinces) {
+		if (province->province_definition.get_continent() == army.get_location().province_definition.get_continent()) {
+			return true;
+		}
+	}
+	return false;
 }
 
 void WarManager::join_group_armies(Front& front) {
@@ -1723,7 +1747,7 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 	const std::int64_t threshold = integrity == 0 ? std::numeric_limits<std::int64_t>::max() : integrity == 1 ? defines.front_rebalance_threshold : 1;
 	std::vector<std::size_t> free_divisions;
 	for (std::size_t index = 0; index < armies.size(); ++index) {
-		if (place[index] == province_count && !armies[index]->is_moving() && !armies[index]->is_in_combat()) {
+		if (place[index] == province_count && !armies[index]->is_moving() && !armies[index]->is_in_combat() && !armies[index]->has_sea_transfer()) {
 			free_divisions.push_back(index);
 		}
 	}
@@ -1737,7 +1761,7 @@ void WarManager::distribute_divisions(InstanceManager& instance_manager, Front& 
 		}
 		// The last ones of the line go first (the order of the armies: the same in every run)
 		for (std::size_t index = armies.size(); index-- > 0 && placed[province] > shares[province];) {
-			if (place[index] == province && !armies[index]->is_moving() && !armies[index]->is_in_combat()) {
+			if (place[index] == province && !armies[index]->is_moving() && !armies[index]->is_in_combat() && !armies[index]->has_sea_transfer()) {
 				placed[province]--;
 				place[index] = province_count;
 				free_divisions.push_back(index);
