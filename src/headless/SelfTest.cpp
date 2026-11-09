@@ -5660,6 +5660,31 @@ namespace {
 			"canned food and grain: without canned food the stockpile gives grain, two for a can",
 			fmt::format("cans due {:.3f}, cans from grain {:.3f}, grain used {:.3f} (its own need {:.3f})", static_cast<double>(cans_due),
 				static_cast<double>(from_grain), static_cast<double>(grain_used), static_cast<double>(grain_due)));
+
+		// The muskets (rifle_0) the stockpile lacks are replaced by rifle_1 only with the unlock of the post-Napoleonic tactics
+		GoodDefinition const* const musket = goods.get_good_definition_by_identifier("rifle_0");
+		GoodDefinition const* const rifle = goods.get_good_definition_by_identifier("rifle_1");
+		if (musket != nullptr && rifle != nullptr) {
+			const bool had_unlock = country->has_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
+			country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
+			country->get_good_data(*musket).stockpile_amount = fixed_point_t::_0;
+			country->get_good_data(*rifle).stockpile_amount += fixed_point_t(1000);
+			im.force_tick_and_update();
+			const fixed_point_t without_unlock = country->get_rifle_1_for_rifle_0_yesterday();
+			country->grant_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
+			country->get_good_data(*musket).stockpile_amount = fixed_point_t::_0;
+			country->get_good_data(*rifle).stockpile_amount += fixed_point_t(1000);
+			im.force_tick_and_update();
+			const fixed_point_t with_unlock = country->get_rifle_1_for_rifle_0_yesterday();
+			const fixed_point_t muskets_due = country->get_good_data(*musket).army_due;
+			r.check(without_unlock == fixed_point_t::_0 && with_unlock > fixed_point_t::_0 && with_unlock <= muskets_due + fixed_point_t::_0_01,
+				"muskets and rifles: the missing rifle_0 of the supply is replaced by rifle_1 only with supply:rifle_1_for_rifle_0",
+				fmt::format("without {:.4f}, with {:.4f}, muskets due {:.4f}", static_cast<double>(without_unlock), static_cast<double>(with_unlock),
+					static_cast<double>(muskets_due)));
+			if (!had_unlock) {
+				country->revoke_unlock(UNLOCK_SUPPLY_RIFLE_1_FOR_RIFLE_0);
+			}
+		}
 		if (UnitInstanceGroup* const made = unit_manager.get_unit_instance_group_by_unique_id(army_id)) {
 			unit_manager.destroy_group(*made);
 		}

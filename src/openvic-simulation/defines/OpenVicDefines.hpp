@@ -160,6 +160,10 @@ namespace OpenVic {
 	RATE(PROMOTION_PER_MONTH, promotion_per_month, Rate(4, 100), 0, 1) \
 	RATE(CRAFTSMEN_DEMOTION_UNEMPLOYMENT, craftsmen_demotion_unemployment, Rate(1, 4), 0, 1) \
 	RATE(PEASANTS_PROMOTION_UNEMPLOYMENT, peasants_promotion_unemployment, Rate(15, 100), 0, 1) \
+	/* The workers of the factories (version 76): while the open factories of a state have free jobs and pay a worker at least what the RGO of the */ \
+	/* province pays (a state whose factories have nobody yet counts as paying more), this share of the employed farmers and labourers becomes */ \
+	/* craftsmen every month (the unemployed: PROMOTION_PER_MONTH as before). Before, only the unemployed did, and there are almost none */ \
+	RATE(FACTORY_JOB_PROMOTION_SHARE, factory_job_promotion_share, Rate(5, 1000), 0, 1) \
 	RATE(MIGRATION_PER_MONTH, migration_per_month, Rate(3, 1000), 0, 1) \
 	RATE(MIGRATION_SCORE_MARGIN, migration_score_margin, Rate(8, 100), 0, 1) \
 	RATE(MIGRATION_UNEMPLOYMENT_THRESHOLD, migration_unemployment_threshold, Rate(1, 5), 0, 1) \

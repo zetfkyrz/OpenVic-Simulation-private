@@ -133,7 +133,9 @@ namespace OpenVic {
 		// 74: the artisans make rifle_1 (and rifle_2 with rifle_4: ARTISAN_WEAPON_FREE_TIER, ARTISAN_WEAPON_TIER_LAG) and weigh the goods their government
 		//     lacks (ARTISAN_COUNTRY_NEED_WEIGHT); a factory closed for its losses opens again when it pays (FACTORY_REOPEN_*); rifle_1 needs no machine parts
 		// 75: the files of ov_data/common/ov_buildings may give the days of the construction ("time"): a distillery 165 days, a winery 365
-		inline constexpr int SIMULATION_VERSION = 75;
+		// 76: the employed farmers and labourers become craftsmen for the free jobs of the factories (FACTORY_JOB_PROMOTION_SHARE); the supply takes
+		//     rifle_1 for the missing rifle_0 with the post-Napoleonic tactics (supply:rifle_1_for_rifle_0; the AI in 1845)
+		inline constexpr int SIMULATION_VERSION = 76;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

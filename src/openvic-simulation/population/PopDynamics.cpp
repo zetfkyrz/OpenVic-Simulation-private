@@ -1,5 +1,6 @@
 #include "PopDynamics.hpp"
 
+#include <optional>
 #include <algorithm>
 #include <unordered_map>
 #include <vector>
@@ -155,20 +156,25 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		return it != scores.end() ? it->second : ProvinceScore {};
 	};
 
-	// Free jobs of the open factories of each state
+	// Free jobs of the open factories of each state, and what they paid a worker yesterday (nullopt: they have nobody yet)
 	std::unordered_map<State const*, std::int32_t> vacancies;
+	std::unordered_map<State const*, std::optional<fixed_point_t>> factory_pay;
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		State* const state = province.get_state();
 		if (state == nullptr || vacancies.contains(state)) {
 			continue;
 		}
-		std::int32_t free_jobs = 0;
+		std::int32_t free_jobs = 0, employees = 0;
+		fixed_point_t wages = fixed_point_t::_0;
 		for (FactoryInstance const& factory : state->get_factories()) {
 			if (factory.is_open() && !factory.is_under_construction()) {
 				free_jobs += std::max(0, type_safe::get(factory.get_max_employee_count()) - type_safe::get(factory.get_employee_count()));
+				employees += type_safe::get(factory.get_employee_count());
+				wages += factory.get_wages_yesterday();
 			}
 		}
 		vacancies[state] = free_jobs;
+		factory_pay[state] = employees > 0 ? std::optional<fixed_point_t> { wages / employees } : std::nullopt;
 	}
 
 	// Free jobs of the resource gathering operations by country and pop type: where the surplus people can go
@@ -513,9 +519,19 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							target->change_size(whole, 2);
 						}
 					}
-				} else if ((&type == farmers || &type == labourers) && unemployment > defines.peasants_promotion_unemployment.fixed()
-					&& state != nullptr && vacancies[state] > 0) {
-					pop->migration_remainder += defines.promotion_per_month.of(fixed_point_t(type_safe::get(pop->get_unemployed())));
+				} else if ((&type == farmers || &type == labourers) && state != nullptr && vacancies[state] > 0
+					&& (unemployment > defines.peasants_promotion_unemployment.fixed()
+						|| (defines.factory_job_promotion_share.numerator > 0
+							&& (!factory_pay[state].has_value() || *factory_pay[state] >= own_income)))) {
+					// The unemployed as before, and the employed when the factories of the state pay at least what the RGO pays
+					if (unemployment > defines.peasants_promotion_unemployment.fixed()) {
+						pop->migration_remainder += defines.promotion_per_month.of(fixed_point_t(type_safe::get(pop->get_unemployed())));
+					}
+					if (defines.factory_job_promotion_share.numerator > 0 && (!factory_pay[state].has_value() || *factory_pay[state] >= own_income)) {
+						pop->migration_remainder += defines.factory_job_promotion_share.of(
+							fixed_point_t(type_safe::get(pop->get_size()) - type_safe::get(pop->get_unemployed()))
+						);
+					}
 					const std::int32_t whole = std::min({
 						take_whole(pop->migration_remainder), type_safe::get(pop->get_size()), vacancies[state]
 					});
