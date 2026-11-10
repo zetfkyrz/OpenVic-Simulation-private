@@ -418,10 +418,12 @@ namespace OpenVic {
 	/* base that is mobilised (impact = MOBILISATION_ECONOMY_IMPACT_BASE + mobilisation_economy_impact of the modifiers), not below */ \
 	/* MOBILISATION_OUTPUT_MIN_MULT. A country that was at war while mobilised demobilises DEMOBILISE_DAYS after its last war ends */ \
 	RATE(MOBILISATION_POP_SHARE, mobilisation_pop_share, Rate(3, 100), 0, 1) \
-	/* The kinds of the mobilisation (decision of the owner 2026-11-10, chosen by the country): the share of the pool they raise */ \
+	/* The kinds of the mobilisation (decision of the owner 2026-11-10, four kinds since version 87, chosen by the country): the share of the */ \
+	/* pool they raise: small, standard, extended, full */ \
 	RATE(MOBILISATION_LEVEL_LIMITED, mobilisation_level_limited, Rate(25, 100), 0, 1) \
 	RATE(MOBILISATION_LEVEL_STANDARD, mobilisation_level_standard, Rate(50, 100), 0, 1) \
-	RATE(MOBILISATION_LEVEL_EXTENDED, mobilisation_level_extended, Rate(100, 100), 0, 1) \
+	RATE(MOBILISATION_LEVEL_EXTENDED, mobilisation_level_extended, Rate(75, 100), 0, 1) \
+	RATE(MOBILISATION_LEVEL_FULL, mobilisation_level_full, Rate(100, 100), 0, 1) \
 	/* The land that is not national (not a core of the country: colonies, conquests) gives MOBILISATION_NON_NATIONAL_FACTOR of the share; a region */ \
 	/* (a state) gives at most MOBILISATION_REGION_MAX of its population, of its land that is not national MOBILISATION_REGION_MAX_NON_NATIONAL (the */ \
 	/* reforms and the technologies will change them; decision of the owner 2026-11-07) */ \

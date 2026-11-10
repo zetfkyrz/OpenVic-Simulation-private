@@ -160,7 +160,8 @@ namespace OpenVic {
 		//     (STRIKE_*), the consumption tax, debt and colonial slavery, state atheism, the savings, the faster laws of the laws
 		// 86: the unemployed of a pop are never below zero; the projected budget adds up the pops of the provinces the country reports the
 		//     economy of (the occupied ones), as the payments do
-		inline constexpr int SIMULATION_VERSION = 86;
+		// 87: four kinds of the mobilisation: small 25 %, standard 50 %, extended 75 %, full 100 % (MOBILISATION_LEVEL_FULL); level 2 was 100 %
+		inline constexpr int SIMULATION_VERSION = 87;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

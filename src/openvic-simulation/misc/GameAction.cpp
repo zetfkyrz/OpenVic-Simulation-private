@@ -328,10 +328,11 @@ bool GameActionManager::VariantVisitor::operator() (set_law_argument_t const& ar
 	return true;
 }
 
-// The kind of the mobilisation (decision of the owner 2026-11-10): 0 limited, 1 standard, 2 extended (the share of the pool: ov_war.MOBILISATION_LEVEL_*)
+// The kind of the mobilisation (decision of the owner 2026-11-10): 0 small, 1 standard, 2 extended, 3 full (the share of the pool:
+// ov_war.MOBILISATION_LEVEL_*)
 bool GameActionManager::VariantVisitor::operator() (set_mobilisation_level_argument_t const& argument) const {
 	const auto [country_index, level] = argument;
-	if (level > 2) {
+	if (level > 3) {
 		return false;
 	}
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

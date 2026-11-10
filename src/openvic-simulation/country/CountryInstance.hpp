@@ -537,8 +537,8 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(canned_food_from_grain_yesterday);
 		// The ship the AI saves the goods for (its transports, version 81): the government buys its build cost for the stockpile; nullptr: none
 		ShipType const* PROPERTY_RW(ai_ship_order, nullptr);
-		// The kind of the mobilisation (decision of the owner 2026-11-10): 0 limited, 1 standard, 2 extended; the share of the pool it raises is
-		// ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED
+		// The kind of the mobilisation (decision of the owner 2026-11-10): 0 small, 1 standard, 2 extended, 3 full; the share of the pool it raises
+		// is ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED / _FULL
 		std::uint8_t PROPERTY_RW(mobilisation_level, 1);
 		// The taxes the bureaucrats keep (the corruption of the laws), paid to the bureaucrats of the country once a month (PopDynamics)
 		fixed_point_t PROPERTY_RW(corruption_owed, fixed_point_t::_0);

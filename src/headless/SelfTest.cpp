@@ -6198,7 +6198,7 @@ namespace {
 		LawVariant const* const before = russia->get_law(professional->group_index);
 		const std::uint8_t level_before = russia->get_mobilisation_level();
 		russia->set_law(*national);
-		russia->set_mobilisation_level(2);
+		russia->set_mobilisation_level(3);
 		const fixed_point_t share_national = unit_manager.get_mobilisation(*russia).share;
 		russia->set_law(*professional);
 		const fixed_point_t share_professional = unit_manager.get_mobilisation(*russia).share;

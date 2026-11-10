@@ -2634,7 +2634,8 @@ Mobilisation UnitInstanceManager::get_mobilisation(CountryInstance const& countr
 	mobilisation.share = mobilisation.share * std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::mobilisation_size));
 	{
 		Rate const& level = country.get_mobilisation_level() == 0 ? wd.mobilisation_level_limited
-			: country.get_mobilisation_level() == 2 ? wd.mobilisation_level_extended : wd.mobilisation_level_standard;
+			: country.get_mobilisation_level() == 2 ? wd.mobilisation_level_extended
+			: country.get_mobilisation_level() == 3 ? wd.mobilisation_level_full : wd.mobilisation_level_standard;
 		mobilisation.share = mobilisation.share * level.fixed();
 	}
 	bool first_province = true;
