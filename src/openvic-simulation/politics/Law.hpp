@@ -53,7 +53,22 @@ namespace OpenVic {
 	X(free_slaves) /* the share of the slaves that become free every month (slavery banned) */ \
 	X(transport_room_add) /* regiments every transport carries more (naval model) */ \
 	X(warship_room_add) /* regiments every warship that carries any carries more */ \
-	X(assimilation) /* how fast the unaccepted cultures assimilate (citizenship; -1 none) */
+	X(assimilation) /* how fast the unaccepted cultures assimilate (citizenship; -1 none) */ \
+	X(literacy_poor) /* how fast the poor, the middle and the rich strata learn to read (education system, children's rights; -1 not at all) */ \
+	X(literacy_middle) \
+	X(literacy_rich) \
+	X(education_cost) /* the pay of the clergy and the teachers of the education budget (religious schools cheaper, public schools dearer) */ \
+	X(secular_schools) /* 1: the schools are of the state, the literacy does not need the clergy of the province (separation of church and state) */ \
+	X(clergy_to_clerks) /* the share of the clergy that becomes clerks every month (state atheism) */ \
+	X(workforce) /* the hired workers of the RGOs and the factories count this much more (child labour, women in the workplace) */ \
+	X(consumption_tax) /* the purchases of the pops are taxed: this share of the tax rate of their strata times what they spent on their needs */ \
+	X(factory_wage) /* the share of the value added the factories pay as wages (labour rights, unions) */ \
+	X(strikes) /* how much the factories of workers of high militancy lose to strikes (unions; the corporate state none) */ \
+	X(debt_slavery) /* the share of the hungry unemployed poor that become slaves every month (debt slavery) */ \
+	X(free_slaves_home) /* the share of the slaves outside the colonies that become free every month (colonial slavery) */ \
+	X(tax_clergy) /* the income tax of the clergy (state religion: less) */ \
+	X(law_pass_speed) /* the laws pass this much faster (presidential republic) */ \
+	X(savings_threshold) /* the pops keep this much more money before they pass it round (women own property) */
 
 	enum struct law_effect_t : std::uint8_t {
 #define OV_LAW_EFFECT_ENUM(name) name,

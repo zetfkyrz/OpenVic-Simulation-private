@@ -413,8 +413,15 @@ fixed_point_t ResourceGatheringOperation::produce() {
 	fixed_point_t output_from_workers = 1;
 
 	{
+		// The workforce of the laws (child labour, women in the workplace): the hired count more (or less), up to the workplaces
+		CountryInstance const* const labour_country = location.get_owner();
+		const fixed_point_t workforce = labour_country != nullptr
+			? std::max(fixed_point_t::_0, fixed_point_t::_1 + labour_country->get_law_effect(law_effect_t::workforce)) : fixed_point_t::_1;
 		pop_type_index_t pop_type_index {};
-		for (const pop_size_t employees_of_type : employee_count_per_type_cache) {
+		for (const pop_size_t hired_of_type : employee_count_per_type_cache) {
+			const pop_size_t employees_of_type = workforce == fixed_point_t::_1 ? hired_of_type : std::min(
+				max_employee_count_cache, pop_size_t((workforce * hired_of_type).floor<type_safe::underlying_type<pop_size_t>>())
+			);
 			for (Job const& job : production_type.get_jobs()) {
 				if (job.pop_type_index != pop_type_index) {
 					continue;

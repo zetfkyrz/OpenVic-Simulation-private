@@ -129,6 +129,10 @@ namespace OpenVic {
 		bool is_funded = false;
 		// Country that collects the tariff on the inputs the factory imports, set when the orders are placed
 		CountryInstance* tariff_collector = nullptr;
+	public:
+		// The workers struck today (the unions of the laws: militancy above STRIKE_MILITANCY)
+		bool PROPERTY(on_strike, false);
+	private:
 		// Construction ordered by the player is paid with money (the building type's cost) and with the goods of the
 		// national stockpile, which are used up day by day while it is built. The pace accumulates the construction
 		// spending slider: a day of construction is only worked when it reaches 1 and the goods of the day are there,

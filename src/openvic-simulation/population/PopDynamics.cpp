@@ -44,6 +44,16 @@ namespace {
 		return std::max(whole, 0);
 	}
 
+	// The people that move to another pop take their literacy with them (version 85): the literacy of the target becomes the average by the size
+	// (a new pop of the changes of the population started with the literacy of a new pop, 10 %, and the literacy of the countries fell)
+	void blend_literacy(Pop& target, Pop const& source, const std::int32_t count) {
+		const std::int32_t before = std::max(0, type_safe::get(target.get_size()));
+		if (count <= 0 || &target == &source) {
+			return;
+		}
+		target.set_literacy((target.get_literacy() * before + source.get_literacy() * count) / (before + count));
+	}
+
 	// Pop of the same type, culture and religion in the province, a new pop if there is none
 	Pop* find_or_create_pop(
 		ProvinceInstance& province, PopType const& type, Culture const& culture, Pop const& template_pop, PopDeps const& deps
@@ -115,6 +125,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	PopType const* const labourers = pop_manager.get_pop_type_by_identifier("labourers");
 	PopType const* const craftsmen = pop_manager.get_pop_type_by_identifier("craftsmen");
 	PopType const* const artisans = pop_manager.get_pop_type_by_identifier("artisans");
+	PopType const* const clergymen = pop_manager.get_pop_type_by_identifier("clergymen");
+	PopType const* const clerks = pop_manager.get_pop_type_by_identifier("clerks");
+	PopType const* const slaves = pop_manager.get_pop_type_by_identifier("slaves");
+	PopsDefines const& pops_defines = instance_manager.definition_manager.get_define_manager().get_pops_defines();
 	// The free jobs of the RGOs the hungry artisans of this month took (by province)
 	std::unordered_map<ProvinceInstance const*, std::int32_t> rgo_jobs_taken;
 
@@ -206,6 +220,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *bureaucrats, pop->culture, *pop, pop_deps)) {
+							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 1);
 							target->change_size(whole, 1);
 						}
@@ -219,6 +234,12 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	// month starts after the market) passes SAVINGS_SHARE of the rest to the pops of its state that hold less, by their size (the pay for their
 	// services); a state with nobody to pay puts it into the investment fund of its country. The states one by one, in the order of the map
 	if (defines.savings_max_days > 0 && defines.savings_share.numerator > 0) {
+		// What a pop keeps: SAVINGS_MAX_DAYS days of what it earns or spends, times the savings of the laws (women own property)
+		const auto savings_keep = [&defines](Pop const& pop) -> fixed_point_t {
+			const fixed_point_t keep = std::max(pop.get_income(), pop.get_expenses().get_copy_of_value()) * defines.savings_max_days;
+			CountryInstance const* const country = pop.get_location().get_country_to_report_economy();
+			return country != nullptr ? keep * std::max(fixed_point_t::_0, fixed_point_t::_1 + country->get_law_effect(law_effect_t::savings_threshold)) : keep;
+		};
 		std::unordered_set<State const*> states_done;
 		std::vector<Pop*> givers, takers;
 		for (ProvinceInstance& first_province : map_instance.get_province_instances()) {
@@ -237,7 +258,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					if (pop.get_size() <= pop_size_t(0)) {
 						continue;
 					}
-					const fixed_point_t keep = std::max(pop.get_income(), pop.get_expenses().get_copy_of_value()) * defines.savings_max_days;
+					const fixed_point_t keep = savings_keep(pop);
 					if (pop.get_cash().get_copy_of_value() > keep) {
 						givers.push_back(&pop);
 					} else {
@@ -248,7 +269,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 			fixed_point_t pool = fixed_point_t::_0;
 			for (Pop* pop : givers) {
-				const fixed_point_t keep = std::max(pop->get_income(), pop->get_expenses().get_copy_of_value()) * defines.savings_max_days;
+				const fixed_point_t keep = savings_keep(*pop);
 				const fixed_point_t amount = defines.savings_share.of(pop->get_cash().get_copy_of_value() - keep);
 				if (amount > fixed_point_t::_0) {
 					pool += pop->take_cash(amount);
@@ -466,6 +487,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			if (target == nullptr) {
 				continue;
 			}
+			blend_literacy(*target, source, take);
 			source.change_size(-take, kind);
 			target->change_size(take, kind);
 			vacancy.free_jobs -= take;
@@ -481,6 +503,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	const std::int32_t year = static_cast<std::int32_t>(instance_manager.get_today().get_year());
 	ModifierEffectCache const& effect_cache = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache();
 	std::unordered_map<CountryInstance const*, fixed_point_t> growth_multipliers;
+	// The education of the countries: the funding times the efficiency (the techs and the laws)
+	std::unordered_map<CountryInstance const*, fixed_point_t> education_factors;
+	const fixed_point_t clergy_base = pops_defines.get_base_clergy_for_literacy();
+	const fixed_point_t clergy_range = pops_defines.get_max_clergy_for_literacy() - clergy_base;
 	const std::array<ScopeWeight, 1> all_weights { { { effect_cache.find_unit_scope("all"), fixed_point_t::_1 } } };
 
 	std::int32_t starved_total = 0;
@@ -504,6 +530,20 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			pop.clear_dynamics_record();
 			if (pop.get_rebel_type() == nullptr && type_safe::get(pop.get_size()) > 0) {
 				pops.push_back(&pop);
+			}
+		}
+
+		// The clergy of the province teaches (the literacy below): (its share - BASE_CLERGY_FOR_LITERACY) / (MAX - BASE), 0..1
+		fixed_point_t clergy_factor = fixed_point_t::_0;
+		if (clergymen != nullptr && owner != nullptr) {
+			std::int64_t clergy_men = 0, all_men = 0;
+			for (Pop const* pop : pops) {
+				all_men += type_safe::get(pop->get_size());
+				clergy_men += &pop->get_type() == clergymen ? type_safe::get(pop->get_size()) : 0;
+			}
+			if (all_men > 0 && clergy_range > fixed_point_t::_0) {
+				const fixed_point_t share = fixed_point_t(static_cast<std::int32_t>(clergy_men * 100000 / all_men)) / 100000;
+				clergy_factor = std::clamp((share - clergy_base) / clergy_range, fixed_point_t::_0, fixed_point_t::_1);
 			}
 		}
 
@@ -610,6 +650,72 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 
 			const PopType& type = pop->get_type();
 
+			// ---- The literacy (version 85): the school of the clergy of the province, paid by the education budget (LITERACY_GROWTH_SCALE)
+			if (owner != nullptr && !type.is_slave && pop->get_literacy() < fixed_point_t::_1 && defines.literacy_growth_scale.numerator > 0) {
+				fixed_point_t education = fixed_point_t::_0;
+				if (const auto cached = education_factors.find(owner); cached != education_factors.end()) {
+					education = cached->second;
+				} else {
+					fixed_point_t efficiency = fixed_point_t::_1;
+					if (effect_cache.get_education_efficiency() != nullptr) {
+						efficiency += owner->get_modifier_effect_value(*effect_cache.get_education_efficiency());
+					}
+					if (effect_cache.get_education_efficiency_modifier() != nullptr) {
+						efficiency += owner->get_modifier_effect_value(*effect_cache.get_education_efficiency_modifier());
+					}
+					education = owner->get_education_funding() * std::max(fixed_point_t::_0, efficiency);
+					education_factors.emplace(owner, education);
+				}
+				// The law of the strata (no schools: only the clergy learns; private schools: the poor less...)
+				fixed_point_t law = fixed_point_t::_1;
+				if (&type != clergymen) {
+					std::string_view const strata = type.strata.get_identifier();
+					law = std::max(fixed_point_t::_0, fixed_point_t::_1 + owner->get_law_effect(
+						strata == "rich" ? law_effect_t::literacy_rich : strata == "middle" ? law_effect_t::literacy_middle : law_effect_t::literacy_poor
+					));
+				}
+				// The schools of the state do not need the clergy
+				const fixed_point_t teachers = owner->get_law_effect(law_effect_t::secular_schools) > fixed_point_t::_0 ? fixed_point_t::_1 : clergy_factor;
+				fixed_point_t growth = (fixed_point_t::_1 - pop->get_literacy()) * law * teachers * education * pops_defines.get_literacy_change_speed();
+				growth = defines.literacy_growth_scale.of(growth);
+				if (pop->get_culture_status() == Pop::culture_status_t::UNACCEPTED) {
+					growth = defines.literacy_unaccepted_share.of(growth);
+				}
+				if (growth > fixed_point_t::_0) {
+					pop->set_literacy(std::min(fixed_point_t::_1, pop->get_literacy() + growth));
+				}
+			}
+
+			// ---- Debt slavery (the laws): the hungry poor without money sell their unemployed into slavery, in their province
+			if (owner != nullptr && slaves != nullptr && !type.is_slave && type.can_be_unemployed && type.strata.get_identifier() == "poor"
+				&& owner->get_law_effect(law_effect_t::debt_slavery) > fixed_point_t::_0 && pop->hungry_days >= defines.debt_slavery_hungry_days
+				&& pop->get_cash().get_copy_of_value() < pop->get_life_needs_expense() && pop->get_unemployed() > pop_size_t(0)) {
+				pop->migration_remainder += owner->get_law_effect(law_effect_t::debt_slavery) * static_cast<std::int32_t>(type_safe::get(pop->get_unemployed()));
+				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), std::max(0, type_safe::get(pop->get_size()) - 1));
+				if (whole > 0) {
+					if (Pop* target = find_or_create_pop(province, *slaves, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
+						pop->change_size(-whole, 1);
+						target->change_size(whole, 1);
+						promoted_total += whole;
+					}
+				}
+			}
+
+			// ---- State atheism (the laws): the clergy becomes clerks
+			if (owner != nullptr && &type == clergymen && clerks != nullptr && owner->get_law_effect(law_effect_t::clergy_to_clerks) > fixed_point_t::_0) {
+				pop->migration_remainder += owner->get_law_effect(law_effect_t::clergy_to_clerks) * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
+				if (whole > 0) {
+					if (Pop* target = find_or_create_pop(province, *clerks, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
+						pop->change_size(-whole, 1);
+						target->change_size(whole, 1);
+						promoted_total += whole;
+					}
+				}
+			}
+
 			// ---- The surplus: the unemployed of a pop that was hungry for a month. A small share of them emigrates (first inside the country
 			// to the places with free jobs, abroad only when the whole country has none), the rest dies
 			if (pop->hungry_days >= defines.hunger_days_before_death && type.can_be_unemployed && !type.is_slave && owner != nullptr) {
@@ -675,6 +781,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				const std::int32_t whole = std::min(take_whole(pop->assimilation_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(province, type, primary, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
 						pop->change_size(-whole, 3);
 						target->change_size(whole, 3);
 						assimilated_total += whole;
@@ -683,8 +790,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 
 			// ---- The slaves of a country that banned the slavery (the laws) become free: farmers, or labourers where the RGO employs them
-			if (type.is_slave && owner != nullptr && farmers != nullptr && labourers != nullptr
-				&& owner->get_law_effect(law_effect_t::free_slaves) > fixed_point_t::_0) {
+			// (colonial slavery: only the slaves outside the colonies)
+			const fixed_point_t free_slaves = owner == nullptr ? fixed_point_t::_0 : owner->get_law_effect(law_effect_t::free_slaves)
+				+ (province.is_colonial_province() ? fixed_point_t::_0 : owner->get_law_effect(law_effect_t::free_slaves_home));
+			if (type.is_slave && owner != nullptr && farmers != nullptr && labourers != nullptr && free_slaves > fixed_point_t::_0) {
 				PopType const* free_type = farmers;
 				if (ProductionType const* const rgo_type = province.get_rgo().get_production_type_nullable(); rgo_type != nullptr) {
 					fixed_point_t most = fixed_point_t::_0;
@@ -696,10 +805,11 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 						}
 					}
 				}
-				pop->migration_remainder += owner->get_law_effect(law_effect_t::free_slaves) * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+				pop->migration_remainder += free_slaves * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
 				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(province, *free_type, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
 						pop->change_size(-whole, 1);
 						target->change_size(whole, 1);
 					}
@@ -727,6 +837,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *target_type, pop->culture, *pop, pop_deps)) {
+							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 2);
 							target->change_size(whole, 2);
 						}
@@ -749,6 +860,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					});
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *craftsmen, pop->culture, *pop, pop_deps)) {
+							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 1);
 							target->change_size(whole, 1);
 							vacancies[state] -= whole;
@@ -789,6 +901,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					const std::int32_t whole = std::min({ take_whole(pop->migration_remainder), type_safe::get(pop->get_size()), room });
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *target_type, pop->culture, *pop, pop_deps)) {
+							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 2);
 							target->change_size(whole, 2);
 							if (to_factory) {
@@ -815,6 +928,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				);
 				if (take > 0 && place.job_type != nullptr) {
 					if (Pop* target = find_or_create_pop(*job_place_province, *place.job_type, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, take);
 						pop->change_size(-take, 3);
 						target->change_size(take, 3);
 						place.free_jobs -= take;
@@ -832,6 +946,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
 					if (Pop* target = find_or_create_pop(*best_destination, type, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
 						pop->change_size(-whole, 3);
 						target->change_size(whole, 3);
 						migrated_total += whole;

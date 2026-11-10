@@ -345,7 +345,7 @@ void Pop::pay_income_tax(fixed_point_t& income) {
 		std::string_view const strata = get_type().strata.get_identifier();
 		const fixed_point_t law = tax_collector_nullable->get_law_effect(
 			strata == "rich" ? law_effect_t::tax_rich : strata == "middle" ? law_effect_t::tax_middle : law_effect_t::tax_poor
-		);
+		) + (get_type().get_identifier() == "clergymen" ? tax_collector_nullable->get_law_effect(law_effect_t::tax_clergy) : fixed_point_t::_0);
 		if (law != fixed_point_t::_0) {
 			effective_tax_rate = std::clamp(effective_tax_rate * (fixed_point_t::_1 + law), fixed_point_t::_0, fixed_point_t::_1);
 		}
@@ -622,6 +622,24 @@ void Pop::pop_tick_without_cleanup(
 			reusable_vector_1,
 			goods_to_sell
 		);
+	}
+
+	// The consumption tax of the laws: before the expenses of yesterday are forgotten, the pop pays the share of the law of the tax rate of its
+	// strata of what it spent on its needs yesterday (as much as it has)
+	if (CountryInstance* const consumption_tax_collector = get_location().get_country_to_report_economy(); consumption_tax_collector != nullptr) {
+		const fixed_point_t share = consumption_tax_collector->get_law_effect(law_effect_t::consumption_tax);
+		const fixed_point_t spent = life_needs_expense + everyday_needs_expense + luxury_needs_expense;
+		if (share > fixed_point_t::_0 && spent > fixed_point_t::_0) {
+			const fixed_point_t rate = std::clamp(
+				consumption_tax_collector->get_effective_tax_rate_by_strata(get_type().strata).get_untracked() * share, fixed_point_t::_0, fixed_point_t::_1
+			);
+			const fixed_point_t tax = std::min(rate * spent, std::max(fixed_point_t::_0, cash.get_copy_of_value()));
+			if (tax > fixed_point_t::_0) {
+				cash -= tax;
+				MoneyLedger::record(MoneyLedger::label_t::pop_tax_paid, -tax);
+				consumption_tax_collector->report_pop_income_tax(get_type(), fixed_point_t::_0, tax);
+			}
+		}
 	}
 
 	//after artisan_tick as it uses income & expenses

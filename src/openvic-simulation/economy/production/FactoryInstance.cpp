@@ -361,7 +361,14 @@ void FactoryInstance::settle(State& state, MarketInstance const& market_instance
 	// Workers are paid half of the value they added, as long as the budget covers it. A factory that sells its goods
 	// for less than its inputs cost does not pay wages, it is the market that decides if it keeps running.
 	const fixed_point_t value_added = revenue - consumed_value_pending;
-	fixed_point_t wages = value_added > 0 ? std::min(value_added * get_defines().wage_share, budget) : fixed_point_t { 0 };
+	// The labour rights and the unions of the laws: a bigger or smaller share of the value added
+	fixed_point_t wage_share = get_defines().wage_share;
+	if (CountryInstance const* const labour_country = state.get_owner(); labour_country != nullptr) {
+		wage_share = std::clamp(
+			wage_share * (fixed_point_t::_1 + labour_country->get_law_effect(law_effect_t::factory_wage)), fixed_point_t::_0, fixed_point_t::_1
+		);
+	}
+	fixed_point_t wages = value_added > 0 ? std::min(value_added * wage_share, budget) : fixed_point_t { 0 };
 
 	if (wages > 0 && !workers.empty()) {
 		pop_size_t total_workers { 0 };
@@ -780,9 +787,30 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	try_auto_expansion(state, today, market_instance);
 
 	const int32_t max_employees = type_safe::get(max_employee_count);
-	const fixed_point_t workforce_fraction = max_employees > 0
+	fixed_point_t workforce_fraction = max_employees > 0
 		? fp::from_fraction(static_cast<int32_t>(type_safe::get(employee_count)), max_employees)
 		: fixed_point_t { 0 };
+	// The laws of the owner: the workforce (child labour, women in the workplace) and the strikes of the workers of high militancy (unions)
+	fixed_point_t strike_multiplier = fixed_point_t::_1;
+	if (CountryInstance const* const labour_country = state.get_owner(); labour_country != nullptr) {
+		const fixed_point_t workforce_law = labour_country->get_law_effect(law_effect_t::workforce);
+		if (workforce_law != fixed_point_t::_0) {
+			workforce_fraction = std::min(fixed_point_t::_1, workforce_fraction * std::max(fixed_point_t::_0, fixed_point_t::_1 + workforce_law));
+		}
+		const fixed_point_t strikes = labour_country->get_law_effect(law_effect_t::strikes);
+		if (strikes > fixed_point_t::_0 && !workers.empty()) {
+			fixed_point_t militancy_sum = fixed_point_t::_0;
+			int32_t men = 0;
+			for (Worker const& worker : workers) {
+				militancy_sum += worker.pop->get_militancy() * static_cast<int32_t>(type_safe::get(worker.size));
+				men += static_cast<int32_t>(type_safe::get(worker.size));
+			}
+			if (men > 0 && militancy_sum / men > get_defines().strike_militancy) {
+				strike_multiplier = fixed_point_t::_1 - get_defines().strike_output_loss.of(std::min(fixed_point_t::_1, strikes));
+			}
+		}
+	}
+	on_strike = strike_multiplier < fixed_point_t::_1;
 
 	const int32_t level_value = static_cast<int32_t>(type_safe::get(level));
 
@@ -795,7 +823,7 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 		}
 	}
 
-	const fixed_point_t production_fraction = workforce_fraction * throttle * input_fraction;
+	const fixed_point_t production_fraction = workforce_fraction * throttle * input_fraction * strike_multiplier;
 
 	fixed_point_t consumed_value = 0;
 	if (production_fraction > 0) {

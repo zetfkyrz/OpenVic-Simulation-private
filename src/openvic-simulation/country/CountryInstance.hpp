@@ -301,6 +301,10 @@ namespace OpenVic {
 		OV_CLAMPED_PROPERTY(education_spending_slider_value);
 		OV_STATE_PROPERTY(fixed_point_t, projected_education_spending_unscaled_by_slider);
 		fixed_point_t actual_education_budget;
+	public:
+		// The share of the education the country pays today: the slider times what the treasury could pay of it, 0..1 (the growth of the literacy)
+		[[nodiscard]] fixed_point_t get_education_funding() const;
+	private:
 		bool PROPERTY(was_education_budget_cut_yesterday, false);
 		atomic_fixed_point_t PROPERTY(actual_education_spending);
 

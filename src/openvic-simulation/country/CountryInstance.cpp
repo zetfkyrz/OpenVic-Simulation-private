@@ -1505,6 +1505,7 @@ void CountryInstance::_update_budget() {
 		// The pay of the bureaucrats and of the military by the laws (the same factor as in request_salaries_and_welfare_and_import_subsidies)
 		const fixed_point_t administration_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::bureaucrat_wage));
 		const fixed_point_t military_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::military_wage));
+		const fixed_point_t education_pay = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::education_cost));
 		const fixed_point_t pension_level = get_modifier_effect_value(*modifier_effect_cache.get_pension_level());
 		const fixed_point_t unemployment_benefit = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
 
@@ -1518,7 +1519,7 @@ void CountryInstance::_update_budget() {
 			projected_administration_spending_unscaled_by_slider_running_total += size
 				* (corruption_cost_multiplier_copy * pop_type_values.get_administration_salary_base_untracked() * administration_pay).get_raw_value();
 			projected_education_spending_unscaled_by_slider_running_total += size
-				* (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()).get_raw_value();
+				* (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked() * education_pay).get_raw_value();
 			projected_military_spending_unscaled_by_slider_running_total += size
 				* (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked() * military_pay).get_raw_value();
 			projected_pensions_spending_unscaled_by_slider_running_total += size
@@ -3459,7 +3460,8 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 
 	if (actual_education_budget > 0) {
 		const fixed_point_t education_salary = fp::mul_div(
-			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()),
+			pop_size * (corruption_cost_multiplier_copy * pop_type_values.get_education_salary_base_untracked()
+				* std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::education_cost))),
 			actual_education_budget,
 			projected_education_spending_unscaled_by_slider.get_untracked()
 		) / Pop::size_denominator;
@@ -3516,6 +3518,14 @@ void CountryInstance::request_salaries_and_welfare_and_import_subsidies(Pop& pop
 		pop.add_import_subsidies(import_subsidies);
 		actual_import_subsidies_spending += import_subsidies;
 	}
+}
+
+fixed_point_t CountryInstance::get_education_funding() const {
+	const fixed_point_t unscaled = const_cast<CountryInstance*>(this)->projected_education_spending_unscaled_by_slider.get_untracked();
+	if (unscaled <= fixed_point_t::_0 || actual_education_budget <= fixed_point_t::_0) {
+		return fixed_point_t::_0;
+	}
+	return std::min(fixed_point_t::_1, actual_education_budget / unscaled);
 }
 
 fixed_point_t CountryInstance::apply_tariff(const fixed_point_t money_spent_on_imports) {

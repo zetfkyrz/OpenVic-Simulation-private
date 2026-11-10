@@ -156,7 +156,9 @@ namespace OpenVic {
 		//     strata by the distribution of power; LAW_PASS_*, LAW_STALL_MONTHS); the AI proposes laws (AI_LAW_*)
 		// 84: the effects of more laws: the income tax by strata, the share of the owners of the RGOs, the colonial points, the growth of the militancy
 		//     and the consciousness, emigration and immigration, the freeing of the slaves, the assimilation, the room of the ships
-		inline constexpr int SIMULATION_VERSION = 84;
+		// 85: the literacy grows (the clergy, the education budget, LITERACY_GROWTH_SCALE); the workforce, the factory wages and the strikes
+		//     (STRIKE_*), the consumption tax, debt and colonial slavery, state atheism, the savings, the faster laws of the laws
+		inline constexpr int SIMULATION_VERSION = 85;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

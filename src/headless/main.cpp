@@ -1592,9 +1592,10 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			}
 		}
 		fmt::println("COUNTRY_LAWS {} {}{} | effects{}", label, country.get_identifier(), laws_text, effects_text.empty() ? std::string { " -" } : effects_text);
-		fmt::println("COUNTRY_TAX {} {} civilised={} tariff={:.2f} (collected {:.3f}) tax_eff={:.2f}{}", label, country.get_identifier(),
+		fmt::println("COUNTRY_TAX {} {} civilised={} tariff={:.2f} (collected {:.3f}) tax_eff={:.2f} literacy={:.4f} education={:.2f}{}", label, country.get_identifier(),
 			country.is_civilised() ? 1 : 0, static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
-			static_cast<double>(country.effective_tariff_rate.get_untracked()), static_cast<double>(country.get_tax_efficiency_untracked()), taxes);
+			static_cast<double>(country.effective_tariff_rate.get_untracked()), static_cast<double>(country.get_tax_efficiency_untracked()),
+			static_cast<double>(country.get_average_literacy()), static_cast<double>(country.get_education_funding()), taxes);
 	}
 	// The money of the pops by their type (POP_MONEY): the people, the cash, the income of yesterday, what they paid for goods yesterday, the needs
 	// fulfilled (averages weighted by the size): who can pay for the goods of the market

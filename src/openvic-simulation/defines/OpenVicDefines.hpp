@@ -207,6 +207,15 @@ namespace OpenVic {
 	RATE(SAVINGS_TREASURY_SHARE, savings_treasury_share, Rate(5, 100), 0, 1) \
 	/* What the pops need (version 78, decision of the owner 2026-11-09): the life, everyday and luxury needs of the data are multiplied by this */ \
 	RATE(POP_NEEDS_MULTIPLIER, pop_needs_multiplier, Rate(50, 100), 0, 10) \
+	/* The literacy (version 85, docs/LAWS_DESIGN.md "Система образования"): a month a pop learns LITERACY_CHANGE_SPEED (defines.lua of Vic2) x */ \
+	/* LITERACY_GROWTH_SCALE x the education the country pays (the slider times what the treasury paid, 0..1) x the clergy of the province */ \
+	/* ((share - BASE_CLERGY_FOR_LITERACY) / (MAX_CLERGY_FOR_LITERACY - BASE), 0..1) x (1 + education efficiency of the techs and the laws) x */ \
+	/* the law of its strata x (1 - literacy); the unaccepted cultures LITERACY_UNACCEPTED_SHARE of it, the slaves nothing. 0 = no growth */ \
+	RATE(LITERACY_GROWTH_SCALE, literacy_growth_scale, Rate(6, 100), 0, 10) \
+	RATE(LITERACY_UNACCEPTED_SHARE, literacy_unaccepted_share, Rate(50, 100), 0, 1) \
+	/* Debt slavery (the laws): a pop of the poor that was hungry DEBT_SLAVERY_HUNGRY_DAYS days of the month and holds less cash than a day */ \
+	/* of its life needs costs gives the share of the law of its unemployed to the slaves of its province */ \
+	INT(DEBT_SLAVERY_HUNGRY_DAYS, debt_slavery_hungry_days, 15, 0, 31) \
 	RATE(MIGRATION_PER_MONTH, migration_per_month, Rate(3, 1000), 0, 1) \
 	RATE(MIGRATION_SCORE_MARGIN, migration_score_margin, Rate(8, 100), 0, 1) \
 	RATE(MIGRATION_UNEMPLOYMENT_THRESHOLD, migration_unemployment_threshold, Rate(1, 5), 0, 1) \
@@ -740,6 +749,10 @@ namespace OpenVic {
 	RATE(FACTORY_REOPEN_MARGIN, factory_reopen_margin, Rate(10, 100), 0, 100) \
 	RATE(FACTORY_REOPEN_MIN_INPUT_SHARE, factory_reopen_min_input_share, Rate(50, 100), 0, 1) \
 	FIXED(WAGE_SHARE, wage_share, fixed_point_t::_0_50, 0, 1) \
+	/* Strikes (version 85, the unions of the laws): the workers of a factory whose militancy (by their size) is above STRIKE_MILITANCY strike, */ \
+	/* the factory makes STRIKE_OUTPUT_LOSS x the strikes of the law (free unions 1, non-political unions 0.5) less */ \
+	FIXED(STRIKE_MILITANCY, strike_militancy, 5, 0, 10) \
+	RATE(STRIKE_OUTPUT_LOSS, strike_output_loss, Rate(50, 100), 0, 1) \
 	INT(EFFICIENCY_GAIN_EPSILONS, efficiency_gain_epsilons, 65, 0, 1000000) \
 	INT(EFFICIENCY_LOSS_EPSILONS, efficiency_loss_epsilons, 130, 0, 1000000) \
 	FIXED(EFFICIENCY_MAX, efficiency_max, fixed_point_t::_1 + fixed_point_t::_0_50, 0.1, 100) \
