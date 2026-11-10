@@ -1493,6 +1493,36 @@ void CountryInstance::_update_budget() {
 		);
 	}
 
+	// The budget pays the pops of the provinces whose economy the country reports (Pop::pop_tick, get_country_to_report_economy): by the
+	// recommended rules the controller, so the occupied provinces of others are paid and its own occupied ones are not. The projection adds up
+	// the same pops (version 86); it used the population of the owned states, and the countries at war overspent their budgets.
+	const std::size_t pop_type_count = static_cast<std::size_t>(type_safe::get(get_population_by_type().size()));
+	memory::vector<int64_t> paid_population_by_type(pop_type_count, 0);
+	memory::vector<int64_t> paid_unemployed_by_type(pop_type_count, 0);
+	{
+		const auto add_province = [this, &paid_population_by_type, &paid_unemployed_by_type](ProvinceInstance const& province) {
+			if (province.get_country_to_report_economy() != this) {
+				return;
+			}
+			std::size_t index = 0;
+			for (const pop_sum_t size : province.get_population_by_type()) {
+				paid_population_by_type[index++] += type_safe::get(size);
+			}
+			index = 0;
+			for (const pop_sum_t unemployed : province.get_unemployed_pops_by_type()) {
+				paid_unemployed_by_type[index++] += type_safe::get(unemployed);
+			}
+		};
+		for (ProvinceInstance const* province : owned_provinces) {
+			add_province(*province);
+		}
+		for (ProvinceInstance const* province : controlled_provinces) {
+			if (province->get_owner() != this) {
+				add_province(*province);
+			}
+		}
+	}
+
 	int64_t projected_administration_spending_unscaled_by_slider_running_total = 0;
 	int64_t projected_education_spending_unscaled_by_slider_running_total = 0;
 	int64_t projected_military_spending_unscaled_by_slider_running_total = 0;
@@ -1510,10 +1540,10 @@ void CountryInstance::_update_budget() {
 		const fixed_point_t unemployment_benefit = get_modifier_effect_value(*modifier_effect_cache.get_unemployment_benefit());
 
 		pop_type_index_t pop_type_index {};
-		for (const pop_sum_t pop_size : get_population_by_type()) {
+		for (std::size_t index = 0; index < pop_type_count; ++index) {
 			PopType const& pop_type = pop_types[pop_type_index];
 			SharedPopTypeValues const& pop_type_values = shared_country_values.get_shared_pop_type_values(pop_type);
-			const int64_t size = type_safe::get(pop_size);
+			const int64_t size = paid_population_by_type[index];
 			const fixed_point_t social_income_variant_base =
 				corruption_cost_multiplier_copy * pop_type_values.get_social_income_variant_base_untracked();
 			projected_administration_spending_unscaled_by_slider_running_total += size
@@ -1524,9 +1554,7 @@ void CountryInstance::_update_budget() {
 				* (corruption_cost_multiplier_copy * pop_type_values.get_military_salary_base_untracked() * military_pay).get_raw_value();
 			projected_pensions_spending_unscaled_by_slider_running_total += size
 				* (pension_level * social_income_variant_base).get_raw_value();
-			projected_unemployment_subsidies_spending_unscaled_by_slider_running_total += type_safe::get(
-					get_unemployed_pops_by_type()[pop_type_index]
-				)
+			projected_unemployment_subsidies_spending_unscaled_by_slider_running_total += paid_unemployed_by_type[index]
 				* (unemployment_benefit * social_income_variant_base).get_raw_value();
 			++pop_type_index;
 		}

@@ -153,8 +153,10 @@ namespace OpenVic {
 			population_defines = &defines;
 		}
 
+		// Never below zero (version 86): a pop that got smaller after it was hired had more employed than people, and the unemployment
+		// benefit projected by the country took them off the sum while the payment of the pop is not negative (the overspent social budget)
 		constexpr pop_size_t get_unemployed() const {
-			return size - employed;
+			return employed < size ? size - employed : pop_size_t(0);
 		}
 		fixed_point_t get_unemployment_fraction() const;
 	private:
