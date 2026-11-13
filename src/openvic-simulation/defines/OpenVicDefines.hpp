@@ -194,6 +194,15 @@ namespace OpenVic {
 	/* (farmers, labourers, craftsmen: their men times the literacy) becomes bureaucrats every month, times 1 + bureaucrat_promotion of the laws */ \
 	/* (hereditary bureaucrats -90 %, elected +100 %). 0 = off */ \
 	RATE(BUREAUCRAT_PROMOTION_SHARE, bureaucrat_promotion_share, Rate(2, 1000), 0, 1) \
+	/* The literacy (version 89, docs/LITERACY.md, decision of the owner 2026-11-13). The pops that rise to another strata (the bureaucrats, the */ \
+	/* officers): a literate man counts as 1 - LITERACY_PROMOTION_WEIGHT of the share that may rise, so a literate pop rises up to twice as fast */ \
+	RATE(LITERACY_PROMOTION_WEIGHT, literacy_promotion_weight, Rate(50, 100), 0, 0.9) \
+	/* The officers come from the literate men of the middle and the rich strata (the poor too with the unlock mechanic:poor_officers of the */ \
+	/* technologies of the army), OFFICER_PROMOTION_SHARE a month of the literate men (x the literacy factor above), in their province, while the */ \
+	/* officers of the country are fewer than OFFICERS_PER_SOLDIER of its soldiers (the history of 1836: about 7 %). Not the officers themselves, */ \
+	/* the bureaucrats (the administration needs them) and the slaves. 0 = off */ \
+	RATE(OFFICERS_PER_SOLDIER, officers_per_soldier, Rate(7, 100), 0, 1) \
+	RATE(OFFICER_PROMOTION_SHARE, officer_promotion_share, Rate(1, 1000), 0, 1) \
 	/* The hungry artisans (version 79): ARTISAN_DEMOTION_SHARE a month of the artisans whose life needs are under ARTISAN_DEMOTION_LIFE_NEEDS */ \
 	/* take the free jobs of the factories of their state (they become craftsmen), else the free jobs of the RGO of their province (farmers or */ \
 	/* labourers, who it employs most). Without free jobs they stay. 0 = off */ \
@@ -350,6 +359,9 @@ namespace OpenVic {
 	INT(SIEGE_BASE_DAYS, siege_base_days, 60, 0, 36500) \
 	INT(SIEGE_DAYS_PER_FORT_LEVEL, siege_days_per_fort_level, 100, 0, 36500) \
 	INT(CAPITAL_PROVINCE_WEIGHT, capital_province_weight, 5, 1, 1000) \
+	/* The organisation of a regiment of literate soldiers (version 89, docs/LITERACY.md): its maximum is the one of its type x (1 + */ \
+	/* LITERACY_ORGANISATION x the literacy of its pop), +10 % at 100 %, set every month */ \
+	RATE(LITERACY_ORGANISATION, literacy_organisation, Rate(10, 100), 0, 10) \
 	INT(WAR_SCORE_MAX, war_score_max, 100, 1, 10000) \
 	INT(MAX_BATTLE_SCORE, max_battle_score, 25, 0, 10000) \
 	INT(BATTLE_SCORE_REGIMENT_CAP, battle_score_regiment_cap, 20, 0, 1000) \
@@ -720,6 +732,9 @@ namespace OpenVic {
 #define OV_RESEARCH_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	RATE(INVENTION_BASE_CHANCE_PER_MONTH, invention_base_chance_per_month, Rate(3, 100), 0, 1) \
 	RATE(INVENTION_LITERACY_CHANCE, invention_literacy_chance, Rate(6, 100), 0, 1) \
+	/* The research of a literate country is faster (version 89, docs/LITERACY.md): x (1 + LITERACY_RESEARCH x the average literacy), +50 % at */ \
+	/* 100 % (2 % of literacy give 1 % of speed): the research points of Victoria 2 and the days of the technologies of the army */ \
+	RATE(LITERACY_RESEARCH, literacy_research, Rate(50, 100), 0, 10) \
 	/* The technologies of the army (ov_data/common/ov_technology): 1: only the civilised countries research them. 0 (the default): every country researches */ \
 	/* them itself, the civilised start with the technologies marked start = civilised, the uncivilised with none (they begin from the roots of the tree) */ \
 	INT(ARMY_RESEARCH_CIVILISED_ONLY, army_research_civilised_only, 0, 0, 1) \
@@ -785,6 +800,11 @@ namespace OpenVic {
 	RATE(ADMIN_LOW_PAY_LEAVE, admin_low_pay_leave, Rate(2, 100), 0, 1) \
 	RATE(ADMIN_LOW_PAY_CORRUPTION, admin_low_pay_corruption, Rate(20, 100), 0, 1) \
 	RATE(ADMIN_FOCUS_PROMOTION, admin_focus_promotion, Rate(200, 100), 0, 100) \
+	/* The literate workers make more with the same inputs (version 89, docs/LITERACY.md): the output of an RGO (the literacy of its province), a */ \
+	/* factory (of its workers) and an artisan (his own) x (1 + the bonus x the literacy). The bonus of the country: LITERACY_OUTPUT_BASE + */ \
+	/* LITERACY_OUTPUT_STEP for each of the technologies interchangeable_parts, semi_automatization and assembly_line (10, 15, 20, 25 %) */ \
+	RATE(LITERACY_OUTPUT_BASE, literacy_output_base, Rate(10, 100), 0, 10) \
+	RATE(LITERACY_OUTPUT_STEP, literacy_output_step, Rate(5, 100), 0, 10) \
 	INT(EFFICIENCY_GAIN_EPSILONS, efficiency_gain_epsilons, 65, 0, 1000000) \
 	INT(EFFICIENCY_LOSS_EPSILONS, efficiency_loss_epsilons, 130, 0, 1000000) \
 	FIXED(EFFICIENCY_MAX, efficiency_max, fixed_point_t::_1 + fixed_point_t::_0_50, 0.1, 100) \

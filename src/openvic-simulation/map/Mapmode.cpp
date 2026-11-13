@@ -380,7 +380,30 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 	ret &= add_mapmode("mapmode_party_loyalty", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_16");
 	ret &= add_mapmode("mapmode_ranking", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_17");
 	ret &= add_mapmode("mapmode_migration", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_18");
-	ret &= add_mapmode("mapmode_civilisation_level", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_19");
+	// The literacy (version 89, docs/LITERACY.md; the button of the civilisation level of Vic2, which had no map): the average literacy of the
+	// province, from dark (none) to bright (all)
+	ret &= add_mapmode(
+		"mapmode_literacy",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			if (type_safe::get(province.get_total_population()) <= 0) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			const std::int32_t percent = std::clamp<std::int32_t>(
+				static_cast<std::int32_t>((province.get_average_literacy() * 100).get_raw_value() >> fixed_point_t::PRECISION), 0, 100
+			);
+			const colour_argb_t::value_type blue = colour_argb_t::colour_traits::component_from_fraction(percent, 100, 0.12f, 1.0f);
+			const colour_argb_t::value_type green = colour_argb_t::colour_traits::component_from_fraction(percent, 100, 0.05f, 0.75f);
+			const colour_argb_t::value_type red = colour_argb_t::colour_traits::component_from_fraction(100 - percent, 100, 0.1f, 0.55f);
+			return colour_argb_t { red, green, blue, ALPHA_VALUE };
+		},
+		"MAPMODE_LITERACY"
+	);
 	ret &= add_mapmode("mapmode_relations", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_20");
 	ret &= add_mapmode("mapmode_crisis", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_21");
 	ret &= add_mapmode(

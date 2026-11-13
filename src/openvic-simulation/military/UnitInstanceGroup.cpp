@@ -1813,6 +1813,16 @@ void UnitInstanceManager::apply_all_losses() {
 	}
 }
 
+void UnitInstanceManager::update_literacy_organisation(Rate const& per_literacy) {
+	for (ArmyInstance& army : armies) {
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			const fixed_point_t literacy = regiment.get_pop() != nullptr
+				? std::clamp(regiment.get_pop()->get_literacy(), fixed_point_t::_0, fixed_point_t::_1) : fixed_point_t::_0;
+			regiment.set_max_organisation(regiment.unit_type.default_organisation * (fixed_point_t::_1 + per_literacy.of(literacy)));
+		}
+	}
+}
+
 void UnitInstanceManager::kill_group(UnitInstanceGroup& group) {
 	if (group.branch == LAND) {
 		for (RegimentInstance& regiment : static_cast<ArmyInstance&>(group).get_regiment_instances()) {

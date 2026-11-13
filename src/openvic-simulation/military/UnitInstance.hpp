@@ -39,6 +39,14 @@ namespace OpenVic {
 
 		UnitInstance(UnitInstance&&) = default;
 
+		// The maximum of the organisation (version 89: the literacy of the soldiers); the organisation above it falls to it
+		void set_max_organisation(const fixed_point_t new_max_organisation) {
+			max_organisation = std::max(fixed_point_t::_0, new_max_organisation);
+			if (organisation > max_organisation) {
+				organisation = max_organisation;
+			}
+		}
+
 		inline constexpr fixed_point_t get_max_strength() const {
 			return unit_type.max_strength;
 		}

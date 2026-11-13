@@ -843,6 +843,18 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	const fixed_point_t tariff_multiplier = tariff_rate > fixed_point_t::_0 ? fixed_point_t::_1 + tariff_rate : fixed_point_t::_1;
 
 	fixed_point_t output = production_type->base_output_quantity * level_value * production_fraction * efficiency;
+	// The literate workers make more with the same inputs (version 89, docs/LITERACY.md): the literacy of the workers, by their size
+	if (owner->get_literacy_output_cap() > fixed_point_t::_0 && !workers.empty()) {
+		fixed_point_t literacy_sum = fixed_point_t::_0;
+		int32_t men = 0;
+		for (Worker const& worker : workers) {
+			literacy_sum += worker.pop->get_literacy() * static_cast<int32_t>(type_safe::get(worker.size));
+			men += static_cast<int32_t>(type_safe::get(worker.size));
+		}
+		if (men > 0) {
+			output *= fixed_point_t::_1 + owner->get_literacy_output_cap() * std::clamp(literacy_sum / men, fixed_point_t::_0, fixed_point_t::_1);
+		}
+	}
 	// The men of the poor pops that are mobilised are away from the work (docs/RECRUITMENT.md, "Мобилизация"): 1 when the country is not mobilised
 	if (owner->mobilisation_output_multiplier != fixed_point_t::_1) {
 		output *= owner->mobilisation_output_multiplier;

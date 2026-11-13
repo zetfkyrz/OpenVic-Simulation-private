@@ -1563,7 +1563,9 @@ namespace {
 		);
 		research_defines.army_research_civilised_only = civilised_only_before;
 
-		// One slot per branch, the days, the unlocks and the modifier
+		// One slot per branch, the days, the unlocks and the modifier (without the days the literacy adds, version 89: checked below)
+		const Rate literacy_research_before = research_defines.literacy_research;
+		research_defines.literacy_research = Rate(0, 100);
 		r.check(start_army_research(im, *civilised, index_of("rifling")), "army research: a research is started");
 		r.check(
 			state_of(*civilised, "rifling") == tech_state_t::RESEARCHING
@@ -1593,6 +1595,19 @@ namespace {
 				&& civilised->has_unlock("equipment:field_gun_2") && civilised->has_unlock("unit:rifled_artillery") && state_of(*civilised, "breech_loading") == tech_state_t::AVAILABLE,
 			"army research: after 730 days the technology is researched, its keys are given and the next one is available"
 		);
+		// A literate country researches faster (version 89, docs/LITERACY.md): 100 days give more than 100 days of research
+		research_defines.literacy_research = literacy_research_before;
+		if (civilised->get_average_literacy() > fixed_point_t::_0 && research_defines.literacy_research.numerator > 0
+			&& start_army_research(im, *civilised, index_of("breech_loading"))) {
+			const std::int32_t days_before = get_army_research_days_left(im, *civilised, index_of("breech_loading"));
+			for (int day = 0; day < 100; ++day) {
+				update_army_research(im);
+			}
+			const std::int32_t days_after = get_army_research_days_left(im, *civilised, index_of("breech_loading"));
+			r.check(days_before - days_after > 100, "army research: a literate country researches faster",
+				fmt::format("{} days done in 100 days, literacy {:.2f}", days_before - days_after, static_cast<double>(civilised->get_average_literacy())));
+			cancel_army_research(im, *civilised, index_of("breech_loading"));
+		}
 		research_defines.army_research_ai_enabled = ai_before;
 
 		// The modifier of a technology reaches the country
@@ -6235,6 +6250,37 @@ namespace {
 		england->set_admin_focus(focus_before);
 	}
 
+	// The literacy (version 89, docs/LITERACY.md): the maximum organisation of a regiment is the one of its type x (1 + LITERACY_ORGANISATION x the
+	// literacy of its pop), and the bonus of the output of a country without the technologies of the production line is LITERACY_OUTPUT_BASE
+	void test_literacy(Results& r, InstanceManager& im) {
+		OpenVicDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines();
+		UnitInstanceManager& units = im.get_unit_instance_manager();
+		units.update_literacy_organisation(defines.war.literacy_organisation);
+		bool organisation_ok = true;
+		std::size_t checked = 0;
+		for (ArmyInstance const& army : units.get_armies()) {
+			for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+				if (regiment.get_pop() == nullptr || checked >= 50) {
+					continue;
+				}
+				const fixed_point_t literacy = std::clamp(regiment.get_pop()->get_literacy(), fixed_point_t::_0, fixed_point_t::_1);
+				const fixed_point_t expected = regiment.unit_type.default_organisation * (fixed_point_t::_1 + defines.war.literacy_organisation.of(literacy));
+				organisation_ok &= regiment.get_max_organisation() == expected && regiment.get_organisation() <= regiment.get_max_organisation();
+				++checked;
+			}
+		}
+		r.check(checked > 0 && organisation_ok, "literacy: the maximum organisation of a regiment grows with the literacy of its soldiers",
+			fmt::format("{} regiments checked", checked));
+		CountryInstance const* const england = im.get_country_instance_manager().get_country_instance_by_identifier("ENG");
+		if (england != nullptr) {
+			const fixed_point_t cap = england->get_literacy_output_cap();
+			r.check(cap >= defines.economy.literacy_output_base.fixed()
+					&& cap <= defines.economy.literacy_output_base.fixed() + defines.economy.literacy_output_step.fixed() * 3,
+				"literacy: the bonus of the output of the literate is the base plus a step per technology of the production line",
+				fmt::format("England {:.2f}", static_cast<double>(cap)));
+		}
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8197,6 +8243,7 @@ namespace {
 		test_plan_status(r, *im);
 		test_laws(r, *im);
 		test_administration(r, *im);
+		test_literacy(r, *im);
 		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own

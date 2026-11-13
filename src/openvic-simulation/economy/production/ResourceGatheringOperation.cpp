@@ -408,6 +408,11 @@ fixed_point_t ResourceGatheringOperation::produce() {
 	}
 	// An enemy army raids the province (docs/WAR_ASSUMPTIONS.md, section 10)
 	output_multiplier *= location.get_raid_output_multiplier();
+	// The literate workers make more with the same work (version 89, docs/LITERACY.md): the literacy of the province
+	if (CountryInstance const* const literacy_owner = location.get_owner(); literacy_owner != nullptr && literacy_owner->get_literacy_output_cap() > fixed_point_t::_0) {
+		output_multiplier *= fixed_point_t::_1 + literacy_owner->get_literacy_output_cap()
+			* std::clamp(location.get_average_literacy(), fixed_point_t::_0, fixed_point_t::_1);
+	}
 
 	fixed_point_t throughput_from_workers = 0;
 	fixed_point_t output_from_workers = 1;

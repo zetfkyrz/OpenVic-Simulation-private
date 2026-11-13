@@ -1753,6 +1753,26 @@ void CountryInstance::_update_technology(const Date today) {
 	daily_research_points *= fixed_point_t::_1 +
 		get_modifier_effect_value(*modifier_effect_cache.get_research_points_modifier()) +
 		get_modifier_effect_value(*modifier_effect_cache.get_increase_research());
+	// A literate country researches faster (version 89, docs/LITERACY.md): +LITERACY_RESEARCH at 100 %
+	if (openvic_research_defines != nullptr) {
+		daily_research_points *= fixed_point_t::_1 + openvic_research_defines->literacy_research.of(
+			std::clamp(get_average_literacy(), fixed_point_t::_0, fixed_point_t::_1)
+		);
+	}
+
+	// The bonus of the output of the literate workers (version 89): the base and a step for each technology of the production line
+	literacy_output_cap = fixed_point_t::_0;
+	if (openvic_economy_defines != nullptr) {
+		std::int32_t steps = 0;
+		for (Technology const& technology : technology_unlock_levels.get_keys()) {
+			std::string_view const identifier = technology.get_identifier();
+			if ((identifier == "interchangeable_parts" || identifier == "semi_automatization" || identifier == "assembly_line")
+				&& is_technology_unlocked(technology)) {
+				++steps;
+			}
+		}
+		literacy_output_cap = openvic_economy_defines->literacy_output_base.fixed() + openvic_economy_defines->literacy_output_step.fixed() * steps;
+	}
 
 	if (daily_research_points.get_untracked() < 0) {
 		daily_research_points.set(0);

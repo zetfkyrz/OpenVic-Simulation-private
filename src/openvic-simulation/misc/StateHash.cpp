@@ -255,6 +255,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		for (ArmyResearchProgress const& progress : country.get_army_research()) {
 			hasher.add(static_cast<std::uint64_t>(progress.technology));
 			hasher.add(static_cast<std::uint64_t>(progress.days_done));
+			hasher.add(progress.extra_days);
 		}
 		hasher.add(country.are_army_start_technologies_given() ? 1 : 0);
 		for (Modifier const* const unlock_modifier : country.get_unlock_modifiers()) {

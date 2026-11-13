@@ -102,6 +102,8 @@ namespace OpenVic {
 	struct ArmyResearchProgress {
 		std::uint32_t technology = 0;
 		std::int32_t days_done = 0;
+		// The parts of a day the literacy adds (version 89): a whole day more when it reaches 1
+		fixed_point_t extra_days = fixed_point_t::_0;
 	};
 
 	struct CountryInstance : FlagStrings, HasIndex<CountryInstance, country_index_t>, PopsAggregate {
@@ -552,6 +554,9 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(administration_pay, fixed_point_t::_1);
 		fixed_point_t PROPERTY(low_pay_corruption, fixed_point_t::_0);
 		fixed_point_t PROPERTY(average_admin_collection, fixed_point_t::_1);
+		// The bonus of the output of the literate workers (version 89, docs/LITERACY.md): LITERACY_OUTPUT_BASE + LITERACY_OUTPUT_STEP per technology
+		// of the production line; the output is x (1 + this x the literacy)
+		fixed_point_t PROPERTY(literacy_output_cap, fixed_point_t::_0);
 		ProvinceInstance const* PROPERTY_RW(admin_focus, nullptr);
 		// The taxes the bureaucrats keep (the corruption of the laws), paid to the bureaucrats of the country once a month (PopDynamics)
 		fixed_point_t PROPERTY_RW(corruption_owed, fixed_point_t::_0);

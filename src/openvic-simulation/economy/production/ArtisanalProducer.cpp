@@ -124,6 +124,11 @@ void ArtisanalProducer::artisan_tick_handler::produce(
 	IndexedFlatMap<GoodDefinition, fixed_point_t>& stockpile
 ) {
 	fixed_point_t produce_left_to_sell = current_production = production_type.base_output_quantity * inputs_bought_fraction;
+	// A literate artisan makes more with the same inputs (version 89, docs/LITERACY.md)
+	if (country_to_report_economy_nullable != nullptr && country_to_report_economy_nullable->get_literacy_output_cap() > fixed_point_t::_0) {
+		produce_left_to_sell = current_production = current_production * (fixed_point_t::_1
+			+ country_to_report_economy_nullable->get_literacy_output_cap() * std::clamp(pop.get_literacy(), fixed_point_t::_0, fixed_point_t::_1));
+	}
 
 	costs_of_production = 0;
 	if (current_production == 0) {

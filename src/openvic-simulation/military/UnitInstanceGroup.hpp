@@ -577,6 +577,8 @@ namespace OpenVic {
 		// country (they die: the population falls)
 		void apply_losses(RegimentInstance& regiment, CountryInstance& country);
 		void apply_all_losses();
+		// The maximum organisation of every regiment by the literacy of its pop (version 89, docs/LITERACY.md), monthly
+		void update_literacy_organisation(Rate const& per_literacy);
 		// The men of the group die with it (destroyed in a battle, given up in a pocket, sunk with its transports)
 		void kill_group(UnitInstanceGroup& group);
 		// A division by a template: empty if it can be recruited in the province, otherwise the reason (the types, the manpower, the goods)

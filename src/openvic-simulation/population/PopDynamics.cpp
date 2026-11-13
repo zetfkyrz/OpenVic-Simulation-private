@@ -54,6 +54,13 @@ namespace {
 		target.set_literacy((target.get_literacy() * before + source.get_literacy() * count) / (before + count));
 	}
 
+	// A literate man counts as 1 - LITERACY_PROMOTION_WEIGHT of the share that may rise to another strata (version 89, docs/LITERACY.md): the pop
+	// rises 1 / (1 - weight x literacy) times faster (twice at 100 % with the weight 0.5)
+	fixed_point_t literacy_promotion_factor(OpenVicPopulationDefines const& defines, const fixed_point_t literacy) {
+		const fixed_point_t cost = fixed_point_t::_1 - defines.literacy_promotion_weight.of(std::clamp(literacy, fixed_point_t::_0, fixed_point_t::_1));
+		return cost > fixed_point_t::_0 ? fixed_point_t::_1 / cost : fixed_point_t::_1;
+	}
+
 	// Pop of the same type, culture and religion in the province, a new pop if there is none
 	Pop* find_or_create_pop(
 		ProvinceInstance& province, PopType const& type, Culture const& culture, Pop const& template_pop, PopDeps const& deps
@@ -225,7 +232,8 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					}
 				}
 				for (Pop* pop : candidates) {
-					pop->migration_remainder += share * pop->get_literacy() * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+					pop->migration_remainder += share * pop->get_literacy() * literacy_promotion_factor(defines, pop->get_literacy())
+						* static_cast<std::int32_t>(type_safe::get(pop->get_size()));
 					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 					if (whole > 0) {
 						if (Pop* target = find_or_create_pop(province, *bureaucrats, pop->culture, *pop, pop_deps)) {
@@ -238,6 +246,69 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 		}
 	}
+
+	// The officers come from the literate (version 89, docs/LITERACY.md): while the officers of a country are fewer than OFFICERS_PER_SOLDIER of its
+	// soldiers, OFFICER_PROMOTION_SHARE x the literacy factor of the literate men of its middle and rich pops (the poor too with the unlock
+	// mechanic:poor_officers) become officers every month, in their province; not the officers, the bureaucrats and the slaves
+	if (PopType const* const officers = pop_manager.get_pop_type_by_identifier("officers"),
+		* const soldiers = pop_manager.get_pop_type_by_identifier("soldiers");
+		officers != nullptr && soldiers != nullptr && defines.officer_promotion_share.numerator > 0) {
+		std::unordered_map<CountryInstance const*, std::pair<std::int64_t, std::int64_t>> army_men; // officers, soldiers
+		for (ProvinceInstance const& province : map_instance.get_province_instances()) {
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				continue;
+			}
+			for (Pop const& pop : province.get_pops()) {
+				if (&pop.get_type() == officers) {
+					army_men[owner].first += type_safe::get(pop.get_size());
+				} else if (&pop.get_type() == soldiers) {
+					army_men[owner].second += type_safe::get(pop.get_size());
+				}
+			}
+		}
+		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				continue;
+			}
+			auto const& men = army_men[owner];
+			if (men.second <= 0 || men.first * Rate::DENOMINATOR >= men.second * defines.officers_per_soldier.numerator) {
+				continue;
+			}
+			const bool poor_officers = owner->has_unlock("mechanic:poor_officers");
+			std::vector<Pop*> candidates;
+			for (Pop& pop : province.get_mutable_pops()) {
+				PopType const* const type = &pop.get_type();
+				if (type == officers || type == bureaucrats || type == slaves || type->is_slave || pop.get_size() <= pop_size_t(0)
+					|| pop.get_rebel_type() != nullptr) {
+					continue;
+				}
+				if (type->strata.get_identifier() == "poor" && !poor_officers) {
+					continue;
+				}
+				candidates.push_back(&pop);
+			}
+			for (Pop* pop : candidates) {
+				const fixed_point_t literacy = std::clamp(pop->get_literacy(), fixed_point_t::_0, fixed_point_t::_1);
+				pop->migration_remainder += defines.officer_promotion_share.fixed() * literacy * literacy_promotion_factor(defines, literacy)
+					* static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
+				if (whole > 0) {
+					if (Pop* target = find_or_create_pop(province, *officers, pop->culture, *pop, pop_deps)) {
+						blend_literacy(*target, *pop, whole);
+						pop->change_size(-whole, 1);
+						target->change_size(whole, 1);
+					}
+				}
+			}
+		}
+	}
+
+	// The maximum organisation of the regiments by the literacy of their soldiers (version 89, docs/LITERACY.md)
+	instance_manager.get_unit_instance_manager().update_literacy_organisation(
+		instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.literacy_organisation
+	);
 
 	// The bureaucrats paid under ADMIN_LOW_PAY leave (version 88, docs/ADMINISTRATION.md): ADMIN_LOW_PAY_LEAVE x (1 - pay / ADMIN_LOW_PAY) of them
 	// become artisans of their province every month
