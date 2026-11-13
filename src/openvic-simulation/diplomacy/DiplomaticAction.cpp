@@ -199,19 +199,19 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 				},
 		}
 	);
+	// The relations (version 90, docs/DIPLOMACY.md): the button starts (or stops) the process of the sender, every month
+	// RELATION_IMPROVE_PER_MONTH up or RELATION_WORSEN_PER_MONTH down for a diplomatic point, until the limit (CountryRelationManager::monthly_update)
 	result &= add_diplomatic_action(
 		"increase_relations",
 		{
 			.commit =
 				[](Argument& arg) {
-					arg.instance_manager.get_country_relation_manager().assign_or_get_country_relation(
-						arg.sender, arg.receiver
-					) += static_cast<int32_t>(arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines()
-						.get_increaserelation_relation_on_accept().floor<int32_t>());
+					CountryRelationManager& manager = arg.instance_manager.get_country_relation_manager();
+					manager.set_relation_process(arg.sender, arg.receiver, manager.get_relation_process(arg.sender, arg.receiver) > 0 ? 0 : 1);
 				},
 			.allowed =
 				[](Argument const& arg) {
-					return true;
+					return arg.sender != arg.receiver && !arg.instance_manager.get_country_relation_manager().get_at_war_with(arg.sender, arg.receiver);
 				},
 		}
 	);
@@ -220,14 +220,12 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 		{
 			.commit =
 				[](Argument& arg) {
-					arg.instance_manager.get_country_relation_manager().assign_or_get_country_relation(
-						arg.sender, arg.receiver
-					) += static_cast<int32_t>(arg.instance_manager.definition_manager.get_define_manager().get_diplomacy_defines()
-						.get_decreaserelation_relation_on_accept().floor<int32_t>()); // the define is negative
+					CountryRelationManager& manager = arg.instance_manager.get_country_relation_manager();
+					manager.set_relation_process(arg.sender, arg.receiver, manager.get_relation_process(arg.sender, arg.receiver) < 0 ? 0 : -1);
 				},
 			.allowed =
 				[](Argument const& arg) {
-					return true;
+					return arg.sender != arg.receiver && !arg.instance_manager.get_country_relation_manager().get_at_war_with(arg.sender, arg.receiver);
 				},
 		}
 	);

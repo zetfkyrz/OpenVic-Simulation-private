@@ -11,11 +11,13 @@
 
 #include "openvic-simulation/core/Compare.hpp"
 #include "openvic-simulation/core/Hash.hpp"
+#include "openvic-simulation/defines/OpenVicDefines.hpp"
 #include "openvic-simulation/core/object/Date.hpp"
 #include "openvic-simulation/types/OrderedContainers.hpp"
 
 namespace OpenVic {
 	struct CountryInstance;
+	struct InstanceManager;
 
 	using CountryInstancePair = std::pair<CountryInstance const*, CountryInstance const*>;
 
@@ -271,6 +273,10 @@ private:
 
 		vector_ordered_map<CountryInstancePair, Date> discredits;
 		vector_ordered_map<CountryInstancePair, Date> embassy_bans;
+		// The relations (version 90, docs/DIPLOMACY.md): the scar of a war between two countries (negative, it heals after the peace) and the
+		// processes of the buttons (the sender improves (+1) or worsens (-1) its relation with the receiver every month)
+		vector_ordered_map<UnorderedCountryInstancePair, fixed_point_t> war_scars;
+		vector_ordered_map<CountryInstancePair, std::int8_t> relation_processes;
 
 	public:
 		std::optional<Date> get_discredited_date(CountryInstance const* country, CountryInstance const* recipient) const;
@@ -286,6 +292,34 @@ private:
 		decltype(embassy_bans.values_container()) get_embassy_banned_date_values() const;
 
 #undef RELATION_PAIR_MAP
+
+		// The relations (version 90, docs/DIPLOMACY.md). The defines, set by the InstanceManager (they outlive all instances)
+		static inline OpenVicDiplomacyDefines const* diplomacy_defines = nullptr;
+		static void set_diplomacy_defines(OpenVicDiplomacyDefines const& defines) {
+			diplomacy_defines = &defines;
+		}
+		// The scar of a war between the two (0 if none, else negative)
+		fixed_point_t get_war_scar(CountryInstance const* country, CountryInstance const* recipient) const;
+		// A war starts between the two: the scar is WAR_RELATION_PENALTY (a scar that is deeper stays)
+		void add_war_scar(CountryInstance* country, CountryInstance* recipient);
+		// The relation everybody sees: the relation + the scar of a war, from -200 to 200
+		relation_value_type get_effective_relation(CountryInstance const* country, CountryInstance const* recipient) const;
+		// The process of the sender toward the receiver: +1 improve, -1 worsen, 0 none
+		std::int8_t get_relation_process(CountryInstance const* sender, CountryInstance const* receiver) const;
+		void set_relation_process(CountryInstance* sender, CountryInstance const* receiver, std::int8_t direction);
+		// The highest relation the two can reach by the buttons: RELATION_ALLIED_MAX with an alliance, else RELATION_MAX
+		std::int32_t get_relation_limit(CountryInstance const* country, CountryInstance const* recipient) const;
+		// The diplomatic points a country gets a month, by its rank (great powers, secondary and colonial powers, the others, the uncivilised)
+		static fixed_point_t get_diplomatic_points_gain(CountryInstance const& country);
+		// Once a month: the diplomatic points, the processes, the limits of the relations and the healing of the scars
+		void monthly_update(InstanceManager& instance_manager);
+		// The state for the hash of the game
+		decltype(war_scars)::values_container_type const& get_war_scar_values() const {
+			return war_scars.values_container();
+		}
+		decltype(relation_processes)::values_container_type const& get_relation_process_values() const {
+			return relation_processes.values_container();
+		}
 
 		static constexpr std::string_view get_opinion_identifier(OpinionType type) {
 			switch (type) {

@@ -393,7 +393,8 @@ bool CountryInstance::may_build_in(const BuildingRestrictionCategory restriction
 }
 
 CountryRelationManager::relation_value_type CountryInstance::get_relations_with(CountryInstance const& country) const {
-	return country_relations_manager.get_country_relation(this, &country);
+	// the relation with the scar of a war (version 90, docs/DIPLOMACY.md)
+	return country_relations_manager.get_effective_relation(this, &country);
 }
 
 void CountryInstance::set_relations_with(CountryInstance& country, CountryRelationManager::relation_value_type relations) {
@@ -415,6 +416,8 @@ bool CountryInstance::is_at_war_with(CountryInstance const& country) const {
 void CountryInstance::set_at_war_with(CountryInstance& country, bool at_war) {
 	country_relations_manager.set_at_war_with(this, &country, at_war);
 	if (at_war) {
+		// a war: the scar of WAR_RELATION_PENALTY (version 90, docs/DIPLOMACY.md)
+		country_relations_manager.add_war_scar(this, &country);
 		war_enemies.emplace(country);
 		country.war_enemies.emplace(*this);
 	} else {

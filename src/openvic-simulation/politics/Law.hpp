@@ -68,7 +68,9 @@ namespace OpenVic {
 	X(free_slaves_home) /* the share of the slaves outside the colonies that become free every month (colonial slavery) */ \
 	X(tax_clergy) /* the income tax of the clergy (state religion: less) */ \
 	X(law_pass_speed) /* the laws pass this much faster (presidential republic) */ \
-	X(savings_threshold) /* the pops keep this much more money before they pass it round (women own property) */
+	X(savings_threshold) /* the pops keep this much more money before they pass it round (women own property) */ \
+	X(population_growth) /* the natural growth of the population (the health care, the women in the workplace; version 90: before, the laws named */ \
+	/* the modifier population_growth_pct of the technologies, which the laws cannot carry, and did nothing) */
 
 	enum struct law_effect_t : std::uint8_t {
 #define OV_LAW_EFFECT_ENUM(name) name,

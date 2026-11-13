@@ -6281,6 +6281,65 @@ namespace {
 		}
 	}
 
+	// The relations (version 90, docs/DIPLOMACY.md): the buttons are monthly processes (+20 / -30 for a diplomatic point, to the limit), the
+	// relation without an alliance stays in -100..100, a war gives a scar of -200 that heals after the peace, the points come by the rank
+	void test_relations(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		OpenVicDiplomacyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+		CountryInstance* const sweden = countries.get_country_instance_by_identifier("SWE");
+		CountryInstance* const portugal = countries.get_country_instance_by_identifier("POR");
+		CountryInstance* const uncivilised = countries.get_country_instance_by_identifier("CHI");
+		if (sweden == nullptr || portugal == nullptr || uncivilised == nullptr || relations.get_at_war_with(sweden, portugal)
+			|| relations.get_country_alliance(sweden, portugal)) {
+			fmt::println("TEST INFO relations: no Sweden, Portugal or China, or they are at war or allied, not checked");
+			return;
+		}
+		const CountryRelationManager::relation_value_type relation_before = relations.get_country_relation(sweden, portugal);
+		const fixed_point_t points_before = sweden->get_diplomatic_points();
+		const fixed_point_t china_before = uncivilised->get_diplomatic_points();
+
+		// Up by 20 for a point, stopped at 100
+		relations.set_country_relation(sweden, portugal, 90);
+		sweden->set_diplomatic_points(fixed_point_t(5));
+		relations.set_relation_process(sweden, portugal, 1);
+		relations.monthly_update(im);
+		const fixed_point_t points_after_up = sweden->get_diplomatic_points();
+		r.check(relations.get_country_relation(sweden, portugal) == defines.relation_max && relations.get_relation_process(sweden, portugal) == 0,
+			"relations: improving gives +20 a month up to 100, then the process ends",
+			fmt::format("relation {}, process {}", relations.get_country_relation(sweden, portugal), relations.get_relation_process(sweden, portugal)));
+		// Down by 30 for a point
+		relations.set_relation_process(sweden, portugal, -1);
+		relations.monthly_update(im);
+		r.check(relations.get_country_relation(sweden, portugal) == defines.relation_max - defines.relation_worsen_per_month
+				&& relations.get_relation_process(sweden, portugal) == -1,
+			"relations: worsening gives -30 a month and goes on",
+			fmt::format("relation {}", relations.get_country_relation(sweden, portugal)));
+		relations.set_relation_process(sweden, portugal, 0);
+		// Without an alliance the relation does not stay above 100
+		relations.set_country_relation(sweden, portugal, 150);
+		relations.monthly_update(im);
+		r.check(relations.get_country_relation(sweden, portugal) == defines.relation_max, "relations: without an alliance the relation is at most 100");
+		// The points: a month gives the points of the rank (a point was spent on each month of a process above)
+		r.check(points_after_up < fixed_point_t(5) + defines.diplomatic_points_great_power
+				&& uncivilised->get_diplomatic_points() >= std::min(defines.diplomatic_points_max, china_before + defines.diplomatic_points_uncivilised) - fixed_point_t::epsilon,
+			"relations: the diplomatic points come every month (the uncivilised 0.5) and a process takes one");
+		// The scar of a war heals after the peace
+		relations.add_war_scar(sweden, portugal);
+		const fixed_point_t scar = relations.get_war_scar(sweden, portugal);
+		relations.monthly_update(im);
+		const fixed_point_t healed = relations.get_war_scar(sweden, portugal) - scar;
+		const fixed_point_t expected = fixed_point_t(defines.war_relation_penalty) / (defines.war_relation_recovery_years * 12);
+		r.check(scar == fixed_point_t(-defines.war_relation_penalty) && healed == expected
+				&& static_cast<std::int32_t>(relations.get_effective_relation(sweden, portugal)) == std::clamp(static_cast<std::int32_t>(relations.get_country_relation(sweden, portugal))
+					+ relations.get_war_scar(sweden, portugal).floor<std::int32_t>(), -200, 200),
+			"relations: a war gives a scar of -200 that heals in 20 years",
+			fmt::format("scar {:.2f}, healed {:.4f} a month (expected {:.4f})", static_cast<double>(scar), static_cast<double>(healed), static_cast<double>(expected)));
+		// back as it was (the scar heals in the game on its own)
+		relations.set_country_relation(sweden, portugal, relation_before);
+		sweden->set_diplomatic_points(points_before);
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8244,6 +8303,7 @@ namespace {
 		test_laws(r, *im);
 		test_administration(r, *im);
 		test_literacy(r, *im);
+		test_relations(r, *im);
 		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own

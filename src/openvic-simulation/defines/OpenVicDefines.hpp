@@ -1077,6 +1077,31 @@ namespace OpenVic {
 	RATE(SUPPLY_MAP_ORANGE_FROM, supply_map_orange_from, Rate(75, 100), 0, 100) \
 	RATE(SUPPLY_MAP_RED_FROM, supply_map_red_from, Rate(50, 100), 0, 100)
 
+#define OV_DIPLOMACY_DEFINES(INT, FIXED, RATE, DOUBLE) \
+	/* The relations (version 90, docs/DIPLOMACY.md, decision of the owner 2026-11-14): from RELATION_MIN to RELATION_MAX; above it (to */ \
+	/* RELATION_ALLIED_MAX) only with an alliance (later the sphere and the treaties), below it only by a war. A war gives WAR_RELATION_PENALTY */ \
+	/* (a scar of its own, besides the relation) that heals in WAR_RELATION_RECOVERY_YEARS after the peace. The buttons start a process of the */ \
+	/* country: every month RELATION_IMPROVE_PER_MONTH up or RELATION_WORSEN_PER_MONTH down for RELATION_PROCESS_COST diplomatic points, until */ \
+	/* the limit */ \
+	INT(RELATION_MIN, relation_min, -100, -200, 0) \
+	INT(RELATION_MAX, relation_max, 100, 0, 200) \
+	INT(RELATION_ALLIED_MAX, relation_allied_max, 200, 0, 200) \
+	INT(RELATION_IMPROVE_PER_MONTH, relation_improve_per_month, 20, 0, 400) \
+	INT(RELATION_WORSEN_PER_MONTH, relation_worsen_per_month, 30, 0, 400) \
+	FIXED(RELATION_PROCESS_COST, relation_process_cost, 1, 0, 100) \
+	INT(WAR_RELATION_PENALTY, war_relation_penalty, 200, 0, 400) \
+	INT(WAR_RELATION_RECOVERY_YEARS, war_relation_recovery_years, 20, 1, 200) \
+	/* The diplomatic points: every month the great powers (the first GREAT_POWER_RANK of the ranking) get DIPLOMATIC_POINTS_GREAT_POWER, the */ \
+	/* secondary and colonial powers (to SECONDARY_POWER_RANK) DIPLOMATIC_POINTS_SECONDARY, the other civilised DIPLOMATIC_POINTS_OTHER, the */ \
+	/* uncivilised DIPLOMATIC_POINTS_UNCIVILISED; at most DIPLOMATIC_POINTS_MAX (later 20 by the research) */ \
+	FIXED(DIPLOMATIC_POINTS_MAX, diplomatic_points_max, 10, 0, 1000) \
+	INT(GREAT_POWER_RANK, great_power_rank, 8, 0, 1000) \
+	INT(SECONDARY_POWER_RANK, secondary_power_rank, 16, 0, 1000) \
+	FIXED(DIPLOMATIC_POINTS_GREAT_POWER, diplomatic_points_great_power, 2, 0, 100) \
+	FIXED(DIPLOMATIC_POINTS_SECONDARY, diplomatic_points_secondary, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) \
+	FIXED(DIPLOMATIC_POINTS_OTHER, diplomatic_points_other, 1, 0, 100) \
+	FIXED(DIPLOMATIC_POINTS_UNCIVILISED, diplomatic_points_uncivilised, fixed_point_t::_0_50, 0, 100)
+
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPoliticsDefines, "ov_politics", OV_POLITICS_DEFINES)
@@ -1088,6 +1113,7 @@ namespace OpenVic {
 	OV_DEFINE_GROUP(OpenVicCreditDefines, "ov_credit", OV_CREDIT_DEFINES)
 	OV_DEFINE_GROUP(OpenVicTradeDefines, "ov_trade", OV_TRADE_DEFINES)
 	OV_DEFINE_GROUP(OpenVicSupplyDefines, "ov_supply", OV_SUPPLY_DEFINES)
+	OV_DEFINE_GROUP(OpenVicDiplomacyDefines, "ov_diplomacy", OV_DIPLOMACY_DEFINES)
 
 	struct OpenVicDefines {
 	private:
@@ -1109,6 +1135,7 @@ namespace OpenVic {
 		OpenVicCreditDefines credit;
 		OpenVicTradeDefines trade;
 		OpenVicSupplyDefines supply;
+		OpenVicDiplomacyDefines diplomacy;
 
 		OpenVicDefines();
 

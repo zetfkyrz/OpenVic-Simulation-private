@@ -165,7 +165,9 @@ namespace OpenVic {
 		//     with the pops), the pay of the bureaucrats (ADMIN_*_PAY*), the priority of the administration (new action set_admin_focus)
 		// 89: the literacy (docs/LITERACY.md): research +LITERACY_RESEARCH, output +LITERACY_OUTPUT_* by the technologies, organisation
 		//     +LITERACY_ORGANISATION, officers from the literate (OFFICER_*), the literate rise to another strata faster (LITERACY_PROMOTION_WEIGHT)
-		inline constexpr int SIMULATION_VERSION = 89;
+		// 90: the relations (docs/DIPLOMACY.md): -100..100 (more only allied), a war gives a scar of -200 that heals in 20 years, the buttons of the
+		//     relations are monthly processes (+20 / -30 for a diplomatic point), the diplomatic points by the rank (ov_diplomacy)
+		inline constexpr int SIMULATION_VERSION = 90;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

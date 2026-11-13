@@ -738,7 +738,9 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					growth_multiplier = cached->second;
 				} else {
 					growth_multiplier = population_growth::growth_multiplier(
-						defines, effect_cache.get_population_growth_pct() != nullptr ? owner->get_modifier_effect_value(*effect_cache.get_population_growth_pct()) : fixed_point_t::_0,
+						defines, (effect_cache.get_population_growth_pct() != nullptr ? owner->get_modifier_effect_value(*effect_cache.get_population_growth_pct()) : fixed_point_t::_0)
+							// and the laws (the health care, the women in the workplace)
+							+ owner->get_law_effect(law_effect_t::population_growth),
 						get_scoped_product(*owner, effect_cache, scoped_effect_t::CASUALTIES_TAKEN_MULT, all_weights)
 					);
 					growth_multipliers.emplace(owner, growth_multiplier);

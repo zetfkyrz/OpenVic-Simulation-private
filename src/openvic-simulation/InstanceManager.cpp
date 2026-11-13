@@ -175,6 +175,7 @@ InstanceManager::InstanceManager(
 	FactoryInstance::set_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_research_defines(definition_manager.get_define_manager().get_openvic_defines().research);
+	CountryRelationManager::set_diplomacy_defines(definition_manager.get_define_manager().get_openvic_defines().diplomacy);
 	CountryInstance::set_company_type_manager(definition_manager.get_military_manager().get_company_type_manager());
 	CountryInstance::set_law_manager(definition_manager.get_politics_manager().get_law_manager());
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
@@ -354,6 +355,11 @@ void InstanceManager::tick() {
 				PoliticsDynamics::monthly_update(*this);
 				// The laws that are being passed, the proposals of the AI (docs/LAWS_DESIGN.md)
 				LawDynamics::monthly_update(*this);
+			}
+			{
+				// The relations: the diplomatic points, the processes of the buttons, the scars of the wars (docs/DIPLOMACY.md)
+				OV_PROFILE_SCOPE(tick_profiler, "diplomacy");
+				country_relation_manager.monthly_update(*this);
 			}
 			{
 				OV_PROFILE_SCOPE(tick_profiler, "rebels");

@@ -3,6 +3,7 @@
 #include <cassert>
 
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/InstanceManager.hpp"
 
 using namespace OpenVic;
 using CRM = CountryRelationManager;
@@ -437,4 +438,152 @@ bool CRM::set_embassy_banned_date( //
 
 decltype(CRM::embassy_bans.values_container()) CRM::get_embassy_banned_date_values() const {
 	return embassy_bans.values_container();
+}
+
+// ---- The relations (version 90, docs/DIPLOMACY.md)
+
+fixed_point_t CRM::get_war_scar(CountryInstance const* country, CountryInstance const* recipient) const {
+	decltype(war_scars)::const_iterator it = war_scars.find({ country, recipient });
+	return it == war_scars.end() ? fixed_point_t::_0 : it->second;
+}
+
+void CRM::add_war_scar(CountryInstance* country, CountryInstance* recipient) {
+	if (diplomacy_defines == nullptr || country == recipient || diplomacy_defines->war_relation_penalty <= 0) {
+		return;
+	}
+	const fixed_point_t scar = fixed_point_t(-diplomacy_defines->war_relation_penalty);
+	decltype(war_scars)::iterator it = war_scars.find({ country, recipient });
+	if (it == war_scars.end()) {
+		war_scars.insert({ { country, recipient }, scar });
+	} else if (it->second > scar) {
+		it.value() = scar;
+	}
+	// a war ends the processes of the buttons between the two
+	relation_processes.erase({ country, recipient });
+	relation_processes.erase({ recipient, country });
+}
+
+relation_value_type CRM::get_effective_relation(CountryInstance const* country, CountryInstance const* recipient) const {
+	const std::int32_t value = static_cast<std::int32_t>(get_country_relation(country, recipient))
+		+ get_war_scar(country, recipient).floor<std::int32_t>();
+	return static_cast<relation_value_type>(std::clamp(value, -200, 200));
+}
+
+std::int8_t CRM::get_relation_process(CountryInstance const* sender, CountryInstance const* receiver) const {
+	decltype(relation_processes)::const_iterator it = relation_processes.find({ sender, receiver });
+	return it == relation_processes.end() ? std::int8_t { 0 } : it->second;
+}
+
+void CRM::set_relation_process(CountryInstance* sender, CountryInstance const* receiver, const std::int8_t direction) {
+	if (direction == 0) {
+		relation_processes.erase({ sender, receiver });
+		return;
+	}
+	decltype(relation_processes)::iterator it = relation_processes.find({ sender, receiver });
+	if (it == relation_processes.end()) {
+		relation_processes.insert({ { sender, receiver }, direction });
+	} else {
+		it.value() = direction;
+	}
+}
+
+std::int32_t CRM::get_relation_limit(CountryInstance const* country, CountryInstance const* recipient) const {
+	if (diplomacy_defines == nullptr) {
+		return 200;
+	}
+	return get_country_alliance(country, recipient) ? diplomacy_defines->relation_allied_max : diplomacy_defines->relation_max;
+}
+
+fixed_point_t CRM::get_diplomatic_points_gain(CountryInstance const& country) {
+	if (diplomacy_defines == nullptr) {
+		return fixed_point_t::_0;
+	}
+	OpenVicDiplomacyDefines const& defines = *diplomacy_defines;
+	const std::size_t rank = country.get_total_rank();
+	if (!country.is_civilised()) {
+		return defines.diplomatic_points_uncivilised;
+	}
+	if (rank > 0 && rank <= static_cast<std::size_t>(std::max(0, defines.great_power_rank))) {
+		return defines.diplomatic_points_great_power;
+	}
+	if (rank > 0 && rank <= static_cast<std::size_t>(std::max(0, defines.secondary_power_rank))) {
+		return defines.diplomatic_points_secondary;
+	}
+	return defines.diplomatic_points_other;
+}
+
+void CRM::monthly_update(InstanceManager& instance_manager) {
+	if (diplomacy_defines == nullptr) {
+		return;
+	}
+	OpenVicDiplomacyDefines const& defines = *diplomacy_defines;
+
+	// The diplomatic points of the month, by the rank of the country
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.is_rebel_country()) {
+			continue;
+		}
+		const fixed_point_t gain = get_diplomatic_points_gain(country);
+		country.set_diplomatic_points(std::min(defines.diplomatic_points_max, country.get_diplomatic_points() + gain));
+	}
+
+	// The processes of the buttons, in the order they were started
+	memory::vector<CountryInstancePair> finished;
+	for (auto const& [pair, direction] : relation_processes) {
+		CountryInstance* const sender = const_cast<CountryInstance*>(pair.first);
+		CountryInstance* const receiver = const_cast<CountryInstance*>(pair.second);
+		if (sender == nullptr || receiver == nullptr || !sender->exists() || !receiver->exists() || get_at_war_with(sender, receiver)) {
+			finished.push_back(pair);
+			continue;
+		}
+		const std::int32_t high = get_relation_limit(sender, receiver);
+		const std::int32_t low = defines.relation_min;
+		std::int32_t relation = get_country_relation(sender, receiver);
+		if ((direction > 0 && relation >= high) || (direction < 0 && relation <= low)) {
+			finished.push_back(pair);
+			continue;
+		}
+		if (sender->get_diplomatic_points() < defines.relation_process_cost) {
+			continue; // it waits for the points
+		}
+		sender->set_diplomatic_points(sender->get_diplomatic_points() - defines.relation_process_cost);
+		relation = direction > 0 ? std::min(high, relation + defines.relation_improve_per_month)
+			: std::max(low, relation - defines.relation_worsen_per_month);
+		set_country_relation(sender, receiver, static_cast<relation_value_type>(relation));
+		if ((direction > 0 && relation >= high) || (direction < 0 && relation <= low)) {
+			finished.push_back(pair);
+		}
+	}
+	for (CountryInstancePair const& pair : finished) {
+		relation_processes.erase(pair);
+	}
+
+	// The relations stay in their limits (from the history, the credits, an alliance that ended)
+	for (auto it = relations.begin(); it != relations.end(); ++it) {
+		CountryInstance const* const first = it->first.first;
+		CountryInstance const* const second = it->first.second;
+		const std::int32_t high = get_relation_limit(first, second);
+		const std::int32_t value = std::clamp<std::int32_t>(it->second, defines.relation_min, high);
+		if (value != it->second) {
+			it.value() = static_cast<relation_value_type>(value);
+		}
+	}
+
+	// The scars of the wars heal after the peace: WAR_RELATION_PENALTY in WAR_RELATION_RECOVERY_YEARS
+	const fixed_point_t heal = fixed_point_t(std::max(0, defines.war_relation_penalty)) / (std::max(1, defines.war_relation_recovery_years) * 12);
+	memory::vector<UnorderedCountryInstancePair> healed;
+	for (auto it = war_scars.begin(); it != war_scars.end(); ++it) {
+		if (get_at_war_with(it->first.first, it->first.second)) {
+			continue;
+		}
+		const fixed_point_t value = it->second + heal;
+		if (value >= fixed_point_t::_0) {
+			healed.push_back(it->first);
+		} else {
+			it.value() = value;
+		}
+	}
+	for (UnorderedCountryInstancePair const& pair : healed) {
+		war_scars.erase(pair);
+	}
 }

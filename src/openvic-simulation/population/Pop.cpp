@@ -872,7 +872,10 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 				quantity_added_to_stockpile,
 				quantity_bought
 			);
-			pop.add_artisan_inputs_expense(expense);
+			// a share of a tiny purchase can round to nothing (it warned hundreds of times a game)
+			if (expense > fixed_point_t::_0) {
+				pop.add_artisan_inputs_expense(expense);
+			}
 		}
 	}
 
