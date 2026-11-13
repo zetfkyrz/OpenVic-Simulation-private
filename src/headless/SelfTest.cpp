@@ -1,3 +1,4 @@
+#include "openvic-simulation/ai/DiplomacyAI.hpp"
 #include "SelfTest.hpp"
 
 #include <algorithm>
@@ -6329,15 +6330,72 @@ namespace {
 		const fixed_point_t scar = relations.get_war_scar(sweden, portugal);
 		relations.monthly_update(im);
 		const fixed_point_t healed = relations.get_war_scar(sweden, portugal) - scar;
-		const fixed_point_t expected = fixed_point_t(defines.war_relation_penalty) / (defines.war_relation_recovery_years * 12);
+		const fixed_point_t expected = fixed_point_t(defines.war_relation_heal_per_month);
 		r.check(scar == fixed_point_t(-defines.war_relation_penalty) && healed == expected
 				&& static_cast<std::int32_t>(relations.get_effective_relation(sweden, portugal)) == std::clamp(static_cast<std::int32_t>(relations.get_country_relation(sweden, portugal))
 					+ relations.get_war_scar(sweden, portugal).floor<std::int32_t>(), -200, 200),
-			"relations: a war gives a scar of -200 that heals in 20 years",
+			"relations: a war gives a scar of -200 that heals by 1 a month",
 			fmt::format("scar {:.2f}, healed {:.4f} a month (expected {:.4f})", static_cast<double>(scar), static_cast<double>(healed), static_cast<double>(expected)));
 		// back as it was (the scar heals in the game on its own)
 		relations.set_country_relation(sweden, portugal, relation_before);
 		sweden->set_diplomatic_points(points_before);
+	}
+
+	// The diplomacy of the AI and the help of the AI (version 91, docs/DIPLOMACY.md): after a month every great power of the AI has a goal for the
+	// years ahead, no two countries at war are allied; the help of the AI buys again a good the government lacks and does not buy
+	void test_diplomacy_ai(Results& r, InstanceManager& im) {
+		OpenVicDiplomacyDefines& defines = const_cast<OpenVicDiplomacyDefines&>(im.definition_manager.get_define_manager().get_openvic_defines().diplomacy);
+		const std::int32_t enabled_before = defines.ai_diplomacy_enabled;
+		defines.ai_diplomacy_enabled = 1;
+		DiplomacyAI::monthly_update(im);
+		defines.ai_diplomacy_enabled = enabled_before;
+		bool goals = true;
+		std::size_t great_powers = 0;
+		for (CountryInstance const& country : im.get_country_instance_manager().get_country_instances()) {
+			const std::size_t rank = country.get_total_rank();
+			if (!country.exists() || !country.is_ai() || rank == 0 || rank > static_cast<std::size_t>(defines.great_power_rank) || country.get_owned_provinces().empty()) {
+				continue;
+			}
+			++great_powers;
+			goals &= country.get_ai_goal() != CountryInstance::ai_goal_t::NONE && country.get_ai_goal_until() > im.get_today();
+		}
+		r.check(great_powers > 0 && goals, "diplomacy AI: every great power of the AI has a goal for the years ahead", fmt::format("{} great powers", great_powers));
+		bool allied_at_war = false;
+		for (CountryInstance const& a : im.get_country_instance_manager().get_country_instances()) {
+			for (CountryInstance const& b : im.get_country_instance_manager().get_country_instances()) {
+				if (&a != &b && a.has_alliance_with(b) && a.is_at_war_with(b)) {
+					allied_at_war = true;
+				}
+			}
+		}
+		r.check(!allied_at_war, "diplomacy AI: no two countries at war with each other are allied");
+
+		CountryInstance* const country = im.get_country_instance_manager().get_country_instance_by_identifier("SWE");
+		GoodInstance* const good = im.get_good_instance_manager().get_good_instance_by_identifier("grain");
+		if (country == nullptr || good == nullptr) {
+			fmt::println("TEST INFO diplomacy AI: no Sweden or no grain, the help of the AI not checked");
+			return;
+		}
+		CountryInstance::good_data_t& good_data = country->get_good_data(*good);
+		const bool automated_before = good_data.is_automated;
+		const bool selling_before = good_data.is_selling;
+		const fixed_point_t stockpile_before = good_data.stockpile_amount;
+		const fixed_point_t needs_before = good_data.government_needs;
+		const bool was_ai = country->is_ai();
+		country->set_ai(false);
+		country->set_ai_assist(true);
+		good_data.is_automated = false;
+		good_data.is_selling = true;
+		good_data.stockpile_amount = fixed_point_t::_0;
+		good_data.government_needs = fixed_point_t(10);
+		DiplomacyAI::weekly_assist(im);
+		r.check(good_data.is_automated, "diplomacy AI: the help of the AI buys again a good the government lacks");
+		good_data.is_automated = automated_before;
+		good_data.is_selling = selling_before;
+		good_data.stockpile_amount = stockpile_before;
+		good_data.government_needs = needs_before;
+		country->set_ai_assist(false);
+		country->set_ai(was_ai);
 	}
 
 	void test_laws(Results& r, InstanceManager& im) {
@@ -8287,7 +8345,13 @@ namespace {
 		test_companies(r, *im); // ticks days, so it is the last of the tests that use the game
 		game.end();
 
-		// ---- run 9: the live divisions and the land battles (docs/WAR_ASSUMPTIONS.md, section 6)
+		// ---- run 9: the live divisions and the land battles (docs/WAR_ASSUMPTIONS.md, section 6). The diplomacy of the AI is off in runs 9
+		// and 10 (version 91): its alliances would call other countries into the wars the tests make (test_diplomacy_ai turns it on for itself,
+		// at the end of the run)
+		OpenVicDiplomacyDefines& diplomacy_defines =
+			const_cast<OpenVicDiplomacyDefines&>(game.game_manager.get_definition_manager().get_define_manager().get_openvic_defines().diplomacy);
+		const std::int32_t diplomacy_ai_before = diplomacy_defines.ai_diplomacy_enabled;
+		diplomacy_defines.ai_diplomacy_enabled = 0;
 		im = game.start();
 		r.check(im != nullptr, "live battles: the instance starts");
 		if (im == nullptr) {
@@ -8320,7 +8384,8 @@ namespace {
 		test_mobilisation_regions(r, *im);
 		test_allies_and_separate_peace(r, *im);
 		test_army_orders(r, *im);
-		test_canned_food_grain(r, *im); // last: it changes the stockpile and the armies of a country
+		test_canned_food_grain(r, *im); // it changes the stockpile and the armies of a country
+		test_diplomacy_ai(r, *im); // last: it makes alliances and goals
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)
@@ -8333,6 +8398,7 @@ namespace {
 		test_mobilisation(r, *im); // ticks the days of the mobilisation and DEMOBILISE_DAYS
 		test_ai_mobilisation(r, *im); // a war of its own
 		game.end();
+		diplomacy_defines.ai_diplomacy_enabled = diplomacy_ai_before;
 
 		// ---- the defines hash does not change while playing
 		r.check(defines_hash != 0, "defines: the instance sees the hash of the defines");

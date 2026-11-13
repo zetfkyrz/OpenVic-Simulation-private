@@ -167,7 +167,10 @@ namespace OpenVic {
 		//     +LITERACY_ORGANISATION, officers from the literate (OFFICER_*), the literate rise to another strata faster (LITERACY_PROMOTION_WEIGHT)
 		// 90: the relations (docs/DIPLOMACY.md): -100..100 (more only allied), a war gives a scar of -200 that heals in 20 years, the buttons of the
 		//     relations are monthly processes (+20 / -30 for a diplomatic point), the diplomatic points by the rank (ov_diplomacy)
-		inline constexpr int SIMULATION_VERSION = 90;
+		// 91: the scars of the wars heal by 1 a month, 5 diplomatic points at the start; the diplomacy of the AI (threats, alliances, relations,
+		//     the goals of the great powers every 5 years, war targets by the relations; ai/DiplomacyAI.cpp); the help of the AI for the
+		//     player (new action set_ai_assist)
+		inline constexpr int SIMULATION_VERSION = 91;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

@@ -543,6 +543,24 @@ namespace OpenVic {
 		// is ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED / _FULL
 		std::uint8_t PROPERTY_RW(mobilisation_level, 1);
 	public:
+		// The goal of a great power of the AI (version 91, docs/DIPLOMACY.md): chosen every AI_GOAL_YEARS
+		enum class ai_goal_t : std::uint8_t { NONE, STRENGTHEN_ARMY, CONQUEST, ECONOMIC_CONTROL, COALITION };
+	private:
+		ai_goal_t PROPERTY_RW(ai_goal, ai_goal_t::NONE);
+		CountryInstance* PROPERTY_RW(ai_goal_target, nullptr);
+		Date PROPERTY_RW(ai_goal_until);
+		// The help of the AI for the player (version 91): the goods of the stockpile, the borders without troops in a war (once per enemy)
+		bool PROPERTY_RW(ai_assist, false);
+		memory::vector<CountryInstance const*> ai_assist_warned_borders;
+	public:
+		memory::vector<CountryInstance const*> const& get_ai_assist_warned_borders() const {
+			return ai_assist_warned_borders;
+		}
+		void set_ai_assist_warned_borders(memory::vector<CountryInstance const*> value) {
+			ai_assist_warned_borders = std::move(value);
+		}
+	private:
+	public:
 		// The state of the priority of the administration (nullptr: none)
 		State const* get_admin_focus_state() const;
 		// How fast the bureaucrats come for their pay (version 88): 0 under ADMIN_LOW_PAY, 1 at ADMIN_NORMAL_PAY, up to 1 + ADMIN_HIGH_PAY_PROMOTION

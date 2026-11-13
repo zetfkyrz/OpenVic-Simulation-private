@@ -1,4 +1,5 @@
 #include "DiplomaticAction.hpp"
+#include "openvic-simulation/ai/DiplomacyAI.hpp"
 
 #include <any>
 #include <string_view>
@@ -136,6 +137,15 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 					arg.instance_manager.get_country_relation_manager().set_country_alliance( //
 						arg.sender, arg.receiver, true
 					);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return !arg.sender->has_alliance_with(*arg.receiver) && !arg.sender->is_at_war_with(*arg.receiver);
+				},
+			// An AI country answers by its interests (version 91, docs/DIPLOMACY.md); between players the alliance is made
+			.get_acceptance =
+				[](Argument const& arg) {
+					return arg.receiver->is_ai() ? DiplomacyAI::alliance_acceptance(arg.instance_manager, *arg.sender, *arg.receiver) : 1;
 				},
 		}
 	);

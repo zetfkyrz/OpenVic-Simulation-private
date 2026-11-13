@@ -7,6 +7,7 @@
 #include "openvic-simulation/politics/PoliticsDynamics.hpp"
 #include "openvic-simulation/research/ResearchDynamics.hpp"
 #include "openvic-simulation/population/PopDynamics.hpp"
+#include "openvic-simulation/ai/DiplomacyAI.hpp"
 #include "openvic-simulation/politics/LawDynamics.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
@@ -334,6 +335,11 @@ void InstanceManager::tick() {
 			OV_PROFILE_SCOPE(tick_profiler, "investment");
 			InvestmentPlanner::tick(*this);
 		}
+		// The help of the AI for the player, once a week (version 91, docs/DIPLOMACY.md)
+		if ((today - Date {}).to_int() % 7 == 0) {
+			OV_PROFILE_SCOPE(tick_profiler, "help of the AI");
+			DiplomacyAI::weekly_assist(*this);
+		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "units_wars_credit"); }
 
 		if (today.is_month_start()) {
@@ -503,6 +509,10 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 
 	// The consciousness of the pops is known now, which the needs depend on
 	initialise_pop_savings();
+	// The diplomatic points of the start (version 91, docs/DIPLOMACY.md)
+	for (CountryInstance& country : country_instance_manager.get_country_instances()) {
+		country.set_diplomatic_points(definition_manager.get_define_manager().get_openvic_defines().diplomacy.diplomatic_points_start);
+	}
 
 	ret &= map_instance.get_state_manager().generate_states(
 		definition_manager.get_map_definition(),

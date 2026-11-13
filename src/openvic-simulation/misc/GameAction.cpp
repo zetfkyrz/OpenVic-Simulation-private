@@ -366,6 +366,20 @@ bool GameActionManager::VariantVisitor::operator() (set_admin_focus_argument_t c
 	return true;
 }
 
+// The help of the AI for the player (version 91, docs/DIPLOMACY.md): the goods of the stockpile and the borders without troops, once a week
+bool GameActionManager::VariantVisitor::operator() (set_ai_assist_argument_t const& argument) const {
+	const auto [country_index, assist] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (country.get_ai_assist() == assist) {
+		return false;
+	}
+	country.set_ai_assist(assist);
+	if (!assist) {
+		country.set_ai_assist_warned_borders({});
+	}
+	return true;
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

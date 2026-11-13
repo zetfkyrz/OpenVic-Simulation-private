@@ -1080,7 +1080,8 @@ namespace OpenVic {
 #define OV_DIPLOMACY_DEFINES(INT, FIXED, RATE, DOUBLE) \
 	/* The relations (version 90, docs/DIPLOMACY.md, decision of the owner 2026-11-14): from RELATION_MIN to RELATION_MAX; above it (to */ \
 	/* RELATION_ALLIED_MAX) only with an alliance (later the sphere and the treaties), below it only by a war. A war gives WAR_RELATION_PENALTY */ \
-	/* (a scar of its own, besides the relation) that heals in WAR_RELATION_RECOVERY_YEARS after the peace. The buttons start a process of the */ \
+	/* (a scar of its own, besides the relation) that heals by WAR_RELATION_HEAL_PER_MONTH a month after the peace (version 91; to 0 in about */ \
+	/* 17 years). The buttons start a process of the */ \
 	/* country: every month RELATION_IMPROVE_PER_MONTH up or RELATION_WORSEN_PER_MONTH down for RELATION_PROCESS_COST diplomatic points, until */ \
 	/* the limit */ \
 	INT(RELATION_MIN, relation_min, -100, -200, 0) \
@@ -1090,17 +1091,43 @@ namespace OpenVic {
 	INT(RELATION_WORSEN_PER_MONTH, relation_worsen_per_month, 30, 0, 400) \
 	FIXED(RELATION_PROCESS_COST, relation_process_cost, 1, 0, 100) \
 	INT(WAR_RELATION_PENALTY, war_relation_penalty, 200, 0, 400) \
-	INT(WAR_RELATION_RECOVERY_YEARS, war_relation_recovery_years, 20, 1, 200) \
+	INT(WAR_RELATION_HEAL_PER_MONTH, war_relation_heal_per_month, 1, 0, 400) \
 	/* The diplomatic points: every month the great powers (the first GREAT_POWER_RANK of the ranking) get DIPLOMATIC_POINTS_GREAT_POWER, the */ \
 	/* secondary and colonial powers (to SECONDARY_POWER_RANK) DIPLOMATIC_POINTS_SECONDARY, the other civilised DIPLOMATIC_POINTS_OTHER, the */ \
 	/* uncivilised DIPLOMATIC_POINTS_UNCIVILISED; at most DIPLOMATIC_POINTS_MAX (later 20 by the research) */ \
 	FIXED(DIPLOMATIC_POINTS_MAX, diplomatic_points_max, 10, 0, 1000) \
+	FIXED(DIPLOMATIC_POINTS_START, diplomatic_points_start, 5, 0, 1000) \
 	INT(GREAT_POWER_RANK, great_power_rank, 8, 0, 1000) \
 	INT(SECONDARY_POWER_RANK, secondary_power_rank, 16, 0, 1000) \
 	FIXED(DIPLOMATIC_POINTS_GREAT_POWER, diplomatic_points_great_power, 2, 0, 100) \
 	FIXED(DIPLOMATIC_POINTS_SECONDARY, diplomatic_points_secondary, fixed_point_t::_1 + fixed_point_t::_0_50, 0, 100) \
 	FIXED(DIPLOMATIC_POINTS_OTHER, diplomatic_points_other, 1, 0, 100) \
-	FIXED(DIPLOMATIC_POINTS_UNCIVILISED, diplomatic_points_uncivilised, fixed_point_t::_0_50, 0, 100)
+	FIXED(DIPLOMATIC_POINTS_UNCIVILISED, diplomatic_points_uncivilised, fixed_point_t::_0_50, 0, 100) \
+	/* The diplomacy of the AI (version 91, docs/DIPLOMACY.md). The threat of a country: its military power / ours x (150 - the relation) / 150 */ \
+	/* (from a third to twice), x 1 for a neighbour, x AI_FAR_THREAT for a great power that is not; above AI_THREAT_MIN it is a threat. Against */ \
+	/* its biggest threat a country looks for an ally: relation at least AI_ALLIANCE_MIN_RELATION, at most AI_MAX_ALLIANCES alliances; the other */ \
+	/* side accepts (at least AI_ALLIANCE_ACCEPT_RELATION, it fears the same country or the proposer is strong). The AI keeps at most */ \
+	/* AI_MAX_RELATION_PROCESSES processes of the buttons. It does not attack a country it has a relation of AI_WAR_MAX_RELATION or more with */ \
+	INT(AI_DIPLOMACY_ENABLED, ai_diplomacy_enabled, 1, 0, 1) \
+	RATE(AI_THREAT_MIN, ai_threat_min, Rate(50, 100), 0, 100) \
+	RATE(AI_FAR_THREAT, ai_far_threat, Rate(25, 100), 0, 1) \
+	INT(AI_ALLIANCE_MIN_RELATION, ai_alliance_min_relation, 40, -200, 200) \
+	INT(AI_ALLIANCE_ACCEPT_RELATION, ai_alliance_accept_relation, 25, -200, 200) \
+	INT(AI_MAX_ALLIANCES, ai_max_alliances, 3, 0, 100) \
+	INT(AI_MAX_RELATION_PROCESSES, ai_max_relation_processes, 2, 0, 100) \
+	INT(AI_WAR_MAX_RELATION, ai_war_max_relation, 50, -200, 200) \
+	/* The interest of a great power in a country: 1 for a land neighbour, else (1 - the distance to its nearest state / AI_INTEREST_DISTANCE map */ \
+	/* pixels) x the share of its navy in the strongest navy (Oman is near British Aden and India and Britain has the navy: the interest is high; */ \
+	/* for Russia it is low) */ \
+	INT(AI_INTEREST_DISTANCE, ai_interest_distance, 600, 1, 100000) \
+	/* The goals of the great powers of the AI: every AI_GOAL_YEARS a goal (strengthen the army, conquest, economic control, a coalition), chosen */ \
+	/* by the situation and a dice. Conquest: a land neighbour with at most AI_CONQUEST_MAX_POWER of our power and a relation under */ \
+	/* AI_WAR_MAX_RELATION; the relation with it is worsened to AI_CONQUEST_WORSEN_TO. Economic control: the relations with up to */ \
+	/* AI_CONTROL_TARGETS small countries (outside the first SECONDARY_POWER_RANK) of the highest interest are improved */ \
+	INT(AI_GOAL_YEARS, ai_goal_years, 5, 1, 100) \
+	RATE(AI_CONQUEST_MAX_POWER, ai_conquest_max_power, Rate(60, 100), 0, 100) \
+	INT(AI_CONQUEST_WORSEN_TO, ai_conquest_worsen_to, -50, -200, 200) \
+	INT(AI_CONTROL_TARGETS, ai_control_targets, 2, 0, 100)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

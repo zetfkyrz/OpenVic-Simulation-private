@@ -1,4 +1,5 @@
 #include "CountryAI.hpp"
+#include "openvic-simulation/ai/DiplomacyAI.hpp"
 
 #include "openvic-simulation/military/Unlocks.hpp"
 
@@ -988,9 +989,20 @@ namespace {
 				if (dangerous) {
 					continue;
 				}
-				if (target == nullptr || power < target_power) {
+				// The best target by the diplomacy (version 91, docs/DIPLOMACY.md): weaker, worse relations, the target of the goal; never a
+				// country we like (AI_WAR_MAX_RELATION) or an ally
+				fixed_point_t score = DiplomacyAI::war_target_score(instance_manager, country, *owner);
+				if (score <= fixed_point_t::_0) {
+					continue;
+				}
+				// the target we already have a casus belli against comes first (else a better target of a later month starts a new
+				// justification and the war is never declared)
+				if (country.has_casus_belli_against(*owner, today)) {
+					score *= 100;
+				}
+				if (target == nullptr || score > target_power) {
 					target = owner;
-					target_power = power;
+					target_power = score;
 					border_province = &other;
 				}
 			}
@@ -1015,6 +1027,8 @@ namespace {
 
 void CountryAI::monthly_update(InstanceManager& instance_manager) {
 	RgoBuildingData::monthly_update(instance_manager); // the pops of every country, the player's too
+	// The diplomacy of the AI first: the goals of the great powers, the alliances, the relations (version 91)
+	DiplomacyAI::monthly_update(instance_manager);
 	OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 	const Date today = instance_manager.get_today();
 
@@ -1051,8 +1065,15 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			navies_at_war(instance_manager, country);
 			ai_landings(instance_manager, country);
 		}
+		// The goal "strengthen the army" of a great power (version 91): it recruits at peace too and keeps the military pay up
+		const bool army_goal = country.get_ai_goal() == CountryInstance::ai_goal_t::STRENGTHEN_ARMY;
 		if (country.is_at_war()) {
 			mobilise_if_weaker(instance_manager, country);
+			recruit(instance_manager, country);
+		} else if (army_goal) {
+			if (country.get_military_spending_slider_value().get_value_untracked() < fixed_point_t::_1) {
+				country.set_military_spending_slider_value(fixed_point_t::_1);
+			}
 			recruit(instance_manager, country);
 		} else {
 			disband_over_manpower(instance_manager, country);
@@ -1064,6 +1085,8 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			&& today.get_year() * 12 + today.get_month() > ai.war_free_until_year * 12 + ai.war_free_until_month
 			// the chance of a month: the yearly chance spread over 12 months, the dice has 100 sides; a justified war is declared without the dice
 			&& (!country.casus_belli.empty()
+				// a great power with the goal of a conquest looks for its war every month
+				|| country.get_ai_goal() == CountryInstance::ai_goal_t::CONQUEST
 				|| dice(country, today, static_cast<std::uint64_t>(ai.war_decision_salt)) * 12 * (Rate::DENOMINATOR / 100)
 				< ai.war_chance_per_year.numerator)) {
 			look_for_war(instance_manager, country);

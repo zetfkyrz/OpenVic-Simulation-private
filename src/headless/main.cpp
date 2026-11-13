@@ -47,6 +47,7 @@
 #include <openvic-simulation/economy/production/ArtisanalProducer.hpp>
 #include <openvic-simulation/economy/production/FactoryInstance.hpp>
 #include <openvic-simulation/map/State.hpp>
+#include <openvic-simulation/ai/DiplomacyAI.hpp>
 #include <openvic-simulation/population/Pop.hpp>
 #include <openvic-simulation/dataloader/Dataloader.hpp>
 #include <openvic-simulation/economy/GoodDefinition.hpp>
@@ -720,6 +721,19 @@ static bool test_navy(InstanceManager& instance_manager, DefinitionManager const
 				if (&candidate.get_country() == &country && candidate.get_unit_count() >= 1 && candidate.get_unit_count() <= carrier->get_transport_capacity()) {
 					army = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
 					break;
+				}
+			}
+			// No army small enough (version 91: the allies of the AI call the country into their wars and it mobilises): a regiment of an army
+			// of the country is split off to be carried
+			if (army == nullptr) {
+				for (ArmyInstance const& candidate : unit_manager.get_armies()) {
+					if (&candidate.get_country() == &country && candidate.get_unit_count() > 1) {
+						ArmyInstance* const big = static_cast<ArmyInstance*>(unit_manager.get_unit_instance_group_by_unique_id(candidate.unique_id));
+						if (big != nullptr) {
+							army = unit_manager.split_regiment(*big, static_cast<RegimentInstance&>(big->get_units().back().get()));
+						}
+						break;
+					}
 				}
 			}
 			check(army != nullptr, "found an army to carry");
@@ -2409,6 +2423,46 @@ static void run_command_dump(InstanceManager& instance_manager) {
 // --dump-wars: the wars of the day (WAR) and the groups of the field marshals of the countries at war (WAR_GROUP)
 static void run_war_dump(InstanceManager& instance_manager, const size_t day) {
 	WarManager const& war_manager = instance_manager.get_war_manager();
+	// AI_WAR (version 91): why the AI attacks or not - for the 16 first countries of the ranking at peace, every land neighbour: can a war be
+	// declared, its power over ours, an ally of it stronger than us, the relation, the score of the diplomacy of the AI, a casus belli
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (!country.exists() || country.get_total_rank() == 0 || country.get_total_rank() > 16 || country.is_at_war()) {
+			continue;
+		}
+		std::vector<CountryInstance*> neighbours;
+		for (ProvinceInstance* province : country.get_owned_provinces()) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() != ProvinceDefinition::adjacency_t::type_t::LAND || adjacency.get_to().is_water()) {
+					continue;
+				}
+				CountryInstance* const owner = instance_manager.get_map_instance().get_province_instance_by_definition(adjacency.get_to()).get_owner();
+				if (owner != nullptr && owner != &country && std::find(neighbours.begin(), neighbours.end(), owner) == neighbours.end()) {
+					neighbours.push_back(owner);
+				}
+			}
+		}
+		const fixed_point_t own_power = country.military_power.get_untracked();
+		std::string text;
+		for (CountryInstance* owner : neighbours) {
+			bool dangerous = false;
+			for (CountryInstance& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (candidate.exists() && candidate.has_alliance_with(*owner) && candidate.military_power.get_untracked() > own_power) {
+					dangerous = true;
+					break;
+				}
+			}
+			const double distance = country.get_capital() != nullptr && owner->get_capital() != nullptr
+				? static_cast<double>(static_cast<MapDefinition const&>(instance_manager.get_map_instance()).calculate_distance_between(
+					country.get_capital()->province_definition, owner->get_capital()->province_definition)) : -1.0;
+			text += fmt::format(" {}(dist={:.0f} declare={} power={:.2f} strong_ally={} rel={} score={:.2f} cb={})", owner->get_identifier(), distance,
+				war_manager.can_declare_war(country, *owner, instance_manager.get_today()) ? 1 : 0,
+				own_power > fixed_point_t::_0 ? static_cast<double>(owner->military_power.get_untracked() / own_power) : 0.0, dangerous ? 1 : 0,
+				static_cast<int>(country.get_relations_with(*owner)), static_cast<double>(DiplomacyAI::war_target_score(instance_manager, country, *owner)),
+				country.has_casus_belli_against(*owner, instance_manager.get_today()) ? 1 : 0);
+		}
+		fmt::println("AI_WAR day={} {} goal={} points={:.1f}{}", day, country.get_identifier(), static_cast<int>(country.get_ai_goal()),
+			static_cast<double>(country.get_diplomatic_points()), text);
+	}
 	const auto regiments_of = [](memory::vector<CountryInstance*> const& side) -> size_t {
 		size_t regiments = 0;
 		for (CountryInstance const* country : side) {

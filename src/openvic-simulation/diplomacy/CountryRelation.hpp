@@ -309,6 +309,10 @@ private:
 		void set_relation_process(CountryInstance* sender, CountryInstance const* receiver, std::int8_t direction);
 		// The highest relation the two can reach by the buttons: RELATION_ALLIED_MAX with an alliance, else RELATION_MAX
 		std::int32_t get_relation_limit(CountryInstance const* country, CountryInstance const* recipient) const;
+		// The alliances of a country (version 91)
+		std::size_t get_alliance_count(CountryInstance const* country) const;
+		// The processes of the buttons the country started: (receiver, +1 / -1)
+		memory::vector<std::pair<CountryInstance const*, std::int8_t>> get_relation_processes_of(CountryInstance const* sender) const;
 		// The diplomatic points a country gets a month, by its rank (great powers, secondary and colonial powers, the others, the uncivilised)
 		static fixed_point_t get_diplomatic_points_gain(CountryInstance const& country);
 		// Once a month: the diplomatic points, the processes, the limits of the relations and the healing of the scars

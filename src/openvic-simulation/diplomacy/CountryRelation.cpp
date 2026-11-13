@@ -494,6 +494,26 @@ std::int32_t CRM::get_relation_limit(CountryInstance const* country, CountryInst
 	return get_country_alliance(country, recipient) ? diplomacy_defines->relation_allied_max : diplomacy_defines->relation_max;
 }
 
+std::size_t CRM::get_alliance_count(CountryInstance const* country) const {
+	std::size_t count = 0;
+	for (auto const& [pair, allied] : alliances) {
+		if (allied && (pair.first == country || pair.second == country)) {
+			++count;
+		}
+	}
+	return count;
+}
+
+memory::vector<std::pair<CountryInstance const*, std::int8_t>> CRM::get_relation_processes_of(CountryInstance const* sender) const {
+	memory::vector<std::pair<CountryInstance const*, std::int8_t>> result;
+	for (auto const& [pair, direction] : relation_processes) {
+		if (pair.first == sender) {
+			result.emplace_back(pair.second, direction);
+		}
+	}
+	return result;
+}
+
 fixed_point_t CRM::get_diplomatic_points_gain(CountryInstance const& country) {
 	if (diplomacy_defines == nullptr) {
 		return fixed_point_t::_0;
@@ -569,8 +589,8 @@ void CRM::monthly_update(InstanceManager& instance_manager) {
 		}
 	}
 
-	// The scars of the wars heal after the peace: WAR_RELATION_PENALTY in WAR_RELATION_RECOVERY_YEARS
-	const fixed_point_t heal = fixed_point_t(std::max(0, defines.war_relation_penalty)) / (std::max(1, defines.war_relation_recovery_years) * 12);
+	// The scars of the wars heal after the peace: WAR_RELATION_HEAL_PER_MONTH a month (version 91: 1, decision of the owner 2026-11-14)
+	const fixed_point_t heal = fixed_point_t(std::max(0, defines.war_relation_heal_per_month));
 	memory::vector<UnorderedCountryInstancePair> healed;
 	for (auto it = war_scars.begin(); it != war_scars.end(); ++it) {
 		if (get_at_war_with(it->first.first, it->first.second)) {
