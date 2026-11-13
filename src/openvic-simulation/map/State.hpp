@@ -56,6 +56,11 @@ namespace OpenVic {
 		// Savings of the capitalists of the state: part of the dividends they get, used to cover the losses of the
 		// factories they own (and, later, to invest)
 		fixed_point_t PROPERTY(capitalist_fund);
+		// The administration of the state (version 88, docs/ADMINISTRATION.md), set by its country every day: the share of bureaucrats it needs, the
+		// share it has, and the share of the taxes they collect
+		fixed_point_t PROPERTY_RW(admin_needed_share, fixed_point_t::_0);
+		fixed_point_t PROPERTY_RW(bureaucrat_share, fixed_point_t::_0);
+		fixed_point_t PROPERTY_RW(admin_collection, fixed_point_t::_1);
 		CreditManager* credit_manager = nullptr;
 
 		void _update_country();

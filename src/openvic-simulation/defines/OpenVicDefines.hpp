@@ -140,6 +140,9 @@ namespace OpenVic {
 	INT(BUDGET_RESERVE_DAYS, budget_reserve_days, 30, 0, 3650) \
 	RATE(BUDGET_MAX_TAX, budget_max_tax, Rate(80, 100), 0, 1) \
 	RATE(BUDGET_MIN_SPENDING, budget_min_spending, Rate(20, 100), 0, 1) \
+	/* The administration of an AI country does not go under BUDGET_MIN_ADMINISTRATION (version 88): under ADMIN_LOW_PAY of ov_economy the */ \
+	/* bureaucrats leave and the taxes are not collected (docs/ADMINISTRATION.md) */ \
+	RATE(BUDGET_MIN_ADMINISTRATION, budget_min_administration, Rate(60, 100), 0, 1) \
 	RATE(BUDGET_SURPLUS_RATIO, budget_surplus_ratio, Rate(130, 100), 1, 100) \
 	RATE(BUDGET_DISBAND_SHARE, budget_disband_share, Rate(10, 100), 0, 1) \
 	/* With a surplus the money goes back to the pops (version 73): the taxes go down by the step to BUDGET_MIN_TAX and the military, */ \
@@ -755,6 +758,33 @@ namespace OpenVic {
 	/* the factory makes STRIKE_OUTPUT_LOSS x the strikes of the law (free unions 1, non-political unions 0.5) less */ \
 	FIXED(STRIKE_MILITANCY, strike_militancy, 5, 0, 10) \
 	RATE(STRIKE_OUTPUT_LOSS, strike_output_loss, Rate(50, 100), 0, 1) \
+	/* The administration (version 88, docs/ADMINISTRATION.md). Every state needs a share of bureaucrats: ADMIN_NEED_SCALE x the share the country */ \
+	/* wants (the bureaucracy of Vic2: MAX_BUREAUCRACY_PERCENTAGE + the administrative multiplier; the bureaucrats of the history of 1836 are */ \
+	/* 0.1-0.5 % of the people, not 1 %) x (1 + ADMIN_NEED_COLONY for a colony + ADMIN_NEED_NON_CORE */ \
+	/* x the share of its people not on a core of the country + ADMIN_NEED_UNACCEPTED x the share of the unaccepted cultures + ADMIN_NEED_DISTANCE */ \
+	/* x the distance from the capital / ADMIN_DISTANCE_FULL (map pixels, at most 1) x (1 - the railroads of the state 0..1)). The taxes of a */ \
+	/* state are collected by its bureaucrats: their share x how well they work (the administrative efficiency of the technologies and the laws) */ \
+	/* / the share it needs, from ADMIN_MIN_COLLECTION to 1; the rest stays with the pops */ \
+	RATE(ADMIN_NEED_SCALE, admin_need_scale, Rate(30, 100), 0, 100) \
+	RATE(ADMIN_NEED_COLONY, admin_need_colony, Rate(100, 100), 0, 100) \
+	RATE(ADMIN_NEED_NON_CORE, admin_need_non_core, Rate(50, 100), 0, 100) \
+	RATE(ADMIN_NEED_UNACCEPTED, admin_need_unaccepted, Rate(50, 100), 0, 100) \
+	RATE(ADMIN_NEED_DISTANCE, admin_need_distance, Rate(100, 100), 0, 100) \
+	INT(ADMIN_DISTANCE_FULL, admin_distance_full, 1000, 1, 100000) \
+	RATE(ADMIN_MIN_COLLECTION, admin_min_collection, Rate(25, 100), 0, 1) \
+	/* The pay of the bureaucrats: the administration budget the treasury pays, a share of the full one (the slider x what is paid). Under */ \
+	/* ADMIN_LOW_PAY no new bureaucrats come, ADMIN_LOW_PAY_LEAVE x (1 - pay / ADMIN_LOW_PAY) of them become artisans every month and they keep */ \
+	/* ADMIN_LOW_PAY_CORRUPTION x (1 - pay / ADMIN_LOW_PAY) of the taxes (paid to them once a month, as the corruption of the laws: nothing burns). */ \
+	/* The bureaucrats come (BUREAUCRAT_PROMOTION_SHARE of ov_population) x 0..1 from ADMIN_LOW_PAY to ADMIN_NORMAL_PAY, x up to 1 + */ \
+	/* ADMIN_HIGH_PAY_PROMOTION at the full pay; in the state of the priority of the administration (one per country) x 1 + ADMIN_FOCUS_PROMOTION */ \
+	/* The pay is the average of ADMIN_PAY_DAYS days (a day the treasury is short does not drive the bureaucrats away) */ \
+	INT(ADMIN_PAY_DAYS, admin_pay_days, 30, 1, 3650) \
+	RATE(ADMIN_LOW_PAY, admin_low_pay, Rate(50, 100), 0, 1) \
+	RATE(ADMIN_NORMAL_PAY, admin_normal_pay, Rate(75, 100), 0, 1) \
+	RATE(ADMIN_HIGH_PAY_PROMOTION, admin_high_pay_promotion, Rate(50, 100), 0, 100) \
+	RATE(ADMIN_LOW_PAY_LEAVE, admin_low_pay_leave, Rate(2, 100), 0, 1) \
+	RATE(ADMIN_LOW_PAY_CORRUPTION, admin_low_pay_corruption, Rate(20, 100), 0, 1) \
+	RATE(ADMIN_FOCUS_PROMOTION, admin_focus_promotion, Rate(200, 100), 0, 100) \
 	INT(EFFICIENCY_GAIN_EPSILONS, efficiency_gain_epsilons, 65, 0, 1000000) \
 	INT(EFFICIENCY_LOSS_EPSILONS, efficiency_loss_epsilons, 130, 0, 1000000) \
 	FIXED(EFFICIENCY_MAX, efficiency_max, fixed_point_t::_1 + fixed_point_t::_0_50, 0.1, 100) \

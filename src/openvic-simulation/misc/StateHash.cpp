@@ -156,6 +156,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 			hasher.add(law != nullptr ? static_cast<std::uint64_t>(law->index) + 1 : 0);
 		}
 		hasher.add(static_cast<std::uint64_t>(country.get_mobilisation_level()) + 0x6d6f62ULL);
+		// the priority of the administration (version 88)
+		hasher.add(country.get_admin_focus() != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.get_admin_focus()->index)) + 1 : 0);
+		hasher.add(country.get_administration_pay());
 		hasher.add(country.get_corruption_owed());
 		hasher.add(country.get_law_proposal() != nullptr ? static_cast<std::uint64_t>(country.get_law_proposal()->index) + 1 : 0);
 		hasher.add(static_cast<std::uint64_t>(country.get_law_stall_months()));

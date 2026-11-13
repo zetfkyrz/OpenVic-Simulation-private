@@ -253,10 +253,12 @@ namespace {
 			// treasury does not hold a day of the spending (the supplies of the armies are bought last, they would get nothing)
 			if (!raised || cash < spending) {
 				const fixed_point_t floor = ai.budget_min_spending.fixed();
+				// the administration not under BUDGET_MIN_ADMINISTRATION (version 88): the bureaucrats would leave and collect no taxes
+				const fixed_point_t administration_floor = std::max(floor, ai.budget_min_administration.fixed());
 				const fixed_point_t administration = country.get_administration_spending_slider_value().get_value_untracked();
 				const fixed_point_t education = country.get_education_spending_slider_value().get_value_untracked();
-				if (administration > floor || education > floor) {
-					country.set_administration_spending_slider_value(std::max(floor, administration - step));
+				if (administration > administration_floor || education > floor) {
+					country.set_administration_spending_slider_value(std::max(administration_floor, administration - step));
 					country.set_education_spending_slider_value(std::max(floor, education - step));
 				} else {
 					country.set_military_spending_slider_value(std::max(floor, country.get_military_spending_slider_value().get_value_untracked() - step));
@@ -881,7 +883,7 @@ namespace {
 		}
 		const fixed_point_t floor = ai.budget_min_spending.fixed();
 		if (country.get_military_spending_slider_value().get_value_untracked() > floor
-			|| country.get_administration_spending_slider_value().get_value_untracked() > floor
+			|| country.get_administration_spending_slider_value().get_value_untracked() > std::max(floor, ai.budget_min_administration.fixed())
 			|| country.get_education_spending_slider_value().get_value_untracked() > floor) {
 			return;
 		}
@@ -1022,6 +1024,23 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 		}
 
 		balance_budget(instance_manager, country);
+		// The priority of the administration (version 88): the state that loses most taxes (its people x what is not collected)
+		{
+			State const* best = nullptr;
+			std::int64_t best_loss = 0;
+			for (State const* const state : country.get_states()) {
+				if (state == nullptr) {
+					continue;
+				}
+				const std::int64_t loss = type_safe::get(state->get_total_population())
+					* (fixed_point_t::_1 - state->get_admin_collection()).get_raw_value();
+				if (loss > best_loss) {
+					best_loss = loss;
+					best = state;
+				}
+			}
+			country.set_admin_focus(best != nullptr ? best->get_capital() : nullptr);
+		}
 		build_factory(instance_manager, country);
 		build_transports(instance_manager, country);
 		choose_ai_production_types(instance_manager, country);

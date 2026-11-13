@@ -234,6 +234,7 @@ void ProvinceInstance::_update_pops(MilitaryDefines const& military_defines) {
 	clear_pops_aggregate(!add_political_support);
 
 	has_unaccepted_pops = false;
+	unaccepted_population = 0;
 
 	for (memory::vector<std::reference_wrapper<Pop>>& pops_cache : pops_cache_by_type) {
 		pops_cache.clear();
@@ -252,6 +253,7 @@ void ProvinceInstance::_update_pops(MilitaryDefines const& military_defines) {
 		add_pops_aggregate(pop, add_political_support);
 		if (pop.get_culture_status() == Pop::culture_status_t::UNACCEPTED) {
 			has_unaccepted_pops = true;
+			unaccepted_population += type_safe::get(pop.get_size());
 		}
 	}
 

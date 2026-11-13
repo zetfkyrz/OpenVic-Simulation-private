@@ -343,6 +343,29 @@ bool GameActionManager::VariantVisitor::operator() (set_mobilisation_level_argum
 	return true;
 }
 
+// The priority of the administration (version 88, docs/ADMINISTRATION.md): the state of the province (owned by the country) gets the bureaucrats
+// faster; false clears it
+bool GameActionManager::VariantVisitor::operator() (set_admin_focus_argument_t const& argument) const {
+	const auto [country_index, province_index, set] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	if (!set) {
+		if (country.get_admin_focus() == nullptr) {
+			return false;
+		}
+		country.set_admin_focus(nullptr);
+		return true;
+	}
+	ProvinceInstance const* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr || province->get_owner() != &country || province->get_state() == nullptr) {
+		return false;
+	}
+	if (country.get_admin_focus_state() == province->get_state()) {
+		return false;
+	}
+	country.set_admin_focus(province->get_state()->get_capital());
+	return true;
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

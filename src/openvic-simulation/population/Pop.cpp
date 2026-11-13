@@ -35,6 +35,7 @@
 #include "openvic-simulation/economy/trading/MarketSellOrder.hpp"
 #include "openvic-simulation/economy/trading/SellResult.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 #include "openvic-simulation/politics/Reform.hpp"
 #include "openvic-simulation/population/Culture.hpp"
@@ -349,6 +350,10 @@ void Pop::pay_income_tax(fixed_point_t& income) {
 		if (law != fixed_point_t::_0) {
 			effective_tax_rate = std::clamp(effective_tax_rate * (fixed_point_t::_1 + law), fixed_point_t::_0, fixed_point_t::_1);
 		}
+	}
+	// The bureaucrats of the state collect the taxes (version 88, docs/ADMINISTRATION.md): the rest stays with the pop
+	if (State const* const state = get_location().get_state(); state != nullptr) {
+		effective_tax_rate = effective_tax_rate * state->get_admin_collection();
 	}
 	const fixed_point_t tax = effective_tax_rate * income;
 	MoneyLedger::record(MoneyLedger::label_t::pop_tax_paid, -tax);

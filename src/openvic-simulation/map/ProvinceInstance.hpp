@@ -104,6 +104,8 @@ namespace OpenVic {
 		bool PROPERTY(slave, false);
 		// Used for "minorities = yes/no" condition
 		bool PROPERTY(has_unaccepted_pops, false);
+		// The people of the unaccepted cultures (version 88: the bureaucrats a state needs, docs/ADMINISTRATION.md)
+		std::int64_t PROPERTY(unaccepted_population, 0);
 		bool PROPERTY_RW(connected_to_capital, false);
 		// Set by the trade network every month: the railroad level (0..1) and the share of the price that a seller here loses on the
 		// way to the market of its country (the better the railroad, the smaller)

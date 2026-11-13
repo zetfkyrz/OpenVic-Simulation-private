@@ -161,7 +161,9 @@ namespace OpenVic {
 		// 86: the unemployed of a pop are never below zero; the projected budget adds up the pops of the provinces the country reports the
 		//     economy of (the occupied ones), as the payments do
 		// 87: four kinds of the mobilisation: small 25 %, standard 50 %, extended 75 %, full 100 % (MOBILISATION_LEVEL_FULL); level 2 was 100 %
-		inline constexpr int SIMULATION_VERSION = 87;
+		// 88: the administration (docs/ADMINISTRATION.md): every state needs bureaucrats (ADMIN_NEED_*), they collect its taxes (the rest stays
+		//     with the pops), the pay of the bureaucrats (ADMIN_*_PAY*), the priority of the administration (new action set_admin_focus)
+		inline constexpr int SIMULATION_VERSION = 88;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

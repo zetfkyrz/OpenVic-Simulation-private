@@ -540,6 +540,19 @@ namespace OpenVic {
 		// The kind of the mobilisation (decision of the owner 2026-11-10): 0 small, 1 standard, 2 extended, 3 full; the share of the pool it raises
 		// is ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED / _FULL
 		std::uint8_t PROPERTY_RW(mobilisation_level, 1);
+	public:
+		// The state of the priority of the administration (nullptr: none)
+		State const* get_admin_focus_state() const;
+		// How fast the bureaucrats come for their pay (version 88): 0 under ADMIN_LOW_PAY, 1 at ADMIN_NORMAL_PAY, up to 1 + ADMIN_HIGH_PAY_PROMOTION
+		fixed_point_t get_bureaucrat_promotion_pay_factor() const;
+	private:
+		// The administration (version 88, docs/ADMINISTRATION.md): the pay of the bureaucrats (the administration budget the treasury pays, a share
+		// of the full one, the average of ADMIN_PAY_DAYS days), the share of the taxes they keep for a low pay, the average collection of the states (by their people), and a
+		// province of the state with the priority of the administration (nullptr: none; the bureaucrats come there faster)
+		fixed_point_t PROPERTY(administration_pay, fixed_point_t::_1);
+		fixed_point_t PROPERTY(low_pay_corruption, fixed_point_t::_0);
+		fixed_point_t PROPERTY(average_admin_collection, fixed_point_t::_1);
+		ProvinceInstance const* PROPERTY_RW(admin_focus, nullptr);
 		// The taxes the bureaucrats keep (the corruption of the laws), paid to the bureaucrats of the country once a month (PopDynamics)
 		fixed_point_t PROPERTY_RW(corruption_owed, fixed_point_t::_0);
 		// The law that is being passed (docs/LAWS_DESIGN.md, the way (b)): every month it passes with a chance that grows with the support of the
@@ -1217,6 +1230,8 @@ namespace OpenVic {
 
 		void _update_production();
 		void _update_budget();
+		// The bureaucrats each state needs and the taxes they collect (version 88)
+		void _update_administration(MapInstance const& map_instance);
 
 		//base here means not scaled by slider or pop size
 		fixed_point_t calculate_pensions_base(PopType const& pop_type);

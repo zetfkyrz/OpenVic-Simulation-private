@@ -38,6 +38,7 @@
 #include "openvic-simulation/economy/trading/MarketInstance.hpp"
 #include "openvic-simulation/history/CountryHistory.hpp"
 #include "openvic-simulation/map/Crime.hpp"
+#include "openvic-simulation/map/MapDefinition.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
@@ -1578,6 +1579,112 @@ void CountryInstance::_update_budget() {
 	));
 }
 
+State const* CountryInstance::get_admin_focus_state() const {
+	return admin_focus != nullptr && admin_focus->get_owner() == this ? admin_focus->get_state() : nullptr;
+}
+
+fixed_point_t CountryInstance::get_bureaucrat_promotion_pay_factor() const {
+	if (openvic_economy_defines == nullptr) {
+		return fixed_point_t::_1;
+	}
+	const fixed_point_t low = openvic_economy_defines->admin_low_pay.fixed();
+	const fixed_point_t normal = std::max(low, openvic_economy_defines->admin_normal_pay.fixed());
+	if (administration_pay <= low) {
+		return fixed_point_t::_0;
+	}
+	if (administration_pay < normal) {
+		return (administration_pay - low) / (normal - low);
+	}
+	if (normal >= fixed_point_t::_1) {
+		return fixed_point_t::_1;
+	}
+	return fixed_point_t::_1 + openvic_economy_defines->admin_high_pay_promotion.of((administration_pay - normal) / (fixed_point_t::_1 - normal));
+}
+
+void CountryInstance::_update_administration(MapInstance const& map_instance) {
+	if (admin_focus != nullptr && admin_focus->get_owner() != this) {
+		admin_focus = nullptr;
+	}
+	OpenVicEconomyDefines const* const defines = openvic_economy_defines;
+	TypedSpan<pop_type_index_t, const PopType> pop_types(
+		shared_country_values.get_shared_pop_type_values().get_keys()
+	);
+	const fixed_point_t wanted = defines != nullptr
+		? defines->admin_need_scale.of(desired_administrator_percentage.get_untracked())
+		: desired_administrator_percentage.get_untracked();
+	// How well the bureaucrats work: the technologies, the modifiers and the laws (as for the administrative efficiency of the country)
+	const fixed_point_t work = std::max(fixed_point_t::_0, fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_administrative_efficiency()))
+		* std::max(fixed_point_t::_0, fixed_point_t::_1 + get_modifier_effect_value(*modifier_effect_cache.get_administrative_efficiency_modifier()))
+		* std::max(fixed_point_t::_0, fixed_point_t::_1 + get_law_effect(law_effect_t::bureaucrat_efficiency));
+	const auto share = [](const std::int64_t part, const std::int64_t whole) -> fixed_point_t {
+		return whole > 0 ? fp::from_fraction(std::clamp<std::int64_t>(part, 0, whole), whole) : fixed_point_t::_0;
+	};
+
+	std::int64_t people_sum = 0;
+	std::int64_t collection_raw_sum = 0;
+	for (State* const state : states) {
+		if (state == nullptr) {
+			continue;
+		}
+		const std::int64_t people = type_safe::get(state->get_total_population());
+		std::int64_t bureaucrats = 0;
+		{
+			pop_type_index_t pop_type_index {};
+			for (const pop_sum_t size : state->get_population_by_type()) {
+				if (pop_types[pop_type_index].is_administrator) {
+					bureaucrats += type_safe::get(size);
+				}
+				++pop_type_index;
+			}
+		}
+		std::int64_t non_core = 0;
+		std::int64_t unaccepted = 0;
+		fixed_point_t infrastructure = fixed_point_t::_0;
+		std::int32_t provinces = 0;
+		for (ProvinceInstance const& province : state->get_provinces()) {
+			const std::int64_t province_people = type_safe::get(province.get_total_population());
+			if (!province.is_owner_core()) {
+				non_core += province_people;
+			}
+			unaccepted += province.get_unaccepted_population();
+			infrastructure += std::clamp(province.get_infrastructure_fraction(), fixed_point_t::_0, fixed_point_t::_1);
+			++provinces;
+		}
+		if (provinces > 0) {
+			infrastructure /= provinces;
+		}
+
+		fixed_point_t extra = fixed_point_t::_0;
+		if (defines != nullptr) {
+			if (state->is_colonial_state()) {
+				extra += defines->admin_need_colony.fixed();
+			}
+			extra += defines->admin_need_non_core.of(share(non_core, people));
+			extra += defines->admin_need_unaccepted.of(share(unaccepted, people));
+			if (capital != nullptr && state->get_capital() != nullptr) {
+				const fixed_point_t distance = static_cast<MapDefinition const&>(map_instance).calculate_distance_between(
+					capital->province_definition, state->get_capital()->province_definition
+				);
+				const fixed_point_t far = std::min(fixed_point_t::_1, distance / std::max<std::int32_t>(1, defines->admin_distance_full));
+				extra += defines->admin_need_distance.of(far * (fixed_point_t::_1 - infrastructure));
+			}
+		}
+		const fixed_point_t needed = wanted * (fixed_point_t::_1 + extra);
+		const fixed_point_t has = share(bureaucrats, people);
+		fixed_point_t collection = fixed_point_t::_1;
+		if (needed > fixed_point_t::_0 && people > 0) {
+			const fixed_point_t lowest = defines != nullptr ? defines->admin_min_collection.fixed() : fixed_point_t::_0;
+			collection = std::clamp(has * work / needed, lowest, fixed_point_t::_1);
+		}
+		state->set_admin_needed_share(needed);
+		state->set_bureaucrat_share(has);
+		state->set_admin_collection(collection);
+		people_sum += people;
+		collection_raw_sum += people * collection.get_raw_value();
+	}
+	average_admin_collection = people_sum > 0 ? fixed_point_t::parse_raw(collection_raw_sum / people_sum) : fixed_point_t::_1;
+}
+
 fixed_point_t CountryInstance::get_administration_salary_base(PopType const& pop_type) {
 	return corruption_cost_multiplier.get_untracked()
 		* shared_country_values.get_shared_pop_type_values(pop_type).get_administration_salary_base_untracked();
@@ -2271,6 +2378,7 @@ void CountryInstance::update_gamestate(const Date today, MapInstance& map_instan
 	_update_technology(today);
 	// Calculates national military modifiers, army and navy stats, daily leadership points
 	_update_military();
+	_update_administration(map_instance);
 	_update_budget();
 
 	// These don't do anything yet
@@ -2366,26 +2474,28 @@ void CountryInstance::country_tick_before_map(
 		//TODO try take loan (callback?)
 		//update available_funds with loan
 
-		if (available_funds < projected_education_spending_copy) {
-			actual_education_budget = available_funds;
+		// The administration is paid first (version 88, docs/ADMINISTRATION.md): its bureaucrats collect the taxes, and unpaid they leave; before,
+		// the education was first and the poor countries lost their bureaucrats and their taxes
+		if (available_funds < projected_administration_spending_copy) {
+			actual_administration_budget = available_funds;
 			available_funds = 0;
-			actual_administration_budget = 0;
+			actual_education_budget = 0;
 			actual_military_budget = 0;
 			actual_social_budget = 0;
 			actual_import_subsidies_budget = 0;
 		} else {
-			available_funds -= projected_education_spending_copy;
-			actual_education_budget = projected_education_spending_copy;
+			available_funds -= projected_administration_spending_copy;
+			actual_administration_budget = projected_administration_spending_copy;
 
-			if (available_funds < projected_administration_spending_copy) {
-				actual_administration_budget = available_funds;
+			if (available_funds < projected_education_spending_copy) {
+				actual_education_budget = available_funds;
 				available_funds = 0;
 				actual_military_budget = 0;
 				actual_social_budget = 0;
 				actual_import_subsidies_budget = 0;
 			} else {
-				available_funds -= projected_administration_spending_copy;
-				actual_administration_budget = projected_administration_spending_copy;
+				available_funds -= projected_education_spending_copy;
+				actual_education_budget = projected_education_spending_copy;
 
 				if (available_funds < projected_social_spending_copy) {
 					actual_social_budget = available_funds;
@@ -2416,6 +2526,24 @@ void CountryInstance::country_tick_before_map(
 	was_education_budget_cut_yesterday = actual_education_budget < projected_education_spending_copy;
 	was_military_budget_cut_yesterday = actual_military_budget < projected_military_spending_copy;
 	was_social_budget_cut_yesterday = actual_social_budget < projected_social_spending_copy;
+
+	// The pay of the bureaucrats (version 88, docs/ADMINISTRATION.md): the administration budget the treasury pays today, a share of the full one
+	{
+		const fixed_point_t full = projected_administration_spending_unscaled_by_slider.get_untracked();
+		const fixed_point_t today_pay = full > fixed_point_t::_0
+			? std::clamp(actual_administration_budget / full, fixed_point_t::_0, fixed_point_t::_1)
+			: fixed_point_t::_1;
+		// the average of ADMIN_PAY_DAYS days
+		const std::int32_t days = openvic_economy_defines != nullptr ? std::max<std::int32_t>(1, openvic_economy_defines->admin_pay_days) : 1;
+		administration_pay = std::clamp(administration_pay + (today_pay - administration_pay) / days, fixed_point_t::_0, fixed_point_t::_1);
+		low_pay_corruption = fixed_point_t::_0;
+		if (openvic_economy_defines != nullptr) {
+			const fixed_point_t low = openvic_economy_defines->admin_low_pay.fixed();
+			if (low > fixed_point_t::_0 && administration_pay < low) {
+				low_pay_corruption = openvic_economy_defines->admin_low_pay_corruption.of(fixed_point_t::_1 - administration_pay / low);
+			}
+		}
+	}
 	was_import_subsidies_budget_cut_yesterday = actual_import_subsidies_budget < projected_import_subsidies_copy;
 
 	for (auto [good_instance, good_data] : goods_data) {
@@ -3406,8 +3534,9 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 	taxable_income_by_pop_type.at(pop_type) += gross_income;
 	cash_stockpile += paid_as_tax;
 	// The corruption of the laws (hereditary bureaucrats keep 5 % of the taxes): owed to the bureaucrats of the country, paid to them once a month
-	if (const fixed_point_t corruption = get_law_effect(law_effect_t::corruption); corruption > fixed_point_t::_0) {
-		corruption_owed += paid_as_tax * corruption;
+	// and the bureaucrats paid under ADMIN_LOW_PAY keep a share (version 88)
+	if (const fixed_point_t corruption = get_law_effect(law_effect_t::corruption) + low_pay_corruption; corruption > fixed_point_t::_0) {
+		corruption_owed += paid_as_tax * std::min(corruption, fixed_point_t::_1);
 	}
 	actual_tax_income += paid_as_tax;
 	MoneyLedger::record(MoneyLedger::label_t::tax_income, paid_as_tax);

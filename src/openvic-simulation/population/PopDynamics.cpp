@@ -179,9 +179,11 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 		}
 
-		// The bureaucrats come from the literate poor (version 82): while the bureaucrats of a state are fewer than the share its country wants,
-		// BUREAUCRAT_PROMOTION_SHARE x (1 + bureaucrat_promotion of the laws) of the men of its farmers, labourers and craftsmen, times their literacy,
-		// become bureaucrats every month (of their culture, in their province)
+		// The bureaucrats come from the literate poor (version 82): while the bureaucrats of a state are fewer than the share it needs (version 88:
+		// the share of the state, docs/ADMINISTRATION.md; before, the share the country wants), BUREAUCRAT_PROMOTION_SHARE x (1 + bureaucrat_promotion
+		// of the laws) x the factor of their pay x (1 + ADMIN_FOCUS_PROMOTION in the state of the priority) of the men of its farmers, labourers and
+		// craftsmen, times their literacy, become bureaucrats every month (of their culture, in their province)
+		OpenVicEconomyDefines const& economy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().economy;
 		if (defines.bureaucrat_promotion_share.numerator > 0 && farmers != nullptr && labourers != nullptr && craftsmen != nullptr) {
 			std::unordered_map<State const*, std::pair<std::int64_t, std::int64_t>> state_men; // bureaucrats, all
 			for (ProvinceInstance& province : map_instance.get_province_instances()) {
@@ -201,13 +203,20 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 					continue;
 				}
 				auto const& men = state_men[state];
-				const fixed_point_t wanted = const_cast<CountryInstance*>(owner)->desired_administrator_percentage.get_untracked();
+				const fixed_point_t wanted = state->get_admin_needed_share();
 				if (men.second <= 0 || wanted <= fixed_point_t::_0
 					|| fixed_point_t(static_cast<std::int32_t>(std::min<std::int64_t>(men.first * 10000 / men.second, 10000))) / 10000 >= wanted) {
 					continue;
 				}
-				const fixed_point_t share = defines.bureaucrat_promotion_share.fixed()
-					* std::max(fixed_point_t::_0, fixed_point_t::_1 + owner->get_law_effect(law_effect_t::bureaucrat_promotion));
+				fixed_point_t share = defines.bureaucrat_promotion_share.fixed()
+					* std::max(fixed_point_t::_0, fixed_point_t::_1 + owner->get_law_effect(law_effect_t::bureaucrat_promotion))
+					* owner->get_bureaucrat_promotion_pay_factor();
+				if (owner->get_admin_focus_state() == state) {
+					share = share * (fixed_point_t::_1 + economy_defines.admin_focus_promotion.fixed());
+				}
+				if (share <= fixed_point_t::_0) {
+					continue;
+				}
 				std::vector<Pop*> candidates;
 				for (Pop& pop : province.get_mutable_pops()) {
 					PopType const* const type = &pop.get_type();
@@ -223,6 +232,39 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 1);
 							target->change_size(whole, 1);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// The bureaucrats paid under ADMIN_LOW_PAY leave (version 88, docs/ADMINISTRATION.md): ADMIN_LOW_PAY_LEAVE x (1 - pay / ADMIN_LOW_PAY) of them
+	// become artisans of their province every month
+	if (bureaucrats != nullptr && artisans != nullptr) {
+		OpenVicEconomyDefines const& economy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().economy;
+		const fixed_point_t low = economy_defines.admin_low_pay.fixed();
+		if (low > fixed_point_t::_0 && economy_defines.admin_low_pay_leave.numerator > 0) {
+			for (ProvinceInstance& province : map_instance.get_province_instances()) {
+				CountryInstance const* const owner = province.get_owner();
+				if (owner == nullptr || owner->get_administration_pay() >= low) {
+					continue;
+				}
+				const fixed_point_t share = economy_defines.admin_low_pay_leave.of(fixed_point_t::_1 - owner->get_administration_pay() / low);
+				std::vector<Pop*> leaving;
+				for (Pop& pop : province.get_mutable_pops()) {
+					if (&pop.get_type() == bureaucrats && pop.get_size() > pop_size_t(0)) {
+						leaving.push_back(&pop);
+					}
+				}
+				for (Pop* pop : leaving) {
+					pop->migration_remainder += share * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
+					if (whole > 0) {
+						if (Pop* target = find_or_create_pop(province, *artisans, pop->culture, *pop, pop_deps)) {
+							blend_literacy(*target, *pop, whole);
+							pop->change_size(-whole, 2);
+							target->change_size(whole, 2);
 						}
 					}
 				}

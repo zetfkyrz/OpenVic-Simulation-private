@@ -6183,6 +6183,58 @@ namespace {
 
 	// The laws (docs/LAWS_DESIGN.md): the start from the history, a law in force changes the effects, the model of the army and the kind of the
 	// mobilisation change the pool of the mobilisation
+	// The administration (version 88, docs/ADMINISTRATION.md): a colony needs more bureaucrats than a core state, the collection of every state is
+	// between ADMIN_MIN_COLLECTION and 1, and the priority of the administration is set and cleared by the action
+	void test_administration(Results& r, InstanceManager& im) {
+		CountryInstance* const england = im.get_country_instance_manager().get_country_instance_by_identifier("ENG");
+		if (england == nullptr || england->get_states().empty()) {
+			fmt::println("TEST INFO administration: no England, not checked");
+			return;
+		}
+		OpenVicEconomyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().economy;
+		State const* colony = nullptr;
+		State const* core = nullptr;
+		bool collection_in_range = true;
+		for (State const* const state : england->get_states()) {
+			if (state == nullptr) {
+				continue;
+			}
+			if (state->get_admin_collection() < defines.admin_min_collection.fixed() || state->get_admin_collection() > fixed_point_t::_1) {
+				collection_in_range = false;
+			}
+			if (state->is_colonial_state()) {
+				if (colony == nullptr) {
+					colony = state;
+				}
+			} else if (core == nullptr) {
+				bool all_core = true;
+				for (ProvinceInstance const& province : state->get_provinces()) {
+					all_core &= province.is_owner_core();
+				}
+				if (all_core) {
+					core = state;
+				}
+			}
+		}
+		r.check(collection_in_range, "administration: the taxes a state collects are between ADMIN_MIN_COLLECTION and all of them");
+		if (colony == nullptr || core == nullptr || colony->get_capital() == nullptr) {
+			fmt::println("TEST INFO administration: England has no colony or no core state, the rest not checked");
+			return;
+		}
+		r.check(colony->get_admin_needed_share() > core->get_admin_needed_share() * 2 - fixed_point_t::epsilon * 4,
+			"administration: a colony needs at least twice the bureaucrats of a core state",
+			fmt::format("colony {:.4f}, core {:.4f}", static_cast<double>(colony->get_admin_needed_share()), static_cast<double>(core->get_admin_needed_share())));
+
+		ProvinceInstance const* const focus_before = england->get_admin_focus();
+		im.queue_game_action<set_admin_focus_argument_t>(england->index, colony->get_capital()->index, true);
+		im.force_tick_and_update();
+		const bool set = england->get_admin_focus_state() == colony;
+		im.queue_game_action<set_admin_focus_argument_t>(england->index, colony->get_capital()->index, false);
+		im.force_tick_and_update();
+		r.check(set && england->get_admin_focus() == nullptr, "administration: the priority of the administration is set and cleared by the action");
+		england->set_admin_focus(focus_before);
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8144,6 +8196,7 @@ namespace {
 		test_manpower_losses(r, *im);
 		test_plan_status(r, *im);
 		test_laws(r, *im);
+		test_administration(r, *im);
 		test_sea_transfer(r, *im);
 		test_ai_war_captures(r, *im); // ticks 60 days
 		test_front_dynamics(r, *im); // ticks days, a war of its own

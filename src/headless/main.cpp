@@ -1592,6 +1592,38 @@ static void run_supply_goods_dump(InstanceManager& instance_manager, std::string
 			}
 		}
 		fmt::println("COUNTRY_LAWS {} {}{} | effects{}", label, country.get_identifier(), laws_text, effects_text.empty() ? std::string { " -" } : effects_text);
+		// The administration (COUNTRY_ADMIN, version 88): the share of bureaucrats the country wants, the pay of the bureaucrats and the slider,
+		// the collection of the taxes (the average by the people), the states that collect under a half, the priority and the three worst states
+		{
+			std::vector<State const*> worst;
+			std::size_t low_states = 0;
+			for (State const* const state : country.get_states()) {
+				if (state == nullptr) {
+					continue;
+				}
+				worst.push_back(state);
+				if (state->get_admin_collection() < fixed_point_t::_0_50) {
+					++low_states;
+				}
+			}
+			std::stable_sort(worst.begin(), worst.end(), [](State const* a, State const* b) {
+				return a->get_admin_collection() < b->get_admin_collection();
+			});
+			std::string worst_text;
+			for (std::size_t i = 0; i < worst.size() && i < 3; ++i) {
+				worst_text += fmt::format(" {}:{:.2f}({:.3f}/{:.3f},{})", worst[i]->get_identifier(), static_cast<double>(worst[i]->get_admin_collection()),
+					static_cast<double>(worst[i]->get_bureaucrat_share()), static_cast<double>(worst[i]->get_admin_needed_share()),
+					type_safe::get(worst[i]->get_total_population()));
+			}
+			State const* const focus = country.get_admin_focus_state();
+			fmt::println("COUNTRY_ADMIN {} {} wanted={:.3f} admin_eff={:.2f} pay={:.2f} slider={:.2f} collection={:.2f} states={} under_half={} focus={} worst:{}",
+				label, country.get_identifier(), static_cast<double>(country.desired_administrator_percentage.get_untracked()),
+				static_cast<double>(country.get_administrative_efficiency_from_administrators_untracked()),
+				static_cast<double>(country.get_administration_pay()),
+				static_cast<double>(country.get_administration_spending_slider_value().get_value_untracked()),
+				static_cast<double>(country.get_average_admin_collection()), worst.size(), low_states,
+				focus != nullptr ? focus->get_identifier() : memory::string { "-" }, worst_text);
+		}
 		fmt::println("COUNTRY_TAX {} {} civilised={} tariff={:.2f} (collected {:.3f}) tax_eff={:.2f} literacy={:.4f} education={:.2f}{}", label, country.get_identifier(),
 			country.is_civilised() ? 1 : 0, static_cast<double>(country.get_tariff_rate_slider_value().get_value_untracked()),
 			static_cast<double>(country.effective_tariff_rate.get_untracked()), static_cast<double>(country.get_tax_efficiency_untracked()),

@@ -12,6 +12,7 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceDefinition.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/SupplyTerritory.hpp"
 #include "openvic-simulation/population/Culture.hpp"
 #include "openvic-simulation/population/PopSum.hpp"
@@ -270,7 +271,30 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 		);
 	}
 	ret &= add_mapmode("mapmode_colonial", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_7");
-	ret &= add_mapmode("mapmode_administrative", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_8");
+	// The administration (version 88, docs/ADMINISTRATION.md): the share of the taxes the bureaucrats of the state collect, from red (none) to
+	// green (all); the land of nobody is grey
+	ret &= add_mapmode(
+		"mapmode_administrative",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			State const* const state = province.get_state();
+			if (state == nullptr || province.get_owner() == nullptr) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			const std::int32_t percent = std::clamp<std::int32_t>(
+				static_cast<std::int32_t>((state->get_admin_collection() * 100).get_raw_value() >> fixed_point_t::PRECISION), 0, 100
+			);
+			const colour_argb_t::value_type red = colour_argb_t::colour_traits::component_from_fraction(100 - percent, 100, 0.15f, 0.9f);
+			const colour_argb_t::value_type green = colour_argb_t::colour_traits::component_from_fraction(percent, 100, 0.15f, 0.8f);
+			return colour_argb_t { red, green, 0, ALPHA_VALUE };
+		},
+		"MAPMODE_8"
+	);
 	ret &= add_mapmode("mapmode_recruitment", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_9");
 	ret &= add_mapmode("mapmode_national_focus", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_10");
 	ret &= add_mapmode("mapmode_rgo", get_colour_mapmode(&ProvinceInstance::get_rgo_good), "MAPMODE_11");
