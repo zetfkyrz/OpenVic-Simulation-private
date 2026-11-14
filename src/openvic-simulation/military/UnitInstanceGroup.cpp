@@ -66,13 +66,14 @@ bool UnitInstanceGroup::can_country_enter(CountryInstance const& country, Provin
 	if (owner == nullptr || owner == &country || controller == &country) {
 		return true;
 	}
-	if (country.has_alliance_with(*owner) || country.has_military_access_to(*owner)) {
+	// (an ally, or a partner of the same military union, version 93)
+	if (country.is_military_partner(*owner) || country.has_military_access_to(*owner)) {
 		return true;
 	}
 	if (country.is_at_war_with(*owner) || (controller != nullptr && country.is_at_war_with(*controller))) {
 		return true;
 	}
-	return controller != nullptr && country.has_alliance_with(*controller);
+	return controller != nullptr && country.is_military_partner(*controller);
 }
 
 bool UnitInstanceGroup::can_navy_enter(CountryInstance const& country, ProvinceInstance const& province) {
@@ -87,7 +88,7 @@ bool UnitInstanceGroup::can_navy_enter(CountryInstance const& country, ProvinceI
 	if (owner == nullptr) {
 		return false;
 	}
-	return owner == &country || province.get_controller() == &country || country.has_alliance_with(*owner)
+	return owner == &country || province.get_controller() == &country || country.is_military_partner(*owner)
 		|| country.has_military_access_to(*owner);
 }
 

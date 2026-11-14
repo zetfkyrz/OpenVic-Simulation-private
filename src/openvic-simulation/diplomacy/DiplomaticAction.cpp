@@ -160,30 +160,52 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 				},
 		}
 	);
+	// The sender leads the sphere of the receiver of this kind (version 93)
+	const auto leads_member_of = [](Argument const& arg, const sphere_kind_t kind) -> bool {
+		return arg.sender->get_leads_sphere() && arg.sender->get_sphere_kind() == kind && arg.receiver->get_sphere_owner_untracked() == arg.sender;
+	};
 	result &= add_diplomatic_action(
 		"call_ally",
 		{
-			// The ally joins the war of the sender (where he leads his side, else his first) on his side (docs/WAR_ASSUMPTIONS.md)
+			// The ally joins the war of the sender (where he leads his side, else his first) on his side (docs/WAR_ASSUMPTIONS.md). The leader of
+			// a sphere calls its members too (version 93): a member of its military union must come (an AI that refuses loses prestige), one of
+			// its imperial sphere comes when it likes the leader enough
 			.commit =
-				[](Argument& arg) {
+				[leads_member_of](Argument& arg) {
 					WarManager& war_manager = arg.instance_manager.get_war_manager();
 					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
-					if (war != nullptr) {
-						war_manager.join_war(arg.instance_manager, war->id, *arg.receiver, war->is_attacker(*arg.sender));
+					if (war == nullptr) {
+						return;
 					}
+					if (leads_member_of(arg, sphere_kind_t::MILITARY) && !arg.sender->has_alliance_with(*arg.receiver)) {
+						war_manager.call_union_member(arg.instance_manager, war->id, *arg.sender, *arg.receiver);
+						return;
+					}
+					war_manager.join_war(arg.instance_manager, war->id, *arg.receiver, war->is_attacker(*arg.sender));
 				},
 			.allowed =
-				[](Argument const& arg) {
+				[leads_member_of](Argument const& arg) {
 					WarManager const& war_manager = arg.instance_manager.get_war_manager();
 					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
-					return war != nullptr && arg.sender->has_alliance_with(*arg.receiver)
+					return war != nullptr
+						&& (arg.sender->has_alliance_with(*arg.receiver) || leads_member_of(arg, sphere_kind_t::MILITARY)
+							|| leads_member_of(arg, sphere_kind_t::IMPERIAL))
 						&& war_manager.can_join_war(*war, war->is_attacker(*arg.sender), *arg.receiver);
 				},
 			.get_acceptance =
-				[](Argument const& arg) {
+				[leads_member_of](Argument const& arg) {
 					WarManager const& war_manager = arg.instance_manager.get_war_manager();
 					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
-					return war != nullptr && war_manager.would_join_war(*war, *arg.receiver) ? 1 : 0;
+					if (war == nullptr) {
+						return 0;
+					}
+					if (leads_member_of(arg, sphere_kind_t::MILITARY)) {
+						return 1; // (the refusal is in the commit: it costs prestige)
+					}
+					if (war_manager.would_join_war(*war, *arg.receiver) && arg.sender->has_alliance_with(*arg.receiver)) {
+						return 1;
+					}
+					return !arg.receiver->is_ai() || war_manager.imperial_member_helps(arg.instance_manager, *war, *arg.sender, *arg.receiver) ? 1 : 0;
 				},
 		}
 	);

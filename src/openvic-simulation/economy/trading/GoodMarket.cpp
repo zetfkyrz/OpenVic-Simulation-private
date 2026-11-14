@@ -131,6 +131,7 @@ void GoodMarket::execute_orders(
 	} else {
 		// The routed day (see the header): the countries and the "outside" are the nodes of the trade network
 		const bool routed = trade_network != nullptr && trade_network->is_enabled() && trade_network->is_ready();
+		routed_today = routed;
 		const std::size_t node_count = routed ? trade_network->get_node_count() : 0;
 		const country_index_t outside_node = routed ? trade_network->get_outside_node() : country_index_t(0);
 		const auto node_of = [outside_node](const std::optional<country_index_t> country_index_optional) -> country_index_t {
@@ -139,7 +140,7 @@ void GoodMarket::execute_orders(
 		if (routed) {
 			for (std::vector<fixed_point_t>* array : {
 				&node_supply, &node_desire, &node_bought, &node_cap, &node_inflow, &node_dom, &node_exports, &node_export_cost,
-				&node_fee_domestic, &node_fee_export, &node_land_exports, &node_sea_exports, &node_imports, &node_covered
+				&node_fee_domestic, &node_fee_export, &node_land_exports, &node_sea_exports, &node_imports, &node_covered, &node_union_inflow
 			}) {
 				array->assign(node_count, fixed_point_t::_0);
 			}
@@ -575,6 +576,15 @@ void GoodMarket::execute_buy_orders(
 					);
 
 					money_spent_on_imports = money_spent_total - money_spent_domestically;
+					// What comes from the members of the same customs union pays no tariff (version 93): the share of the planned imports
+					if (routed_today) {
+						const std::size_t node = type_safe::get(country_index);
+						const fixed_point_t inflow = node < node_inflow.size() ? node_inflow[node] : fixed_point_t::_0;
+						const fixed_point_t union_inflow = node < node_union_inflow.size() ? node_union_inflow[node] : fixed_point_t::_0;
+						if (union_inflow > fixed_point_t::_0 && inflow > fixed_point_t::_0) {
+							money_spent_on_imports -= fp::mul_div(money_spent_on_imports, std::min(union_inflow, inflow), inflow);
+						}
+					}
 				}
 			}
 			buy_up_to_order.call_after_trade({
@@ -599,6 +609,7 @@ fixed_point_t GoodMarket::plan_routes() {
 		std::uint32_t from;
 		std::uint32_t to;
 		std::uint8_t mode;
+		bool in_market; // inside the single market of a customs union (version 93): planned first
 	};
 
 	// What a node cannot use itself is offered abroad, what its sellers cannot fill is wished from abroad
@@ -636,7 +647,8 @@ fixed_point_t GoodMarket::plan_routes() {
 				continue;
 			}
 			candidates.push_back({
-				route.cost, room, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to), static_cast<std::uint8_t>(route.mode)
+				route.cost, room, static_cast<std::uint32_t>(from), static_cast<std::uint32_t>(to), static_cast<std::uint8_t>(route.mode),
+				trade_network->same_single_market(from, to)
 			});
 		}
 	}
@@ -655,61 +667,74 @@ fixed_point_t GoodMarket::plan_routes() {
 		factor[i] = keep_squared * keep_squared;
 	}
 	constexpr int ROUNDS = 4;
-	for (int round = 0; round < ROUNDS; ++round) {
-		std::fill(weight_sum.begin(), weight_sum.end(), fixed_point_t::_0);
-		std::fill(inflow_round.begin(), inflow_round.end(), fixed_point_t::_0);
-		bool any = false;
-		for (std::size_t i = 0; i < candidates.size(); ++i) {
-			candidate_t const& candidate = candidates[i];
-			tentative[i] = fixed_point_t::_0;
-			if (export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0 || room_left[i] <= fixed_point_t::_0) {
-				continue;
-			}
-			weight_sum[candidate.from] += std::min(import_left[candidate.to], room_left[i]) * factor[i];
+	// The single markets of the customs unions (version 93) trade first: the rounds are run for their routes alone, then for all
+	bool any_in_market = false;
+	if (trade_network->has_single_markets()) {
+		for (candidate_t const& candidate : candidates) {
+			any_in_market |= candidate.in_market;
 		}
-		for (std::size_t i = 0; i < candidates.size(); ++i) {
-			candidate_t const& candidate = candidates[i];
-			if (export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0 || room_left[i] <= fixed_point_t::_0
-				|| weight_sum[candidate.from] <= fixed_point_t::_0) {
-				continue;
+	}
+	for (int phase = any_in_market ? 0 : 1; phase < 2; ++phase) {
+		const auto skipped = [phase](candidate_t const& candidate) -> bool {
+			return phase == 0 && !candidate.in_market;
+		};
+		for (int round = 0; round < ROUNDS; ++round) {
+			std::fill(weight_sum.begin(), weight_sum.end(), fixed_point_t::_0);
+			std::fill(inflow_round.begin(), inflow_round.end(), fixed_point_t::_0);
+			bool any = false;
+			for (std::size_t i = 0; i < candidates.size(); ++i) {
+				candidate_t const& candidate = candidates[i];
+				tentative[i] = fixed_point_t::_0;
+				if (skipped(candidate) || export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0
+					|| room_left[i] <= fixed_point_t::_0) {
+					continue;
+				}
+				weight_sum[candidate.from] += std::min(import_left[candidate.to], room_left[i]) * factor[i];
 			}
-			const fixed_point_t weight = std::min(import_left[candidate.to], room_left[i]) * factor[i];
-			tentative[i] = std::min(
-				{ fp::mul_div(export_left[candidate.from], weight, weight_sum[candidate.from]), import_left[candidate.to], room_left[i] }
-			);
-			inflow_round[candidate.to] += tentative[i];
-		}
-		for (std::size_t i = 0; i < candidates.size(); ++i) {
-			candidate_t const& candidate = candidates[i];
-			fixed_point_t quantity = tentative[i];
-			if (quantity <= fixed_point_t::_0) {
-				continue;
+			for (std::size_t i = 0; i < candidates.size(); ++i) {
+				candidate_t const& candidate = candidates[i];
+				if (skipped(candidate) || export_left[candidate.from] <= fixed_point_t::_0 || import_left[candidate.to] <= fixed_point_t::_0
+					|| room_left[i] <= fixed_point_t::_0 || weight_sum[candidate.from] <= fixed_point_t::_0) {
+					continue;
+				}
+				const fixed_point_t weight = std::min(import_left[candidate.to], room_left[i]) * factor[i];
+				tentative[i] = std::min(
+					{ fp::mul_div(export_left[candidate.from], weight, weight_sum[candidate.from]), import_left[candidate.to], room_left[i] }
+				);
+				inflow_round[candidate.to] += tentative[i];
 			}
-			if (inflow_round[candidate.to] > import_left[candidate.to]) {
-				quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
+			for (std::size_t i = 0; i < candidates.size(); ++i) {
+				candidate_t const& candidate = candidates[i];
+				fixed_point_t quantity = tentative[i];
+				if (quantity <= fixed_point_t::_0) {
+					continue;
+				}
+				if (inflow_round[candidate.to] > import_left[candidate.to]) {
+					quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
+				}
+				if (quantity <= fixed_point_t::_0) {
+					continue;
+				}
+				any = true;
+				taken[i] += quantity;
+				room_left[i] -= quantity;
+				export_left[candidate.from] -= quantity;
 			}
-			if (quantity <= fixed_point_t::_0) {
-				continue;
+			// The importers are charged after all of their flows are scaled with the same totals
+			for (std::size_t i = 0; i < candidates.size(); ++i) {
+				candidate_t const& candidate = candidates[i];
+				fixed_point_t quantity = tentative[i];
+				if (quantity <= fixed_point_t::_0) {
+					continue;
+				}
+				if (inflow_round[candidate.to] > import_left[candidate.to]) {
+					quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
+				}
+				import_left[candidate.to] -= std::min(quantity, import_left[candidate.to]);
 			}
-			any = true;
-			taken[i] += quantity;
-			room_left[i] -= quantity;
-			export_left[candidate.from] -= quantity;
-		}
-		// The importers are charged after all of their flows are scaled with the same totals
-		for (std::size_t i = 0; i < candidates.size(); ++i) {
-			candidate_t const& candidate = candidates[i];
-			fixed_point_t quantity = tentative[i];
-			if (quantity <= fixed_point_t::_0) {
-				continue;
+			if (!any) {
+				break;
 			}
-			if (inflow_round[candidate.to] > import_left[candidate.to]) {
-				quantity = fp::mul_div(quantity, import_left[candidate.to], inflow_round[candidate.to]);
-			}
-			import_left[candidate.to] -= std::min(quantity, import_left[candidate.to]);
-		}
-		if (!any) {
-			break;
 		}
 	}
 
@@ -720,6 +745,9 @@ fixed_point_t GoodMarket::plan_routes() {
 		}
 		candidate_t const& candidate = candidates[i];
 		node_inflow[candidate.to] += taken[i];
+		if (trade_network->same_customs_union(candidate.from, candidate.to)) {
+			node_union_inflow[candidate.to] += taken[i];
+		}
 		planned += taken[i];
 		route_flows.push_back({ candidate.from, candidate.to, taken[i], candidate.cost, candidate.mode });
 	}

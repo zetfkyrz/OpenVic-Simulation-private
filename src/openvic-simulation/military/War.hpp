@@ -518,6 +518,19 @@ namespace OpenVic {
 		bool can_join_war(War const& war, bool attacker_side, CountryInstance const& country) const;
 		bool would_join_war(War const& war, CountryInstance const& country) const;
 		bool join_war(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& country, bool attacker_side);
+		// The military union (version 93, docs/PLAN_SPHERES.md): its leader draws its members into a war it fights on this side. A member
+		// allied with the enemy stays out; an AI member that does not want the war (another war, tired) refuses and loses
+		// SPHERE_MILITARY_REFUSAL_PRESTIGE of its prestige. At the start of a war (war_started) the members are put on the side directly,
+		// later they join it
+		// A member of the imperial sphere of the leader helps him in a war (version 93): it would join, and its relation with him is at least
+		// SPHERE_IMPERIAL_HELP_RELATION
+		bool imperial_member_helps(InstanceManager const& instance_manager, War const& war, CountryInstance const& leader, CountryInstance const& member) const;
+		void draw_union_members(
+			InstanceManager& instance_manager, War& war, CountryInstance const& leader, bool attacker_side, bool war_started,
+			CountryInstance const* only = nullptr
+		);
+		// The leader of a military union calls one member into a war of its (the button of the player)
+		void call_union_member(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance const& leader, CountryInstance const& member);
 		// The separate peace: a country that does not lead its side leaves the war with a white peace if the leader of the other side agrees (the player
 		// always does; an AI leader when the country holds nothing of his side or he would take a white peace from the whole side). Empty: it can
 		std::string_view get_separate_peace_block_reason(InstanceManager const& instance_manager, War const& war, CountryInstance const& country) const;

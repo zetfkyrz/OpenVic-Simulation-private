@@ -50,9 +50,14 @@ namespace OpenVic {
 		const std::size_t country_count;
 		std::span<CountryInstance> countries;
 		bool ready = false;
+		bool any_single_market = false;
 
 		std::vector<route_t> routes; // (country_count + 1) squared, [from * node_count + to]
 		std::vector<char> isolated; // by node: the country trades with no other country (isolationism, the laws)
+		// The customs unions (version 93, docs/PLAN_SPHERES.md), by node: the index of the leader + 1 (0: none), and the single market (the
+		// countries of the union joined to the leader by land borders): the same number, 0 for the others
+		std::vector<std::uint32_t> customs_union;
+		std::vector<std::uint32_t> single_market;
 		std::vector<fixed_point_t> sea_capacity; // by country: the sum of its ports
 		std::vector<std::int32_t> land_crossings; // by country: neighbouring pairs of provinces with other countries
 		std::vector<fixed_point_t> best_rail; // by country: the best railroad level at the border (0..1)
@@ -111,6 +116,17 @@ namespace OpenVic {
 		[[nodiscard]] bool is_isolated(const country_index_t node) const {
 			const std::size_t index = type_safe::get(node);
 			return index < isolated.size() && isolated[index] != 0;
+		}
+		// No tariffs between the two (members of one customs union)
+		[[nodiscard]] bool same_customs_union(const std::size_t from, const std::size_t to) const {
+			return from < customs_union.size() && to < customs_union.size() && customs_union[from] != 0 && customs_union[from] == customs_union[to];
+		}
+		// The trade between the two goes first (the single market of a customs union)
+		[[nodiscard]] bool same_single_market(const std::size_t from, const std::size_t to) const {
+			return from < single_market.size() && to < single_market.size() && single_market[from] != 0 && single_market[from] == single_market[to];
+		}
+		[[nodiscard]] bool has_single_markets() const {
+			return any_single_market;
 		}
 		fixed_point_t get_sea_capacity(const country_index_t country) const {
 			return sea_capacity[type_safe::get(country)];

@@ -1150,7 +1150,23 @@ namespace OpenVic {
 	INT(SPHERE_AI_INVITES_PER_MONTH, sphere_ai_invites_per_month, 1, 0, 100) \
 	/* The spheres of the history (ov_data/common/ov_spheres/start_spheres.txt): their AI members do not leave and are not drawn away, */ \
 	/* and the sphere does not end when its leader is no great power, for SPHERE_START_PROTECTION_YEARS years */ \
-	INT(SPHERE_START_PROTECTION_YEARS, sphere_start_protection_years, 20, 0, 1000)
+	INT(SPHERE_START_PROTECTION_YEARS, sphere_start_protection_years, 20, 0, 1000) \
+	/* The kinds of the spheres (version 93, docs/PLAN_SPHERES.md). The customs union: no tariffs between the members, the trade between the */ \
+	/* countries of its single market (the members joined to the leader by land borders) goes first, the emigrants go SPHERE_CUSTOMS_MIGRATION_PCT */ \
+	/* more to a member. The imperial sphere: the members have SPHERE_MEMBER_RELATION more relation with each other and pay SPHERE_IMPERIAL_TRIBUTE */ \
+	/* of their income to the leader; an AI member joins the wars of the leader when its relation with him is at least */ \
+	/* SPHERE_IMPERIAL_HELP_RELATION. The military union: no war between the members, the leader draws the members into his wars (a member that */ \
+	/* refuses loses SPHERE_MILITARY_REFUSAL_PRESTIGE of its prestige), the land of the members is as the own land for their armies. The */ \
+	/* ideological union: the laws pass with SPHERE_IDEOLOGICAL_LAW_CHANCE more chance, the members have SPHERE_MEMBER_RELATION more relation. */ \
+	/* The imperial sphere and the Alliance: the processes of the relations between the members cost no diplomatic points. The leader changes */ \
+	/* the kind SPHERE_KIND_CHANGE_MONTHS after the founding or the last change */ \
+	INT(SPHERE_CUSTOMS_MIGRATION_PCT, sphere_customs_migration_pct, 50, 0, 1000) \
+	INT(SPHERE_MEMBER_RELATION, sphere_member_relation, 25, 0, 200) \
+	RATE(SPHERE_IMPERIAL_TRIBUTE, sphere_imperial_tribute, Rate(5, 100), 0, 1) \
+	INT(SPHERE_IMPERIAL_HELP_RELATION, sphere_imperial_help_relation, 50, -200, 200) \
+	RATE(SPHERE_MILITARY_REFUSAL_PRESTIGE, sphere_military_refusal_prestige, Rate(5, 100), 0, 1) \
+	RATE(SPHERE_IDEOLOGICAL_LAW_CHANCE, sphere_ideological_law_chance, Rate(10, 100), 0, 1) \
+	INT(SPHERE_KIND_CHANGE_MONTHS, sphere_kind_change_months, 12, 0, 1200)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

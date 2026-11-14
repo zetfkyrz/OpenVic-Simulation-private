@@ -117,7 +117,7 @@ namespace {
 			}
 
 			CountryInstance const* const owner = candidate.get_owner();
-			if (owner == &country || (owner != nullptr && country.has_alliance_with(*owner))) {
+			if (owner == &country || (owner != nullptr && country.is_military_partner(*owner))) {
 				return &candidate;
 			}
 			if (fallback == nullptr) {
@@ -213,7 +213,8 @@ bool WarManager::can_declare_war(CountryInstance const& attacker, CountryInstanc
 	if (attacker.is_rebel_country() || defender.is_rebel_country()) {
 		return false;
 	}
-	if (attacker.is_at_war_with(defender) || attacker.has_alliance_with(defender)) {
+	// (no war between allies and between the members of a military union, version 93)
+	if (attacker.is_at_war_with(defender) || attacker.is_military_partner(defender)) {
 		return false;
 	}
 	return !has_truce(attacker, defender, today);
@@ -250,7 +251,9 @@ bool WarManager::declare_war(
 
 		const bool allied_to_attacker = country.has_alliance_with(attacker);
 		const bool allied_to_defender = country.has_alliance_with(defender);
-		if (allied_to_attacker == allied_to_defender) {
+		// (an ally of one side that is in a military union with the other stays out of the war, version 93)
+		if (allied_to_attacker == allied_to_defender || (allied_to_attacker && country.is_military_partner(defender))
+			|| (allied_to_defender && country.is_military_partner(attacker))) {
 			continue;
 		}
 
@@ -262,6 +265,10 @@ bool WarManager::declare_war(
 			war.defenders.push_back(&country);
 		}
 	}
+
+	// the military unions of the two (version 93)
+	draw_union_members(instance_manager, war, attacker, true, true);
+	draw_union_members(instance_manager, war, defender, false, true);
 
 	for (CountryInstance* attacking : war.attackers) {
 		for (CountryInstance* defending : war.defenders) {
@@ -710,7 +717,10 @@ namespace {
 			const fixed_point_t supply = unit.army->get_supply_level() * unit.army->get_country().manpower_combat_multiplier;
 			// The model of the army (the laws, docs/LAWS_DESIGN.md): its attack and defence, and the bonus on the national land of the country
 			CountryInstance const& army_country = unit.army->get_country();
-			const fixed_point_t home_bonus = province.get_owner() == &army_country && province.is_owner_core()
+			// (the land of a partner of the same military union is as the own land, version 93)
+			CountryInstance const* const land_owner = province.get_owner();
+			const fixed_point_t home_bonus = land_owner != nullptr && province.is_owner_core()
+				&& (land_owner == &army_country || army_country.shares_sphere_of_kind(*land_owner, sphere_kind_t::MILITARY))
 				? army_country.get_law_effect(law_effect_t::army_home_bonus) : fixed_point_t::_0;
 			const fixed_point_t law_attack = std::max(fixed_point_t::_0_10,
 				fixed_point_t::_1 + army_country.get_law_effect(law_effect_t::army_attack) + home_bonus);
@@ -1766,7 +1776,7 @@ void WarManager::update_army_recovery(InstanceManager& instance_manager) {
 			// Men are only replaced on friendly ground, not when the army is cut off from the supply
 			CountryInstance const* const owner = province.get_owner();
 			const bool friendly = !army.is_cut_off() && owner != nullptr
-				&& (owner == &army.get_country() || army.get_country().has_alliance_with(*owner));
+				&& (owner == &army.get_country() || army.get_country().is_military_partner(*owner));
 
 			// Armies the national stockpile cannot supply recover more slowly, and get no new men below half supplies
 			// (only at war, and never below a quarter, so that a country with an empty stockpile still can recover)
@@ -2146,7 +2156,7 @@ void WarManager::update_blockades(InstanceManager& instance_manager) {
 			}
 			if (navy.get_country().is_at_war_with(*owner)) {
 				enemy_fleet = true;
-			} else if (&navy.get_country() == owner || navy.get_country().has_alliance_with(*owner)) {
+			} else if (&navy.get_country() == owner || navy.get_country().is_military_partner(*owner)) {
 				defending_fleet = true;
 			}
 		}
@@ -2188,7 +2198,8 @@ void WarManager::update_attrition(InstanceManager& instance_manager) {
 				continue;
 			}
 
-			const bool friendly = owner == &country || (owner != nullptr && country.has_alliance_with(*owner));
+			// (the land of a partner of the same military union is as the own land, version 93)
+			const bool friendly = owner == &country || (owner != nullptr && country.is_military_partner(*owner));
 			// Only countries at war need supplies (the supply level of the army: its reserves keep it while the supplies do not arrive), a
 			// blockade of the ports cuts them
 			fixed_point_t supply = country.is_at_war() ? army.get_supply_level() : fixed_point_t::_1;
@@ -2305,6 +2316,9 @@ std::string_view WarManager::get_justify_block_reason(CountryInstance const& cou
 	if (country.has_alliance_with(target)) {
 		return "Союзник";
 	}
+	if (country.shares_sphere_of_kind(target, sphere_kind_t::MILITARY)) {
+		return "Военный союз: войны между членами запрещены";
+	}
 	if (country.has_casus_belli_against(target, today)) {
 		return "Повод для войны уже есть";
 	}
@@ -2352,7 +2366,7 @@ void WarManager::update_justifications(InstanceManager& instance_manager) {
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (country.justify_target != nullptr) {
 			CountryInstance& target = *country.justify_target;
-			if (!target.exists() || country.has_alliance_with(target) || country.is_at_war_with(target)) {
+			if (!target.exists() || country.is_military_partner(target) || country.is_at_war_with(target)) {
 				country.justify_target = nullptr;
 				country.justify_days_left = 0;
 			} else if (--country.justify_days_left <= 0) {
@@ -2395,7 +2409,7 @@ bool WarManager::can_join_war(War const& war, const bool attacker_side, CountryI
 		return false;
 	}
 	for (CountryInstance const* enemy : war.get_side(!attacker_side)) {
-		if (country.has_alliance_with(*enemy)) {
+		if (country.is_military_partner(*enemy)) {
 			return false;
 		}
 	}
@@ -2428,7 +2442,70 @@ bool WarManager::join_war(InstanceManager& instance_manager, const std::uint32_t
 	instance_manager.get_notification_log().add(instance_manager.get_today(), leader, "ally_joined_war", country.get_identifier(), &country);
 	instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "joined_war", leader->get_identifier(), leader);
 	SPDLOG_INFO("War {}: {} joins the side of {}", war_id, country.get_identifier(), leader->get_identifier());
+	// the leader of a military union draws its members in after it (version 93)
+	draw_union_members(instance_manager, *war, country, attacker_side, false);
 	return true;
+}
+
+bool WarManager::imperial_member_helps(
+	InstanceManager const& instance_manager, War const& war, CountryInstance const& leader, CountryInstance const& member
+) const {
+	if (!leader.get_leads_sphere() || member.get_sphere_owner_untracked() != &leader || leader.get_sphere_kind() != sphere_kind_t::IMPERIAL) {
+		return false;
+	}
+	OpenVicDiplomacyDefines const& diplomacy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+	return would_join_war(war, member) && member.get_relations_with(leader) >= diplomacy_defines.sphere_imperial_help_relation;
+}
+
+void WarManager::call_union_member(
+	InstanceManager& instance_manager, const std::uint32_t war_id, CountryInstance const& leader, CountryInstance const& member
+) {
+	War* const war = find_war(war_id);
+	if (war != nullptr && war->has_participant(leader)) {
+		draw_union_members(instance_manager, *war, leader, war->is_attacker(leader), false, &member);
+	}
+}
+
+void WarManager::draw_union_members(
+	InstanceManager& instance_manager, War& war, CountryInstance const& leader, const bool attacker_side, const bool war_started,
+	CountryInstance const* only
+) {
+	if (!leader.get_leads_sphere() || leader.get_sphere_kind() != sphere_kind_t::MILITARY) {
+		return;
+	}
+	Sphere const* const sphere = instance_manager.get_sphere_manager().find_led_by(&leader);
+	if (sphere == nullptr) {
+		return;
+	}
+	OpenVicDiplomacyDefines const& diplomacy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+	const std::uint32_t war_id = war.id;
+	// (a copy: joining a war does not change the sphere, but the war may be moved when it is in the list of the wars)
+	const memory::vector<CountryInstance*> members = sphere->members;
+	for (CountryInstance* member : members) {
+		War* const current = war_started ? &war : find_war(war_id);
+		if (current == nullptr) {
+			return;
+		}
+		if (member == nullptr || (only != nullptr && member != only) || !member->exists() || member->is_rebel_country()
+			|| !can_join_war(*current, attacker_side, *member)) {
+			continue;
+		}
+		if (member->is_ai() && !would_join_war(*current, *member)) {
+			const fixed_point_t prestige = member->get_prestige_untracked();
+			if (prestige > fixed_point_t::_0) {
+				member->add_prestige(-diplomacy_defines.sphere_military_refusal_prestige.of(prestige));
+			}
+			instance_manager.get_notification_log().add(instance_manager.get_today(), member, "sphere_war_refused", leader.get_identifier(), &leader);
+			SPDLOG_INFO("War {}: {} refuses the call of its military union ({})", war_id, member->get_identifier(), leader.get_identifier());
+			continue;
+		}
+		if (war_started) {
+			(attacker_side ? current->attackers : current->defenders).push_back(member);
+			instance_manager.get_notification_log().add(instance_manager.get_today(), member, "joined_war", leader.get_identifier(), &leader);
+		} else {
+			join_war(instance_manager, war_id, *member, attacker_side);
+		}
+	}
 }
 
 std::string_view WarManager::get_separate_peace_block_reason(

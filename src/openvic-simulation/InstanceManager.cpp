@@ -328,6 +328,11 @@ void InstanceManager::tick() {
 			credit_manager.tick(*this);
 		}
 		{
+			// the tribute of the imperial spheres (version 93, docs/PLAN_SPHERES.md)
+			OV_PROFILE_SCOPE(tick_profiler, "spheres");
+			sphere_manager.daily_update(*this);
+		}
+		{
 			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
 			colonisation_manager.tick(*this);
 		}

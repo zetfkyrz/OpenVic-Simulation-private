@@ -276,6 +276,35 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 			isolated[index] = 1;
 		}
 	}
+	// The customs unions and their single markets (version 93): from the leader along the land borders between the countries of the union
+	customs_union.assign(n, 0);
+	single_market.assign(n, 0);
+	any_single_market = false;
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		const std::size_t index = type_safe::get(country.index);
+		CountryInstance const* const leader = country.get_sphere_leader();
+		if (index < country_count && leader != nullptr && country.get_sphere_kind() == sphere_kind_t::CUSTOMS_UNION) {
+			customs_union[index] = static_cast<std::uint32_t>(type_safe::get(leader->index)) + 1;
+		}
+	}
+	for (std::size_t leader = 0; leader < country_count; ++leader) {
+		if (customs_union[leader] != leader + 1) {
+			continue;
+		}
+		std::vector<std::size_t> queue { leader };
+		single_market[leader] = customs_union[leader];
+		for (std::size_t next = 0; next < queue.size(); ++next) {
+			const std::size_t from = queue[next];
+			for (std::size_t to = 0; to < country_count; ++to) {
+				if (single_market[to] == 0 && customs_union[to] == customs_union[leader] && land_cap[from * n + to] > fixed_point_t::_0) {
+					single_market[to] = customs_union[leader];
+					queue.push_back(to);
+					any_single_market = true;
+				}
+			}
+		}
+	}
+
 	for (std::size_t a = 0; a < country_count; ++a) {
 		for (std::size_t b = 0; b < country_count; ++b) {
 			if (a == b || isolated[a] != 0 || isolated[b] != 0) {

@@ -470,6 +470,10 @@ relation_value_type CRM::get_effective_relation(CountryInstance const* country, 
 	if (diplomacy_defines != nullptr && country != nullptr && recipient != nullptr
 		&& (country->get_sphere_owner_untracked() == recipient || recipient->get_sphere_owner_untracked() == country)) {
 		value = std::max(value + diplomacy_defines->sphere_leader_relation, diplomacy_defines->sphere_relation_floor);
+	} else if (diplomacy_defines != nullptr && country != nullptr && recipient != nullptr
+		&& (country->shares_sphere_of_kind(*recipient, sphere_kind_t::IMPERIAL) || country->shares_sphere_of_kind(*recipient, sphere_kind_t::IDEOLOGICAL))) {
+		// two members of an imperial sphere or an ideological union (version 93): +SPHERE_MEMBER_RELATION
+		value += diplomacy_defines->sphere_member_relation;
 	}
 	return static_cast<relation_value_type>(std::clamp(value, -200, 200));
 }
@@ -571,10 +575,13 @@ void CRM::monthly_update(InstanceManager& instance_manager) {
 			finished.push_back(pair);
 			continue;
 		}
-		if (sender->get_diplomatic_points() < defines.relation_process_cost) {
+		// the diplomacy between the members of an imperial sphere or an Alliance is free (version 93)
+		const fixed_point_t cost = sender->shares_sphere_of_kind(*receiver, sphere_kind_t::IMPERIAL)
+			|| sender->shares_sphere_of_kind(*receiver, sphere_kind_t::ALLIANCE) ? fixed_point_t::_0 : defines.relation_process_cost;
+		if (sender->get_diplomatic_points() < cost) {
 			continue; // it waits for the points
 		}
-		sender->set_diplomatic_points(sender->get_diplomatic_points() - defines.relation_process_cost);
+		sender->set_diplomatic_points(sender->get_diplomatic_points() - cost);
 		relation = direction > 0 ? std::min(high, relation + defines.relation_improve_per_month)
 			: std::max(low, relation - defines.relation_worsen_per_month);
 		set_country_relation(sender, receiver, static_cast<relation_value_type>(relation));

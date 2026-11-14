@@ -173,7 +173,11 @@ namespace OpenVic {
 		// 92: the spheres of influence, stage S1 and S2 (docs/PLAN_SPHERES.md): founded by a great power, the influence from the trade and the
 		//     credits x the relation and the neighbourhood, joining and leaving, +25 relation with the leader and a floor of -175, no wars inside;
 		//     new actions found_sphere, invite_to_sphere, leave_sphere, set_sphere_look
-		inline constexpr int SIMULATION_VERSION = 92;
+		// 93: the kinds of the spheres, stage S3 (docs/PLAN_SPHERES.md): the customs union (no tariffs inside, the single market trades first,
+		//     the migration), the imperial sphere (the tribute, the help in the wars, the relations), the military union (no wars inside, the
+		//     leader draws the members into his wars, the land of the members as the own land), the ideological union (the laws, the
+		//     relations); new action set_sphere_kind
+		inline constexpr int SIMULATION_VERSION = 93;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

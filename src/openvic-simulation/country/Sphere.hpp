@@ -8,6 +8,7 @@
 #include "openvic-simulation/core/object/FixedPoint.hpp"
 #include "openvic-simulation/core/memory/String.hpp"
 #include "openvic-simulation/core/memory/Vector.hpp"
+#include "openvic-simulation/country/SphereKind.hpp"
 #include "openvic-simulation/dataloader/NodeTools.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 
@@ -17,9 +18,7 @@ namespace OpenVic {
 
 	// The spheres of influence (version 92, docs/PLAN_SPHERES.md, stage S1 and S2): a great power leads, the members join by the influence of the
 	// leader on them (the dependence of their economy: the trade from the leader and its investments, times the relation and the neighbourhood)
-	enum struct sphere_kind_t : std::uint8_t { CUSTOMS_UNION, IMPERIAL, MILITARY, IDEOLOGICAL, ALLIANCE, COUNT };
-
-	std::string_view sphere_kind_identifier(sphere_kind_t kind);
+	// (the kinds: SphereKind.hpp; their effects, version 93: the customs union, the imperial sphere, the military and the ideological union)
 
 	struct Sphere {
 		std::uint32_t id = 0;
@@ -33,6 +32,10 @@ namespace OpenVic {
 		memory::vector<CountryInstance*> members; // without the leader
 		// A sphere of the history (start_spheres.txt) lives to this date even when its leader is no great power (Date {}: not protected)
 		Date protected_until;
+		// The founding or the last change of the kind (the kind changes SPHERE_KIND_CHANGE_MONTHS after it)
+		Date kind_changed;
+		// The tribute of the imperial sphere the leader got yesterday (for the window of the sphere)
+		fixed_point_t tribute_yesterday;
 	};
 
 	// The spheres at the start of the game, as in the history (ov_data/common/ov_spheres/start_spheres.txt; a mod replaces a leader's entry)
@@ -73,7 +76,7 @@ namespace OpenVic {
 		vector_ordered_map<CountryInstance const*, Date> protected_until;
 
 
-		void set_membership(CountryInstance& country, CountryInstance const* leader);
+		void set_membership(CountryInstance& country, CountryInstance const* leader, sphere_kind_t kind);
 		void dissolve(InstanceManager& instance_manager, std::size_t index);
 		void update_influence(InstanceManager& instance_manager);
 
@@ -100,11 +103,18 @@ namespace OpenVic {
 		bool invite(InstanceManager& instance_manager, CountryInstance& leader, CountryInstance& country);
 		bool leave(InstanceManager& instance_manager, CountryInstance& country);
 		bool set_look(CountryInstance const& leader, colour_t colour, std::uint32_t icon);
+		// "" if the leader may change the kind of its sphere to this one, else the reason (version 93)
+		std::string_view change_kind_block_reason(InstanceManager const& instance_manager, CountryInstance const& leader, sphere_kind_t kind) const;
+		bool change_kind(InstanceManager& instance_manager, CountryInstance& leader, sphere_kind_t kind);
+		// The date the leader may change the kind again
+		Date get_kind_change_date(InstanceManager const& instance_manager, Sphere const& sphere) const;
 
 		// At the start of the game: the spheres of the history (start_spheres.txt), the leaders need not be great powers yet
 		void setup_start_spheres(InstanceManager& instance_manager, StartSphereDefinitions const& definitions);
 
 		// Once a month: the influence, the end of the spheres whose leader is no great power any more, the decisions of the AI
 		void monthly_update(InstanceManager& instance_manager);
+		// Every day: the tribute of the members of the imperial spheres to their leaders (version 93)
+		void daily_update(InstanceManager& instance_manager);
 	};
 }

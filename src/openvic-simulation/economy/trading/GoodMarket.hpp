@@ -46,7 +46,11 @@ namespace OpenVic {
 		};
 		// Scratch arrays of the routed day (by node: the countries and the outside), kept to avoid allocations
 		std::vector<fixed_point_t> node_supply, node_desire, node_bought, node_cap, node_inflow, node_dom, node_exports, node_export_cost,
-			node_fee_domestic, node_fee_export, node_land_exports, node_sea_exports, node_imports, node_covered;
+			node_fee_domestic, node_fee_export, node_land_exports, node_sea_exports, node_imports, node_covered,
+			// what the routes of the plan bring from the members of the same customs union (no tariffs on it, version 93)
+			node_union_inflow;
+		// The day is routed (the tariffs fall only on what comes from outside the customs union)
+		bool routed_today = false;
 		std::vector<route_flow_t> route_flows;
 		std::vector<fixed_point_t> effective_max_quantity;
 		// The part of the offers (and of the wishes) that cannot reach each other because the routes are missing or full

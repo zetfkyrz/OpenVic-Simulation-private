@@ -92,6 +92,7 @@ void LawDynamics::monthly_update(InstanceManager& instance_manager) {
 		return;
 	}
 	OpenVicPoliticsDefines const& defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().politics;
+	OpenVicDiplomacyDefines const& diplomacy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
 	const std::size_t ideology_count = instance_manager.definition_manager.get_politics_manager().get_ideology_manager().get_ideologies().size();
 	const Date today = instance_manager.get_today();
 	const std::int64_t day = static_cast<std::int64_t>(today.get_year()) * 400 + static_cast<std::int64_t>(today.get_day_of_year());
@@ -149,8 +150,11 @@ void LawDynamics::monthly_update(InstanceManager& instance_manager) {
 		country.set_law_support(support);
 		if (support > fixed_point_t::_0 && may_pass(country, *proposal, current)) {
 			// (the presidential republic passes the laws faster)
+			// (the members of an ideological union, version 93: +SPHERE_IDEOLOGICAL_LAW_CHANCE)
+			const fixed_point_t sphere_bonus = country.get_sphere_kind() == sphere_kind_t::IDEOLOGICAL
+				? diplomacy_defines.sphere_ideological_law_chance.fixed() : fixed_point_t::_0;
 			const fixed_point_t chance = std::min(fixed_point_t::_1, (defines.law_pass_base.fixed() + defines.law_pass_per_support.fixed() * support)
-				* std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::law_pass_speed)));
+				* std::max(fixed_point_t::_0, fixed_point_t::_1 + country.get_law_effect(law_effect_t::law_pass_speed)) + sphere_bonus);
 			const std::uint32_t needed = static_cast<std::uint32_t>(std::clamp((chance * 10000).ceil<std::int32_t>(), 0, 10000));
 			if (draw(day, type_safe::get(country.index), proposal->index) < needed) {
 				SPDLOG_INFO("Law: {} passes {} (support {:.2f})", country.get_identifier(), proposal->get_identifier(), static_cast<double>(support));

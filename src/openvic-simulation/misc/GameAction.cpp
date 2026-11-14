@@ -408,6 +408,13 @@ bool GameActionManager::VariantVisitor::operator() (set_sphere_look_argument_t c
 	return instance_manager.get_sphere_manager().set_look(country, colour_t::from_integer(rgb), icon);
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_sphere_kind_argument_t const& argument) const {
+	const auto [country_index, kind] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return kind < static_cast<std::uint32_t>(sphere_kind_t::COUNT)
+		&& instance_manager.get_sphere_manager().change_kind(instance_manager, country, static_cast<sphere_kind_t>(kind));
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

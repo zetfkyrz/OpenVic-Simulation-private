@@ -6464,6 +6464,124 @@ namespace {
 			"spheres: a great power out of the spheres founds one (the Alliance needs the technology)", fmt::format("{}", founder->get_identifier()));
 	}
 
+	// The kinds of the spheres (version 93, docs/PLAN_SPHERES.md): the customs union and its single market, the military union (no wars inside,
+	// the leader draws the members into his war, the land of a partner), the imperial sphere (the tribute, the relations between the members,
+	// the free diplomacy), the pause before the next change of the kind
+	void test_sphere_kinds(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		SphereManager& spheres = im.get_sphere_manager();
+		WarManager& war_manager = im.get_war_manager();
+		OpenVicDiplomacyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+		CountryInstance* const prussia = countries.get_country_instance_by_identifier("PRU");
+		CountryInstance* const bavaria = countries.get_country_instance_by_identifier("BAV");
+		CountryInstance* const saxony = countries.get_country_instance_by_identifier("SAX");
+		Sphere const* const zollverein = prussia != nullptr ? spheres.find_led_by(prussia) : nullptr;
+		if (zollverein == nullptr || bavaria == nullptr || saxony == nullptr || spheres.find_of(bavaria) != zollverein || spheres.find_of(saxony) != zollverein
+			|| zollverein->kind != sphere_kind_t::CUSTOMS_UNION) {
+			fmt::println("TEST INFO sphere kinds: no customs union of Prussia with Bavaria and Saxony, not checked");
+			return;
+		}
+		// (the tests do not wait SPHERE_KIND_CHANGE_MONTHS: the date of the last change is moved back)
+		const auto allow_change = [&]() {
+			const_cast<Sphere*>(spheres.find_led_by(prussia))->kind_changed = Date {};
+		};
+
+		// ---- the customs union: Saxony borders Prussia, so it is in the single market; the tariffs do not fall inside
+		TradeNetwork& network = im.get_trade_network();
+		if (network.is_enabled()) {
+			network.update(im);
+			const std::size_t pru = type_safe::get(prussia->index), sax = type_safe::get(saxony->index), bav = type_safe::get(bavaria->index);
+			r.check(network.same_customs_union(pru, bav) && network.same_customs_union(sax, pru) && network.same_single_market(pru, sax)
+					&& network.has_single_markets(),
+				"sphere kinds: the members of a customs union trade without tariffs, the land neighbours of the leader are its single market");
+		}
+		r.check(!spheres.change_kind_block_reason(im, *prussia, sphere_kind_t::MILITARY).empty(),
+			"sphere kinds: the kind is not changed again before SPHERE_KIND_CHANGE_MONTHS");
+
+		// ---- the military union
+		allow_change();
+		r.check(spheres.change_kind(im, *prussia, sphere_kind_t::MILITARY) && bavaria->get_sphere_kind() == sphere_kind_t::MILITARY
+				&& prussia->get_sphere_kind() == sphere_kind_t::MILITARY, "sphere kinds: the leader changes the kind, the members get it");
+		r.check(bavaria->is_military_partner(*saxony) && prussia->is_military_partner(*bavaria) && !war_manager.can_declare_war(*bavaria, *saxony, im.get_today())
+				&& !war_manager.get_justify_block_reason(*prussia, *bavaria, im.get_today()).empty(),
+			"sphere kinds: no war between the members of a military union");
+		ProvinceInstance* const saxon_land = saxony->get_capital();
+		r.check(saxon_land != nullptr && UnitInstanceGroup::can_country_enter(*bavaria, *saxon_land),
+			"sphere kinds: the armies of a military union go on the land of the other members");
+		// a war of the leader draws the members in
+		CountryInstance* target = nullptr;
+		for (CountryInstance& candidate : countries.get_country_instances()) {
+			if (target == nullptr && candidate.exists() && !candidate.is_rebel_country() && !candidate.get_owned_provinces().empty()
+				&& spheres.find_of(&candidate) == nullptr && !candidate.is_at_war() && war_manager.can_declare_war(*prussia, candidate, im.get_today())) {
+				bool allied_inside = prussia->has_alliance_with(candidate);
+				for (CountryInstance const* member : zollverein->members) {
+					allied_inside |= member->has_alliance_with(candidate);
+				}
+				if (!allied_inside) {
+					target = &candidate;
+				}
+			}
+		}
+		if (target == nullptr) {
+			fmt::println("TEST INFO sphere kinds: Prussia has no country to attack, the call of the members not checked");
+		} else {
+			std::size_t free_members = 0;
+			for (CountryInstance const* member : spheres.find_led_by(prussia)->members) {
+				free_members += member->is_at_war() ? 0 : 1;
+			}
+			const bool declared = war_manager.declare_war(im, *prussia, *target);
+			War const* const war = war_manager.find_war_between(*prussia, *target);
+			std::size_t joined = 0;
+			bool wrong_side = false;
+			if (war != nullptr) {
+				for (CountryInstance const* member : spheres.find_led_by(prussia)->members) {
+					joined += war->has_participant(*member) ? 1 : 0;
+					wrong_side |= war->has_participant(*member) && !war->is_attacker(*member);
+				}
+			}
+			r.check(declared && war != nullptr && joined > 0 && !wrong_side,
+				"sphere kinds: the leader of a military union draws its members into its war",
+				fmt::format("{} of {} free members joined the war against {}", joined, free_members, target->get_identifier()));
+			if (war != nullptr) {
+				war_manager.end_war(im, war->id);
+			}
+		}
+
+		// ---- the imperial sphere: the relations between the members, the tribute, the free diplomacy
+		allow_change();
+		r.check(spheres.change_kind(im, *prussia, sphere_kind_t::IMPERIAL) && !bavaria->is_military_partner(*saxony),
+			"sphere kinds: the military union ends with the change of the kind");
+		const std::int32_t members_base = static_cast<std::int32_t>(relations.get_country_relation(bavaria, saxony))
+			+ relations.get_war_scar(bavaria, saxony).floor<std::int32_t>();
+		r.check(static_cast<std::int32_t>(relations.get_effective_relation(bavaria, saxony)) == std::clamp(members_base + defines.sphere_member_relation, -200, 200),
+			"sphere kinds: the members of an imperial sphere have +25 relation with each other");
+		const fixed_point_t cash_before = prussia->get_cash_stockpile().load();
+		spheres.daily_update(im);
+		const fixed_point_t tribute = spheres.find_led_by(prussia)->tribute_yesterday;
+		r.check(tribute > fixed_point_t::_0 && prussia->get_cash_stockpile().load() == cash_before + tribute,
+			"sphere kinds: the members of an imperial sphere pay a share of their income to the leader",
+			fmt::format("tribute {:.2f}", static_cast<double>(tribute)));
+		relations.set_country_relation(bavaria, saxony, 0);
+		const fixed_point_t points_gain = CountryRelationManager::get_diplomatic_points_gain(*bavaria);
+		bavaria->set_diplomatic_points(fixed_point_t::_0);
+		// (the AI of Bavaria has processes of its own that would take the points)
+		for (auto const& [other, direction] : relations.get_relation_processes_of(bavaria)) {
+			relations.set_relation_process(bavaria, other, 0);
+		}
+		relations.set_relation_process(bavaria, saxony, 1);
+		relations.monthly_update(im);
+		r.check(relations.get_country_relation(bavaria, saxony) == defines.relation_improve_per_month
+				&& bavaria->get_diplomatic_points() == std::min(defines.diplomatic_points_max, points_gain),
+			"sphere kinds: the processes of the relations between the members of an imperial sphere cost no diplomatic points",
+			fmt::format("relation {}, points {:.2f}", relations.get_country_relation(bavaria, saxony), static_cast<double>(bavaria->get_diplomatic_points())));
+		relations.set_relation_process(bavaria, saxony, 0);
+
+		// back to the customs union of the history
+		allow_change();
+		spheres.change_kind(im, *prussia, sphere_kind_t::CUSTOMS_UNION);
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8453,6 +8571,7 @@ namespace {
 		test_canned_food_grain(r, *im); // it changes the stockpile and the armies of a country
 		test_diplomacy_ai(r, *im); // last: it makes alliances and goals
 		test_spheres(r, *im); // after it: it founds a sphere and changes the members
+		test_sphere_kinds(r, *im); // a war of its own
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

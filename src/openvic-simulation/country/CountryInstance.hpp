@@ -17,6 +17,7 @@
 #include "openvic-simulation/core/object/Timespan.hpp"
 #include "openvic-simulation/core/stl/containers/TypedSpan.hpp"
 #include "openvic-simulation/core/thread/SpinMutex.hpp"
+#include "openvic-simulation/country/SphereKind.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/BuildingLevel.hpp"
 #include "openvic-simulation/economy/BuildingRestrictionCategory.hpp"
@@ -554,11 +555,30 @@ namespace OpenVic {
 		// The sphere of influence (version 92, docs/PLAN_SPHERES.md): the country leads one, and its colour (for the map of the spheres)
 		bool PROPERTY_RW(leads_sphere, false);
 		colour_t PROPERTY_RW(sphere_colour);
+		// The kind of the sphere of the country, as the leader or a member (version 93; COUNT: no sphere), set by the SphereManager
+		sphere_kind_t PROPERTY_RW(sphere_kind, sphere_kind_t::COUNT);
 		memory::vector<CountryInstance const*> ai_assist_warned_borders;
 	public:
 		// The leader of the sphere the country is a member of (nullptr: none), set by the SphereManager
 		void set_sphere_owner_country(CountryInstance const* leader) {
 			sphere_owner.set(leader);
+		}
+		// The leader of the sphere of the country: itself when it leads one (nullptr: no sphere)
+		CountryInstance const* get_sphere_leader() const {
+			return leads_sphere ? this : sphere_owner.get_untracked();
+		}
+		// The two are in the same sphere (the leader or members)
+		bool shares_sphere_with(CountryInstance const& other) const {
+			CountryInstance const* const leader = get_sphere_leader();
+			return leader != nullptr && &other != this && leader == other.get_sphere_leader();
+		}
+		// The two are in the same sphere of this kind
+		bool shares_sphere_of_kind(CountryInstance const& other, const sphere_kind_t kind) const {
+			return sphere_kind == kind && shares_sphere_with(other);
+		}
+		// An ally or a partner of the same military union (version 93): its land is as the own land for the armies, no war between them
+		bool is_military_partner(CountryInstance const& other) const {
+			return has_alliance_with(other) || shares_sphere_of_kind(other, sphere_kind_t::MILITARY);
 		}
 		memory::vector<CountryInstance const*> const& get_ai_assist_warned_borders() const {
 			return ai_assist_warned_borders;

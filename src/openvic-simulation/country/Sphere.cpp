@@ -9,6 +9,7 @@
 #include "openvic-simulation/economy/trading/TradeNetwork.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/population/PopType.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -61,6 +62,26 @@ namespace {
 			sum += income;
 		}
 		return sum;
+	}
+
+	// The kind of the sphere an AI great power founds (version 93): a colonial empire (a quarter of its provinces in colonial states) an imperial
+	// sphere, a country whose army ranks above its industry a military union, else a customs union
+	sphere_kind_t ai_sphere_kind(CountryInstance const& country) {
+		std::size_t colonial = 0, all = 0;
+		for (ProvinceInstance const* province : country.get_owned_provinces()) {
+			++all;
+			if (province->get_state() != nullptr && province->get_state()->is_colonial_state()) {
+				++colonial;
+			}
+		}
+		if (all > 0 && colonial * 4 >= all) {
+			return sphere_kind_t::IMPERIAL;
+		}
+		const std::size_t military = country.get_military_rank(), industrial = country.get_industrial_rank();
+		if (military > 0 && industrial > 0 && military < industrial) {
+			return sphere_kind_t::MILITARY;
+		}
+		return sphere_kind_t::CUSTOMS_UNION;
 	}
 
 	// The percent of the influence by the relation (decision of the owner 2026-11-14)
@@ -162,8 +183,10 @@ void SphereManager::setup_start_spheres(InstanceManager& instance_manager, Start
 		// the colour of the country is computed with the first update of the game state, after this: the colour of its definition
 		sphere.colour = leader->country_definition.get_colour();
 		sphere.founded = today;
+		sphere.kind_changed = today;
 		sphere.protected_until = protection;
 		leader->set_leads_sphere(true);
+		leader->set_sphere_kind(sphere.kind);
 		leader->set_sphere_colour(sphere.colour);
 		for (memory::string const& tag : entry.members) {
 			CountryInstance* const member = countries.get_country_instance_by_identifier(tag);
@@ -172,7 +195,7 @@ void SphereManager::setup_start_spheres(InstanceManager& instance_manager, Start
 				continue;
 			}
 			sphere.members.push_back(member);
-			set_membership(*member, leader);
+			set_membership(*member, leader, sphere.kind);
 			protected_until.insert({ member, protection });
 		}
 		SPDLOG_INFO("Sphere: {} starts with a {} of {} members", leader->get_identifier(), sphere_kind_identifier(sphere.kind), sphere.members.size());
@@ -202,8 +225,9 @@ SphereManager::influence_t SphereManager::get_influence(CountryInstance const* l
 	return it == influence.end() ? influence_t {} : it->second;
 }
 
-void SphereManager::set_membership(CountryInstance& country, CountryInstance const* leader) {
+void SphereManager::set_membership(CountryInstance& country, CountryInstance const* leader, const sphere_kind_t kind) {
 	country.set_sphere_owner_country(leader);
+	country.set_sphere_kind(leader != nullptr ? kind : sphere_kind_t::COUNT);
 }
 
 std::string_view SphereManager::found_block_reason(InstanceManager const& instance_manager, CountryInstance const& country, sphere_kind_t kind) const {
@@ -233,7 +257,9 @@ bool SphereManager::found(InstanceManager& instance_manager, CountryInstance& co
 	sphere.kind = kind;
 	sphere.colour = country.get_colour();
 	sphere.founded = instance_manager.get_today();
+	sphere.kind_changed = sphere.founded;
 	country.set_leads_sphere(true);
+	country.set_sphere_kind(kind);
 	country.set_sphere_colour(sphere.colour);
 	instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "sphere_founded", sphere_kind_identifier(kind));
 	SPDLOG_INFO("Sphere: {} founds a {}", country.get_identifier(), sphere_kind_identifier(kind));
@@ -291,7 +317,7 @@ bool SphereManager::invite(InstanceManager& instance_manager, CountryInstance& l
 	for (Sphere& sphere : spheres) {
 		if (sphere.leader == &leader) {
 			sphere.members.push_back(&country);
-			set_membership(country, &leader);
+			set_membership(country, &leader, sphere.kind);
 			instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "sphere_joined", "", &leader);
 			SPDLOG_INFO("Sphere: {} joins the sphere of {}", country.get_identifier(), leader.get_identifier());
 			return true;
@@ -305,7 +331,7 @@ bool SphereManager::leave(InstanceManager& instance_manager, CountryInstance& co
 		const auto it = std::find(sphere.members.begin(), sphere.members.end(), &country);
 		if (it != sphere.members.end()) {
 			sphere.members.erase(it);
-			set_membership(country, nullptr);
+			set_membership(country, nullptr, sphere_kind_t::COUNT);
 			protected_until.erase(&country);
 			instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "sphere_left", "", sphere.leader);
 			SPDLOG_INFO("Sphere: {} leaves the sphere of {}", country.get_identifier(), sphere.leader->get_identifier());
@@ -327,13 +353,98 @@ bool SphereManager::set_look(CountryInstance const& leader, const colour_t colou
 	return false;
 }
 
+Date SphereManager::get_kind_change_date(InstanceManager const& instance_manager, Sphere const& sphere) const {
+	return sphere.kind_changed + Timespan::from_months(std::max(0, defines_of(instance_manager).sphere_kind_change_months));
+}
+
+std::string_view SphereManager::change_kind_block_reason(
+	InstanceManager const& instance_manager, CountryInstance const& leader, const sphere_kind_t kind
+) const {
+	Sphere const* const sphere = find_led_by(&leader);
+	if (sphere == nullptr) {
+		return "the country leads no sphere";
+	}
+	if (kind >= sphere_kind_t::COUNT) {
+		return "no such kind of sphere";
+	}
+	if (kind == sphere->kind) {
+		return "the sphere already is of this kind";
+	}
+	if (kind == sphere_kind_t::ALLIANCE || sphere->kind == sphere_kind_t::ALLIANCE) {
+		return "the Alliance needs the technology of the multilateral alliances";
+	}
+	if (instance_manager.get_today() < get_kind_change_date(instance_manager, *sphere)) {
+		return "the kind was changed not long ago";
+	}
+	// the military union forbids the wars between the members: not while two of them fight each other
+	if (kind == sphere_kind_t::MILITARY) {
+		for (CountryInstance const* member : sphere->members) {
+			if (leader.is_at_war_with(*member)) {
+				return "members are at war with each other";
+			}
+			for (CountryInstance const* other : sphere->members) {
+				if (member != other && member->is_at_war_with(*other)) {
+					return "members are at war with each other";
+				}
+			}
+		}
+	}
+	return {};
+}
+
+bool SphereManager::change_kind(InstanceManager& instance_manager, CountryInstance& leader, const sphere_kind_t kind) {
+	if (!change_kind_block_reason(instance_manager, leader, kind).empty()) {
+		return false;
+	}
+	for (Sphere& sphere : spheres) {
+		if (sphere.leader == &leader) {
+			sphere.kind = kind;
+			sphere.kind_changed = instance_manager.get_today();
+			leader.set_sphere_kind(kind);
+			for (CountryInstance* member : sphere.members) {
+				member->set_sphere_kind(kind);
+			}
+			instance_manager.get_notification_log().add(instance_manager.get_today(), &leader, "sphere_kind_changed", sphere_kind_identifier(kind));
+			SPDLOG_INFO("Sphere: {} makes its sphere a {}", leader.get_identifier(), sphere_kind_identifier(kind));
+			return true;
+		}
+	}
+	return false;
+}
+
+void SphereManager::daily_update(InstanceManager& instance_manager) {
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	for (Sphere& sphere : spheres) {
+		sphere.tribute_yesterday = fixed_point_t::_0;
+		if (sphere.kind != sphere_kind_t::IMPERIAL || sphere.leader == nullptr || defines.sphere_imperial_tribute.numerator <= 0) {
+			continue;
+		}
+		// The members pay a share of the income of their treasury of yesterday (not more than they have). Later the subjects that already
+		// pay their overlord (the plan of the subjects) will be left out
+		for (CountryInstance* member : sphere.members) {
+			const fixed_point_t income = member->get_income_yesterday();
+			if (income <= fixed_point_t::_0) {
+				continue;
+			}
+			const fixed_point_t tribute = std::min(defines.sphere_imperial_tribute.of(income), member->get_cash_stockpile().load());
+			if (tribute <= fixed_point_t::_0) {
+				continue;
+			}
+			member->spend_cash(tribute);
+			sphere.leader->add_cash(tribute);
+			sphere.tribute_yesterday += tribute;
+		}
+	}
+}
+
 void SphereManager::dissolve(InstanceManager& instance_manager, const std::size_t index) {
 	Sphere& sphere = spheres[index];
 	for (CountryInstance* member : sphere.members) {
-		set_membership(*member, nullptr);
+		set_membership(*member, nullptr, sphere_kind_t::COUNT);
 	}
 	if (sphere.leader != nullptr) {
 		sphere.leader->set_leads_sphere(false);
+		sphere.leader->set_sphere_kind(sphere_kind_t::COUNT);
 		instance_manager.get_notification_log().add(instance_manager.get_today(), sphere.leader, "sphere_dissolved", sphere_kind_identifier(sphere.kind));
 		SPDLOG_INFO("Sphere: the sphere of {} ends", sphere.leader->get_identifier());
 	}
@@ -428,7 +539,7 @@ void SphereManager::monthly_update(InstanceManager& instance_manager) {
 		}
 		if (find_of(&country) == nullptr && is_great_power(defines, country)
 			&& country.get_ai_goal() == CountryInstance::ai_goal_t::ECONOMIC_CONTROL) {
-			found(instance_manager, country, sphere_kind_t::CUSTOMS_UNION);
+			found(instance_manager, country, ai_sphere_kind(country));
 		}
 		if (Sphere const* const sphere = find_of(&country); sphere != nullptr && sphere->leader != &country) {
 			const fixed_point_t value = get_influence(sphere->leader, &country).value;

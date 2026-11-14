@@ -691,8 +691,10 @@ namespace {
 					if (current == nullptr) {
 						break;
 					}
-					if (&ally != &country && ally.is_ai() && country.has_alliance_with(ally) && war_manager.can_join_war(*current, attacker_side, ally)
-						&& war_manager.would_join_war(*current, ally)) {
+					// (the allies, and the members of its imperial sphere that like it enough, version 93)
+					if (&ally != &country && ally.is_ai() && war_manager.can_join_war(*current, attacker_side, ally)
+						&& ((country.has_alliance_with(ally) && war_manager.would_join_war(*current, ally))
+							|| war_manager.imperial_member_helps(instance_manager, *current, country, ally))) {
 						war_manager.join_war(instance_manager, war_id, ally, attacker_side);
 					}
 				}

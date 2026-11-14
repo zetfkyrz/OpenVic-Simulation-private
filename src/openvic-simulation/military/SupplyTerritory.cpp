@@ -40,7 +40,8 @@ SupplyFriends SupplyFriends::build(
 			continue;
 		}
 		// An ally, or a country that gave the passage of the troops to this one (the passage includes the supply)
-		if (country.has_alliance_with(other) || country.has_military_access_to(other)) {
+		// (or a partner of the same military union, version 93)
+		if (country.is_military_partner(other) || country.has_military_access_to(other)) {
 			ret.friends[type_safe::get(other.index)] = 1;
 		}
 	}

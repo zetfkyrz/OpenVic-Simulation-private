@@ -850,21 +850,32 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 							placed = move_to_vacancies(*pop, province, own_slot, emigrants, 3);
 							emigrated_internal_total += placed;
 						} else {
-							// Abroad: the country with the most free jobs for this kind of people
+							// Abroad: the country with the most free jobs for this kind of people; a member of the same customs union counts and
+							// takes SPHERE_CUSTOMS_MIGRATION_PCT more (version 93)
+							const std::int64_t union_pct = 100 + std::max(0, instance_manager.definition_manager.get_define_manager()
+								.get_openvic_defines().diplomacy.sphere_customs_migration_pct);
 							std::size_t best_slot = own_slot;
 							std::int64_t best_free = 0;
+							bool best_in_union = false;
 							for (std::size_t country = 0; country < country_count; ++country) {
 								const std::size_t slot = country * type_count + type_safe::get(type.index);
+								CountryInstance const& destination =
+									instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index_t(country));
+								const bool in_union = owner->shares_sphere_of_kind(destination, sphere_kind_t::CUSTOMS_UNION);
+								const std::int64_t weighted = in_union ? free_jobs_total[slot] * union_pct / 100 : free_jobs_total[slot];
 								// (a country that lets nobody in takes no emigrants)
-								if (slot != own_slot && free_jobs_total[slot] > best_free
-									&& instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index_t(country))
-										.get_law_effect(law_effect_t::no_immigration) <= fixed_point_t::_0) {
-									best_free = free_jobs_total[slot];
+								if (slot != own_slot && free_jobs_total[slot] > 0 && weighted > best_free
+									&& destination.get_law_effect(law_effect_t::no_immigration) <= fixed_point_t::_0) {
+									best_free = weighted;
 									best_slot = slot;
+									best_in_union = in_union;
 								}
 							}
 							if (best_slot != own_slot) {
-								placed = move_to_vacancies(*pop, province, best_slot, emigrants, 4);
+								const std::int32_t going = best_in_union ? static_cast<std::int32_t>(std::min<std::int64_t>(
+									static_cast<std::int64_t>(emigrants) * union_pct / 100, people_that_may_go
+								)) : emigrants;
+								placed = move_to_vacancies(*pop, province, best_slot, going, 4);
 								emigrated_external_total += placed;
 							}
 						}
