@@ -6659,6 +6659,12 @@ namespace {
 		r.check(bavaria->get_sphere_output_bonus(type_safe::get(small_arms->index)) == fixed_point_t::_0
 				&& bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == fixed_point_t::_0,
 			"sphere principles: the bonuses go with the principles");
+
+		// the icon (version 95): the simulation keeps the two numbers of the interface, only for the leader
+		r.check(spheres.set_icon(*prussia, 0x12345, 0x777) && spheres.find_led_by(prussia)->icon == 0x12345
+				&& spheres.find_led_by(prussia)->icon_extra == 0x777 && !spheres.set_icon(*bavaria, 1, 1),
+			"sphere icons: the leader sets the icon of its sphere (two numbers), a member cannot");
+		spheres.set_icon(*prussia, 0, 0);
 	}
 
 	void test_laws(Results& r, InstanceManager& im) {

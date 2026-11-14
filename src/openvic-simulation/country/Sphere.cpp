@@ -536,6 +536,17 @@ void SphereManager::daily_update(InstanceManager& instance_manager) {
 	}
 }
 
+bool SphereManager::set_icon(CountryInstance const& leader, const std::uint32_t icon, const std::uint32_t icon_extra) {
+	for (Sphere& sphere : spheres) {
+		if (sphere.leader == &leader) {
+			sphere.icon = icon;
+			sphere.icon_extra = icon_extra;
+			return true;
+		}
+	}
+	return false;
+}
+
 void SphereManager::dissolve(InstanceManager& instance_manager, const std::size_t index) {
 	Sphere& sphere = spheres[index];
 	for (CountryInstance* member : sphere.members) {

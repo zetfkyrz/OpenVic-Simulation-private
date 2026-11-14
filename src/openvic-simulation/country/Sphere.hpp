@@ -27,7 +27,10 @@ namespace OpenVic {
 		CountryInstance* leader = nullptr;
 		sphere_kind_t kind = sphere_kind_t::CUSTOMS_UNION;
 		colour_t colour {};
+		// The icon (version 95): two numbers the interface reads (the kind of the icon, the pieces and their colours: SphereIcons.gd); the
+		// simulation only keeps them
 		std::uint32_t icon = 0;
+		std::uint32_t icon_extra = 0;
 		Date founded;
 		// The leader is not a great power since this date (Date {}: it is one)
 		Date leader_lost_rank;
@@ -135,6 +138,7 @@ namespace OpenVic {
 		bool invite(InstanceManager& instance_manager, CountryInstance& leader, CountryInstance& country);
 		bool leave(InstanceManager& instance_manager, CountryInstance& country);
 		bool set_look(CountryInstance const& leader, colour_t colour, std::uint32_t icon);
+		bool set_icon(CountryInstance const& leader, std::uint32_t icon, std::uint32_t icon_extra);
 		// "" if the leader may change the kind of its sphere to this one, else the reason (version 93)
 		std::string_view change_kind_block_reason(InstanceManager const& instance_manager, CountryInstance const& leader, sphere_kind_t kind) const;
 		bool change_kind(InstanceManager& instance_manager, CountryInstance& leader, sphere_kind_t kind);
