@@ -3572,6 +3572,16 @@ void CountryInstance::report_pop_income_tax(PopType const& pop_type, const fixed
 void CountryInstance::report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
 	good_data_t& good_data = goods_data.at_index(good_index);
 	const std::lock_guard<spin_mutex> lock_guard { *good_data.mutex };
+	add_pop_need_consumption(good_data, pop_type, quantity);
+}
+
+void CountryInstance::report_pop_need_consumption_from_market(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
+	// No lock: only the market callbacks of the good call this, and the market of a good runs in one thread at a time (the locks of the
+	// goods of a country lie next to each other in the memory: taking them made the threads of the market fight for the same cache lines)
+	add_pop_need_consumption(goods_data.at_index(good_index), pop_type, quantity);
+}
+
+void CountryInstance::add_pop_need_consumption(good_data_t& good_data, PopType const& pop_type, const fixed_point_t quantity) {
 	if (OV_unlikely(!good_data.has_need_consumption_reports)) {
 		good_data.has_need_consumption_reports = true;
 		good_data.need_consumption_by_pop_type_index.assign(

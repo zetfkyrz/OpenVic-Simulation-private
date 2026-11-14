@@ -1346,6 +1346,8 @@ namespace OpenVic {
 		//thread safe
 		void report_pop_income_tax(PopType const& pop_type, const fixed_point_t gross_income, const fixed_point_t paid_as_tax);
 		void report_pop_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
+		// The same from the market callbacks of the good (the market of a good runs in one thread at a time: no lock)
+		void report_pop_need_consumption_from_market(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
 		// Copies the consumption that was reported during the day into good_data_t::need_consumption_per_pop_type (done by country_tick_after_map)
 		void publish_need_consumption();
 		// For the self tests and the headless option -V: the consumption is also added up in need_consumption_per_pop_type while the day is
@@ -1360,6 +1362,8 @@ namespace OpenVic {
 	private:
 		inline static std::atomic<bool> verify_need_consumption = false;
 		inline static std::atomic<std::size_t> need_consumption_mismatch_count = 0;
+		// The consumption of a need of the pops of a type added to the sums of the good (the caller holds the lock or is the market of the good)
+		void add_pop_need_consumption(good_data_t& good_data, PopType const& pop_type, const fixed_point_t quantity);
 	public:
 		void report_pop_need_demand(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
 		// The same for the demand of many pops added up (the pop type does not matter for the demand)

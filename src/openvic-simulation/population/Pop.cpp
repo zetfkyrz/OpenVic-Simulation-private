@@ -816,7 +816,7 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 
 	const good_index_t good_index = buy_result.good_index;
 	fixed_point_t quantity_left_to_consume = quantity_bought;
-	CountryInstance* get_country_to_report_economy_nullable = pop.get_location().get_country_to_report_economy();
+	CountryInstance* const get_country_to_report_economy_nullable = country_to_report_economy_nullable;
 
 	#define CONSUME_NEED(need_category) \
 		if (quantity_left_to_consume > 0) { \
@@ -836,9 +836,10 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 				pop.need_category##_needs_acquired_quantity += consumed_quantity; \
 				quantity_left_to_consume -= consumed_quantity; \
 				if (get_country_to_report_economy_nullable != nullptr) { \
-					get_country_to_report_economy_nullable->report_pop_need_consumption(pop.type, good_index, consumed_quantity); \
+					get_country_to_report_economy_nullable->report_pop_need_consumption_from_market(pop.type, good_index, consumed_quantity); \
 				} \
-				const fixed_point_t expense = fp::mul_div( \
+				/* (all of the purchase in one need, the usual case: the whole money, without the 128 bit division) */ \
+				const fixed_point_t expense = consumed_quantity == quantity_bought ? money_spent : fp::mul_div( \
 					money_spent, \
 					consumed_quantity, \
 					quantity_bought \
