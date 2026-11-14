@@ -795,7 +795,8 @@ void GoodMarket::attribute_routed_sales(const fixed_point_t new_price, memory::v
 		}
 		trade_network->add_pair_flow(country_index_t(flow.from), country_index_t(flow.to), quantity * new_price);
 		node_exports[flow.from] += quantity;
-		node_export_cost[flow.from] += quantity * flow.cost;
+		// (the trading posts of a sphere, version 94, make the freight between its countries cheaper)
+		node_export_cost[flow.from] += quantity * flow.cost * trade_network->get_sphere_freight_factor(flow.from, flow.to);
 		node_covered[flow.to] += quantity;
 		if (flow.mode == static_cast<std::uint8_t>(TradeNetwork::mode_t::LAND)) {
 			node_land_exports[flow.from] += quantity;

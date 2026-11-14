@@ -1762,6 +1762,10 @@ void CountryInstance::_update_technology(const Date today) {
 			std::clamp(get_average_literacy(), fixed_point_t::_0, fixed_point_t::_1)
 		);
 	}
+	// The principles of the sphere (version 94: the exchange of the specialists)
+	if (get_sphere_principle_bonus(principle_effect_t::RESEARCH) != fixed_point_t::_0) {
+		daily_research_points *= fixed_point_t::_1 + get_sphere_principle_bonus(principle_effect_t::RESEARCH);
+	}
 
 	// The bonus of the output of the literate workers (version 89): the base and a step for each technology of the production line
 	literacy_output_cap = fixed_point_t::_0;

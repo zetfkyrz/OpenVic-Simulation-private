@@ -279,10 +279,16 @@ void TradeNetwork::update(InstanceManager& instance_manager) {
 	// The customs unions and their single markets (version 93): from the leader along the land borders between the countries of the union
 	customs_union.assign(n, 0);
 	single_market.assign(n, 0);
+	sphere_of.assign(n, 0);
+	sphere_freight_discount.assign(n, fixed_point_t::_0);
 	any_single_market = false;
 	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		const std::size_t index = type_safe::get(country.index);
 		CountryInstance const* const leader = country.get_sphere_leader();
+		if (index < country_count && leader != nullptr) {
+			sphere_of[index] = static_cast<std::uint32_t>(type_safe::get(leader->index)) + 1;
+			sphere_freight_discount[index] = country.get_sphere_principle_bonus(principle_effect_t::FREIGHT);
+		}
 		if (index < country_count && leader != nullptr && country.get_sphere_kind() == sphere_kind_t::CUSTOMS_UNION) {
 			customs_union[index] = static_cast<std::uint32_t>(type_safe::get(leader->index)) + 1;
 		}

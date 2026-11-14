@@ -177,7 +177,10 @@ namespace OpenVic {
 		//     the migration), the imperial sphere (the tribute, the help in the wars, the relations), the military union (no wars inside, the
 		//     leader draws the members into his wars, the land of the members as the own land), the ideological union (the laws, the
 		//     relations); new action set_sphere_kind
-		inline constexpr int SIMULATION_VERSION = 93;
+		// 94: the principles of the spheres, stage S4 (docs/PLAN_SPHERES.md, data ov_data/common/ov_sphere_principles): slots by the countries,
+		//     levels by the years; the output of the military goods, the research, the literacy, the freight, the loans, the militancy; new
+		//     action set_sphere_principle
+		inline constexpr int SIMULATION_VERSION = 94;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

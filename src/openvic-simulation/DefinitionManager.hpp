@@ -45,6 +45,8 @@ namespace OpenVic {
 		SongChanceManager PROPERTY_REF(song_chance_manager);
 		SoundEffectManager PROPERTY_REF(sound_effect_manager);
 		StartSphereDefinitions PROPERTY_REF(start_sphere_definitions);
+		// The principles of the spheres (version 94, ov_data/common/ov_sphere_principles)
+		SpherePrincipleDefinitions PROPERTY_REF(sphere_principle_definitions);
 
 	public:
 		DefinitionManager();

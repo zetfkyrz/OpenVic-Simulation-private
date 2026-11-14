@@ -1166,7 +1166,18 @@ namespace OpenVic {
 	INT(SPHERE_IMPERIAL_HELP_RELATION, sphere_imperial_help_relation, 50, -200, 200) \
 	RATE(SPHERE_MILITARY_REFUSAL_PRESTIGE, sphere_military_refusal_prestige, Rate(5, 100), 0, 1) \
 	RATE(SPHERE_IDEOLOGICAL_LAW_CHANCE, sphere_ideological_law_chance, Rate(10, 100), 0, 1) \
-	INT(SPHERE_KIND_CHANGE_MONTHS, sphere_kind_change_months, 12, 0, 1200)
+	INT(SPHERE_KIND_CHANGE_MONTHS, sphere_kind_change_months, 12, 0, 1200) \
+	/* The principles of the spheres (version 94, docs/PLAN_SPHERES.md; the principles are data: ov_data/common/ov_sphere_principles). A sphere has */ \
+	/* 1 slot, 2 from SPHERE_PRINCIPLE_SLOT2_COUNTRIES countries (with the leader), 3 from SPHERE_PRINCIPLE_SLOT3_COUNTRIES. The level of a */ \
+	/* principle grows with its years in the slot: 2 after SPHERE_PRINCIPLE_LEVEL2_YEARS, 3 after SPHERE_PRINCIPLE_LEVEL3_YEARS; the bonus is */ \
+	/* the value of the principle x SPHERE_PRINCIPLE_LEVEL1_PCT, _LEVEL2_PCT or _LEVEL3_PCT percent. A new principle in a slot starts again */ \
+	INT(SPHERE_PRINCIPLE_SLOT2_COUNTRIES, sphere_principle_slot2_countries, 3, 1, 1000) \
+	INT(SPHERE_PRINCIPLE_SLOT3_COUNTRIES, sphere_principle_slot3_countries, 5, 1, 1000) \
+	INT(SPHERE_PRINCIPLE_LEVEL2_YEARS, sphere_principle_level2_years, 5, 0, 1000) \
+	INT(SPHERE_PRINCIPLE_LEVEL3_YEARS, sphere_principle_level3_years, 15, 0, 1000) \
+	INT(SPHERE_PRINCIPLE_LEVEL1_PCT, sphere_principle_level1_pct, 100, 0, 10000) \
+	INT(SPHERE_PRINCIPLE_LEVEL2_PCT, sphere_principle_level2_pct, 150, 0, 10000) \
+	INT(SPHERE_PRINCIPLE_LEVEL3_PCT, sphere_principle_level3_pct, 200, 0, 10000)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

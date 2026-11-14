@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 
@@ -15,6 +16,7 @@
 namespace OpenVic {
 	struct CountryInstance;
 	struct InstanceManager;
+	struct GoodDefinitionManager;
 
 	// The spheres of influence (version 92, docs/PLAN_SPHERES.md, stage S1 and S2): a great power leads, the members join by the influence of the
 	// leader on them (the dependence of their economy: the trade from the leader and its investments, times the relation and the neighbourhood)
@@ -36,6 +38,36 @@ namespace OpenVic {
 		Date kind_changed;
 		// The tribute of the imperial sphere the leader got yesterday (for the window of the sphere)
 		fixed_point_t tribute_yesterday;
+		// The principles in the slots (version 94): the index in SpherePrincipleDefinitions (NO_PRINCIPLE: empty) and the date it was set (its
+		// level grows with the years in the slot)
+		static constexpr std::size_t MAX_PRINCIPLE_SLOTS = 3;
+		static constexpr std::uint32_t NO_PRINCIPLE = 0xFFFFFFFF;
+		struct principle_slot_t {
+			std::uint32_t principle = NO_PRINCIPLE;
+			Date since;
+		};
+		std::array<principle_slot_t, MAX_PRINCIPLE_SLOTS> principles {};
+	};
+
+	// The principles of the spheres (version 94, ov_data/common/ov_sphere_principles; a mod replaces a principle by its identifier)
+	struct SpherePrincipleDefinitions {
+		struct principle_t {
+			memory::string identifier;
+			principle_effect_t effect = principle_effect_t::COUNT;
+			fixed_point_t value; // the bonus at the level 1 (0.05: 5 %)
+			memory::vector<char> goods; // OUTPUT: by the index of the good, 1 if its output grows
+		};
+
+	private:
+		memory::vector<principle_t> principles;
+
+	public:
+		memory::vector<principle_t> const& get_principles() const {
+			return principles;
+		}
+		// NO_PRINCIPLE if there is none
+		std::uint32_t find(std::string_view identifier) const;
+		std::size_t load_file(std::string_view source, ast::NodeCPtr root, GoodDefinitionManager const& good_manager);
 	};
 
 	// The spheres at the start of the game, as in the history (ov_data/common/ov_spheres/start_spheres.txt; a mod replaces a leader's entry)
@@ -111,6 +143,21 @@ namespace OpenVic {
 
 		// At the start of the game: the spheres of the history (start_spheres.txt), the leaders need not be great powers yet
 		void setup_start_spheres(InstanceManager& instance_manager, StartSphereDefinitions const& definitions);
+
+		// The principles (version 94): the number of the slots of the sphere (by its countries), the level of a slot (1..3 by its years) and its
+		// bonus (the value of the principle x the percent of the level)
+		std::size_t get_principle_slots(InstanceManager const& instance_manager, Sphere const& sphere) const;
+		std::int32_t get_principle_level(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const;
+		fixed_point_t get_principle_bonus(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const;
+		// The date the slot gets its next level (Date {} at the last level or empty)
+		Date get_principle_next_level_date(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const;
+		// "" if the leader may put the principle (NO_PRINCIPLE: empty the slot) into the slot, else the reason
+		std::string_view set_principle_block_reason(
+			InstanceManager const& instance_manager, CountryInstance const& leader, std::size_t slot, std::uint32_t principle
+		) const;
+		bool set_principle(InstanceManager& instance_manager, CountryInstance& leader, std::size_t slot, std::uint32_t principle);
+		// Puts the bonuses of the principles into the countries (the leader and the members); the slots over the number are emptied
+		void refresh_principles(InstanceManager& instance_manager);
 
 		// Once a month: the influence, the end of the spheres whose leader is no great power any more, the decisions of the AI
 		void monthly_update(InstanceManager& instance_manager);

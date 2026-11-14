@@ -415,6 +415,12 @@ bool GameActionManager::VariantVisitor::operator() (set_sphere_kind_argument_t c
 		&& instance_manager.get_sphere_manager().change_kind(instance_manager, country, static_cast<sphere_kind_t>(kind));
 }
 
+bool GameActionManager::VariantVisitor::operator() (set_sphere_principle_argument_t const& argument) const {
+	const auto [country_index, slot, principle] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return instance_manager.get_sphere_manager().set_principle(instance_manager, country, slot, principle);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

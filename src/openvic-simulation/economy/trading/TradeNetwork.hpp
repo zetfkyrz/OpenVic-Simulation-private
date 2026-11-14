@@ -58,6 +58,10 @@ namespace OpenVic {
 		// countries of the union joined to the leader by land borders): the same number, 0 for the others
 		std::vector<std::uint32_t> customs_union;
 		std::vector<std::uint32_t> single_market;
+		// Any sphere (the index of the leader + 1, 0: none) and the share of the freight it saves between its countries (version 94: the
+		// principle of the trading posts), by node
+		std::vector<std::uint32_t> sphere_of;
+		std::vector<fixed_point_t> sphere_freight_discount;
 		std::vector<fixed_point_t> sea_capacity; // by country: the sum of its ports
 		std::vector<std::int32_t> land_crossings; // by country: neighbouring pairs of provinces with other countries
 		std::vector<fixed_point_t> best_rail; // by country: the best railroad level at the border (0..1)
@@ -124,6 +128,13 @@ namespace OpenVic {
 		// The trade between the two goes first (the single market of a customs union)
 		[[nodiscard]] bool same_single_market(const std::size_t from, const std::size_t to) const {
 			return from < single_market.size() && to < single_market.size() && single_market[from] != 0 && single_market[from] == single_market[to];
+		}
+		// The freight between the two is multiplied by this (1, or less in a sphere with the trading posts)
+		[[nodiscard]] fixed_point_t get_sphere_freight_factor(const std::size_t from, const std::size_t to) const {
+			if (from >= sphere_of.size() || to >= sphere_of.size() || sphere_of[from] == 0 || sphere_of[from] != sphere_of[to]) {
+				return fixed_point_t::_1;
+			}
+			return std::max(fixed_point_t::_0, fixed_point_t::_1 - sphere_freight_discount[from]);
 		}
 		[[nodiscard]] bool has_single_markets() const {
 			return any_single_market;

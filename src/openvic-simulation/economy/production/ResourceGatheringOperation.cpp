@@ -413,6 +413,13 @@ fixed_point_t ResourceGatheringOperation::produce() {
 		output_multiplier *= fixed_point_t::_1 + literacy_owner->get_literacy_output_cap()
 			* std::clamp(location.get_average_literacy(), fixed_point_t::_0, fixed_point_t::_1);
 	}
+	// The principles of the sphere of the owner (version 94: the military industry, the oil, the sulphur and the rubber)
+	if (CountryInstance const* const principle_owner = location.get_owner(); principle_owner != nullptr) {
+		if (const fixed_point_t principle = principle_owner->get_sphere_output_bonus(type_safe::get(production_type.output_good.index));
+			principle != fixed_point_t::_0) {
+			output_multiplier *= fixed_point_t::_1 + principle;
+		}
+	}
 
 	fixed_point_t throughput_from_workers = 0;
 	fixed_point_t output_from_workers = 1;

@@ -5,6 +5,7 @@
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/economy/GoodDefinition.hpp"
 #include "openvic-simulation/economy/credit/Credit.hpp"
 #include "openvic-simulation/economy/trading/TradeNetwork.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
@@ -25,6 +26,102 @@ std::string_view OpenVic::sphere_kind_identifier(const sphere_kind_t kind) {
 	case sphere_kind_t::ALLIANCE: return "alliance";
 	default: return "none";
 	}
+}
+
+std::string_view OpenVic::principle_effect_identifier(const principle_effect_t effect) {
+	switch (effect) {
+	case principle_effect_t::OUTPUT: return "output";
+	case principle_effect_t::RESEARCH: return "research";
+	case principle_effect_t::LITERACY: return "literacy";
+	case principle_effect_t::FREIGHT: return "freight";
+	case principle_effect_t::LOAN_INTEREST: return "loan_interest";
+	case principle_effect_t::MILITANCY: return "militancy";
+	default: return "none";
+	}
+}
+
+std::uint32_t SpherePrincipleDefinitions::find(std::string_view identifier) const {
+	for (std::size_t index = 0; index < principles.size(); ++index) {
+		if (principles[index].identifier == identifier) {
+			return static_cast<std::uint32_t>(index);
+		}
+	}
+	return Sphere::NO_PRINCIPLE;
+}
+
+std::size_t SpherePrincipleDefinitions::load_file(std::string_view source, ast::NodeCPtr root, GoodDefinitionManager const& good_manager) {
+	std::size_t loaded = 0;
+	const std::size_t good_count = good_manager.get_good_definition_count();
+	const bool parsed = expect_dictionary([this, source, &good_manager, good_count, &loaded](std::string_view key, ast::NodeCPtr value) -> bool {
+		principle_t principle;
+		principle.identifier = key;
+		bool effect_ok = false;
+		const auto mark = [&principle, good_count](GoodDefinition const& good) {
+			principle.goods.resize(good_count, 0);
+			const std::size_t index = type_safe::get(good.index);
+			if (index < principle.goods.size()) {
+				principle.goods[index] = 1;
+			}
+		};
+		const bool ok = expect_dictionary_keys_and_default(
+			[source, key](std::string_view inner, ast::NodeCPtr) -> bool {
+				spdlog::warn_s("Unknown key \"{}\" in the sphere principle {} ({})", inner, key, source);
+				return true;
+			},
+			"effect", ONE_EXACTLY, expect_identifier([&principle, &effect_ok](std::string_view identifier) -> bool {
+				for (std::size_t i = 0; i < static_cast<std::size_t>(principle_effect_t::COUNT); ++i) {
+					if (principle_effect_identifier(static_cast<principle_effect_t>(i)) == identifier) {
+						principle.effect = static_cast<principle_effect_t>(i);
+						effect_ok = true;
+					}
+				}
+				return true;
+			}),
+			"value", ONE_EXACTLY, expect_fixed_point([&principle](fixed_point_t amount) -> bool {
+				principle.value = amount;
+				return true;
+			}),
+			"goods", ZERO_OR_ONE, expect_list(expect_identifier_or_string([&good_manager, &mark, key, source](std::string_view identifier) -> bool {
+				GoodDefinition const* const good = good_manager.get_good_definition_by_identifier(identifier);
+				if (good == nullptr) {
+					spdlog::warn_s("The good \"{}\" of the sphere principle {} does not exist ({})", identifier, key, source);
+					return true;
+				}
+				mark(*good);
+				return true;
+			})),
+			"good_categories", ZERO_OR_ONE, expect_list(expect_identifier_or_string([&good_manager, &mark, key, source](std::string_view identifier) -> bool {
+				GoodCategory const* const category = good_manager.get_good_category_by_identifier(identifier);
+				if (category == nullptr) {
+					spdlog::warn_s("The good category \"{}\" of the sphere principle {} does not exist ({})", identifier, key, source);
+					return true;
+				}
+				for (GoodDefinition const& good : category->get_good_definitions()) {
+					mark(good);
+				}
+				return true;
+			}))
+		)(value);
+		if (!ok || !effect_ok || (principle.effect == principle_effect_t::OUTPUT && principle.goods.empty())) {
+			spdlog::warn_s("The sphere principle {} is skipped: it has errors, an unknown effect or no goods ({})", key, source);
+			return true;
+		}
+		// A later file (a mod) with the same identifier replaces the principle
+		for (principle_t& existing : principles) {
+			if (existing.identifier == principle.identifier) {
+				existing = std::move(principle);
+				loaded++;
+				return true;
+			}
+		}
+		principles.push_back(std::move(principle));
+		loaded++;
+		return true;
+	})(root);
+	if (!parsed) {
+		spdlog::warn_s("The sphere principles file {} is broken, what could be read is used", source);
+	}
+	return loaded;
 }
 
 namespace {
@@ -320,6 +417,7 @@ bool SphereManager::invite(InstanceManager& instance_manager, CountryInstance& l
 			set_membership(country, &leader, sphere.kind);
 			instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "sphere_joined", "", &leader);
 			SPDLOG_INFO("Sphere: {} joins the sphere of {}", country.get_identifier(), leader.get_identifier());
+			refresh_principles(instance_manager);
 			return true;
 		}
 	}
@@ -335,6 +433,7 @@ bool SphereManager::leave(InstanceManager& instance_manager, CountryInstance& co
 			protected_until.erase(&country);
 			instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "sphere_left", "", sphere.leader);
 			SPDLOG_INFO("Sphere: {} leaves the sphere of {}", country.get_identifier(), sphere.leader->get_identifier());
+			refresh_principles(instance_manager);
 			return true;
 		}
 	}
@@ -449,6 +548,136 @@ void SphereManager::dissolve(InstanceManager& instance_manager, const std::size_
 		SPDLOG_INFO("Sphere: the sphere of {} ends", sphere.leader->get_identifier());
 	}
 	spheres.erase(spheres.begin() + static_cast<std::ptrdiff_t>(index));
+	refresh_principles(instance_manager);
+}
+
+std::size_t SphereManager::get_principle_slots(InstanceManager const& instance_manager, Sphere const& sphere) const {
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	const std::int32_t countries = static_cast<std::int32_t>(sphere.members.size()) + 1;
+	std::size_t slots = 1;
+	if (countries >= defines.sphere_principle_slot2_countries) {
+		slots = 2;
+	}
+	if (countries >= defines.sphere_principle_slot3_countries) {
+		slots = 3;
+	}
+	return std::min(slots, Sphere::MAX_PRINCIPLE_SLOTS);
+}
+
+std::int32_t SphereManager::get_principle_level(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const {
+	if (slot.principle == Sphere::NO_PRINCIPLE) {
+		return 0;
+	}
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	const Date today = instance_manager.get_today();
+	if (today >= slot.since + Timespan::from_years(std::max(0, defines.sphere_principle_level3_years))) {
+		return 3;
+	}
+	if (today >= slot.since + Timespan::from_years(std::max(0, defines.sphere_principle_level2_years))) {
+		return 2;
+	}
+	return 1;
+}
+
+fixed_point_t SphereManager::get_principle_bonus(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const {
+	SpherePrincipleDefinitions const& definitions = instance_manager.definition_manager.get_sphere_principle_definitions();
+	if (slot.principle >= definitions.get_principles().size()) {
+		return fixed_point_t::_0;
+	}
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	const std::int32_t level = get_principle_level(instance_manager, slot);
+	const std::int32_t percent = level >= 3 ? defines.sphere_principle_level3_pct : level == 2 ? defines.sphere_principle_level2_pct
+		: defines.sphere_principle_level1_pct;
+	return definitions.get_principles()[slot.principle].value * percent / 100;
+}
+
+Date SphereManager::get_principle_next_level_date(InstanceManager const& instance_manager, Sphere::principle_slot_t const& slot) const {
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	switch (get_principle_level(instance_manager, slot)) {
+	case 1: return slot.since + Timespan::from_years(std::max(0, defines.sphere_principle_level2_years));
+	case 2: return slot.since + Timespan::from_years(std::max(0, defines.sphere_principle_level3_years));
+	default: return Date {};
+	}
+}
+
+std::string_view SphereManager::set_principle_block_reason(
+	InstanceManager const& instance_manager, CountryInstance const& leader, const std::size_t slot, const std::uint32_t principle
+) const {
+	Sphere const* const sphere = find_led_by(&leader);
+	if (sphere == nullptr) {
+		return "the country leads no sphere";
+	}
+	if (slot >= get_principle_slots(instance_manager, *sphere)) {
+		return "the sphere has no such slot (more countries open more slots)";
+	}
+	if (principle == Sphere::NO_PRINCIPLE) {
+		return sphere->principles[slot].principle == Sphere::NO_PRINCIPLE ? "the slot is empty" : "";
+	}
+	if (principle >= instance_manager.definition_manager.get_sphere_principle_definitions().get_principles().size()) {
+		return "no such principle";
+	}
+	for (std::size_t other = 0; other < Sphere::MAX_PRINCIPLE_SLOTS; ++other) {
+		if (sphere->principles[other].principle == principle) {
+			return other == slot ? "the principle already is in this slot" : "the principle already is in another slot";
+		}
+	}
+	return {};
+}
+
+bool SphereManager::set_principle(InstanceManager& instance_manager, CountryInstance& leader, const std::size_t slot, const std::uint32_t principle) {
+	if (!set_principle_block_reason(instance_manager, leader, slot, principle).empty()) {
+		return false;
+	}
+	for (Sphere& sphere : spheres) {
+		if (sphere.leader == &leader) {
+			sphere.principles[slot] = { principle, instance_manager.get_today() };
+			SPDLOG_INFO("Sphere: {} puts the principle {} into the slot {}", leader.get_identifier(), principle == Sphere::NO_PRINCIPLE ? "none"
+				: std::string_view { instance_manager.definition_manager.get_sphere_principle_definitions().get_principles()[principle].identifier }, slot + 1);
+			refresh_principles(instance_manager);
+			return true;
+		}
+	}
+	return false;
+}
+
+void SphereManager::refresh_principles(InstanceManager& instance_manager) {
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		for (std::size_t effect = 0; effect < static_cast<std::size_t>(principle_effect_t::COUNT); ++effect) {
+			country.set_sphere_principle_bonus(static_cast<principle_effect_t>(effect), fixed_point_t::_0);
+		}
+		country.get_sphere_output_bonus_mutable().clear();
+	}
+	SpherePrincipleDefinitions const& definitions = instance_manager.definition_manager.get_sphere_principle_definitions();
+	for (Sphere& sphere : spheres) {
+		const std::size_t slots = get_principle_slots(instance_manager, sphere);
+		for (std::size_t slot = 0; slot < Sphere::MAX_PRINCIPLE_SLOTS; ++slot) {
+			Sphere::principle_slot_t& principle_slot = sphere.principles[slot];
+			// fewer countries, fewer slots: the principles of the closed slots are taken out
+			if (slot >= slots || principle_slot.principle >= definitions.get_principles().size()) {
+				principle_slot = {};
+				continue;
+			}
+			SpherePrincipleDefinitions::principle_t const& principle = definitions.get_principles()[principle_slot.principle];
+			const fixed_point_t bonus = get_principle_bonus(instance_manager, principle_slot);
+			const auto apply = [&principle, bonus](CountryInstance& country) {
+				if (principle.effect == principle_effect_t::OUTPUT) {
+					memory::vector<fixed_point_t>& output = country.get_sphere_output_bonus_mutable();
+					output.resize(std::max(output.size(), principle.goods.size()), fixed_point_t::_0);
+					for (std::size_t good = 0; good < principle.goods.size(); ++good) {
+						if (principle.goods[good] != 0) {
+							output[good] += bonus;
+						}
+					}
+				} else {
+					country.set_sphere_principle_bonus(principle.effect, country.get_sphere_principle_bonus(principle.effect) + bonus);
+				}
+			};
+			apply(*sphere.leader);
+			for (CountryInstance* member : sphere.members) {
+				apply(*member);
+			}
+		}
+	}
 }
 
 void SphereManager::update_influence(InstanceManager& instance_manager) {
@@ -565,4 +794,47 @@ void SphereManager::monthly_update(InstanceManager& instance_manager) {
 			invite(instance_manager, leader, *candidates[i].second);
 		}
 	}
+
+	// The AI leaders fill the empty slots of the principles: the ones that suit the kind first, then any (version 94)
+	SpherePrincipleDefinitions const& definitions = instance_manager.definition_manager.get_sphere_principle_definitions();
+	for (std::size_t index = 0; index < spheres.size(); ++index) {
+		CountryInstance& leader = *spheres[index].leader;
+		if (!leader.is_ai()) {
+			continue;
+		}
+		std::array<std::string_view, 3> preferred {};
+		switch (spheres[index].kind) {
+		case sphere_kind_t::CUSTOMS_UNION: preferred = { "trading_posts", "banking_union", "specialists_exchange" }; break;
+		case sphere_kind_t::IMPERIAL: preferred = { "banking_union", "mutual_police", "teachers_exchange" }; break;
+		case sphere_kind_t::MILITARY: preferred = { "military_industry", "specialists_exchange", "mutual_police" }; break;
+		case sphere_kind_t::IDEOLOGICAL: preferred = { "teachers_exchange", "mutual_police", "specialists_exchange" }; break;
+		default: preferred = { "specialists_exchange", "military_industry", "trading_posts" }; break;
+		}
+		memory::vector<std::uint32_t> order;
+		for (std::string_view identifier : preferred) {
+			const std::uint32_t principle = definitions.find(identifier);
+			if (principle != Sphere::NO_PRINCIPLE) {
+				order.push_back(principle);
+			}
+		}
+		for (std::uint32_t principle = 0; principle < definitions.get_principles().size(); ++principle) {
+			if (std::find(order.begin(), order.end(), principle) == order.end()) {
+				order.push_back(principle);
+			}
+		}
+		const std::size_t slots = get_principle_slots(instance_manager, spheres[index]);
+		for (std::size_t slot = 0; slot < slots; ++slot) {
+			if (spheres[index].principles[slot].principle != Sphere::NO_PRINCIPLE) {
+				continue;
+			}
+			for (const std::uint32_t principle : order) {
+				if (set_principle_block_reason(instance_manager, leader, slot, principle).empty()) {
+					set_principle(instance_manager, leader, slot, principle);
+					break;
+				}
+			}
+		}
+	}
+	// the levels grow with the time
+	refresh_principles(instance_manager);
 }

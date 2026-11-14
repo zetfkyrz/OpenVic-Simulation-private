@@ -426,6 +426,13 @@ bool CreditManager::lender_accepts(InstanceManager const& instance_manager, Loan
 void CreditManager::activate(InstanceManager& instance_manager, Loan& loan, CountryInstance* const borrower, State* const state) {
 	loan.borrower = borrower;
 	loan.state = state;
+	// A loan between two countries of one sphere with the banking union (version 94): the interest is lower, fixed when it is taken
+	if (loan.kind == Loan::kind_t::EXTERNAL && borrower != nullptr && loan.lender != nullptr && borrower->shares_sphere_with(*loan.lender)) {
+		const fixed_point_t principle = borrower->get_sphere_principle_bonus(principle_effect_t::LOAN_INTEREST);
+		if (principle > fixed_point_t::_0) {
+			loan.annual_rate = loan.annual_rate * std::max(fixed_point_t::_0, fixed_point_t::_1 - principle);
+		}
+	}
 	loan.start_schedule(instance_manager.get_today());
 	if (loan.kind == Loan::kind_t::EXTERNAL) {
 		borrower->add_cash(loan.principal);

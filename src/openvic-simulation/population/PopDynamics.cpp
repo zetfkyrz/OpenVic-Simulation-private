@@ -793,6 +793,10 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				const fixed_point_t teachers = owner->get_law_effect(law_effect_t::secular_schools) > fixed_point_t::_0 ? fixed_point_t::_1 : clergy_factor;
 				fixed_point_t growth = (fixed_point_t::_1 - pop->get_literacy()) * law * teachers * education * pops_defines.get_literacy_change_speed();
 				growth = defines.literacy_growth_scale.of(growth);
+				// (the principles of the sphere, version 94: the exchange of the teachers)
+				if (const fixed_point_t principle = owner->get_sphere_principle_bonus(principle_effect_t::LITERACY); principle != fixed_point_t::_0) {
+					growth *= fixed_point_t::_1 + principle;
+				}
 				if (pop->get_culture_status() == Pop::culture_status_t::UNACCEPTED) {
 					growth = defines.literacy_unaccepted_share.of(growth);
 				}

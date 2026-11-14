@@ -566,7 +566,9 @@ void RebelDynamics::monthly_update(InstanceManager& instance_manager) {
 					+ to_double(pop.get_unemployment_fraction()) * defines.unrest_unemployment_weight;
 				pressure += to_double(exhaustion) * defines.unrest_war_exhaustion_weight;
 				// The laws (police, internal security, free speech) speed up or slow down the militancy and the consciousness
-				const double militancy_law = std::max(0.0, 1.0 + to_double(country.get_law_effect(law_effect_t::militancy_growth)));
+				// (and the principles of the sphere, version 94: the mutual police)
+				const double militancy_law = std::max(0.0, 1.0 + to_double(country.get_law_effect(law_effect_t::militancy_growth)))
+					* std::max(0.0, 1.0 - to_double(country.get_sphere_principle_bonus(principle_effect_t::MILITANCY)));
 				const double consciousness_law = std::max(0.0, 1.0 + to_double(country.get_law_effect(law_effect_t::consciousness_growth)));
 				const double militancy_step = (pressure - defines.militancy_pressure_offset) * defines.militancy_growth;
 				double militancy = to_double(pop.get_militancy()) + (militancy_step > 0.0 ? militancy_step * militancy_law : militancy_step);

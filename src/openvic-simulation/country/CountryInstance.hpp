@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <functional>
@@ -557,11 +558,28 @@ namespace OpenVic {
 		colour_t PROPERTY_RW(sphere_colour);
 		// The kind of the sphere of the country, as the leader or a member (version 93; COUNT: no sphere), set by the SphereManager
 		sphere_kind_t PROPERTY_RW(sphere_kind, sphere_kind_t::COUNT);
+		// The bonuses of the principles of its sphere (version 94, set by SphereManager::refresh_principles): by principle_effect_t, and the
+		// output by the index of the good (empty: none)
+		std::array<fixed_point_t, static_cast<std::size_t>(principle_effect_t::COUNT)> sphere_principle_bonus {};
+		memory::vector<fixed_point_t> sphere_output_bonus;
 		memory::vector<CountryInstance const*> ai_assist_warned_borders;
 	public:
 		// The leader of the sphere the country is a member of (nullptr: none), set by the SphereManager
 		void set_sphere_owner_country(CountryInstance const* leader) {
 			sphere_owner.set(leader);
+		}
+		fixed_point_t get_sphere_principle_bonus(const principle_effect_t effect) const {
+			return sphere_principle_bonus[static_cast<std::size_t>(effect)];
+		}
+		void set_sphere_principle_bonus(const principle_effect_t effect, const fixed_point_t value) {
+			sphere_principle_bonus[static_cast<std::size_t>(effect)] = value;
+		}
+		// The bonus of the output of a good (the principles of the sphere), 0 if none
+		fixed_point_t get_sphere_output_bonus(const std::size_t good_index) const {
+			return good_index < sphere_output_bonus.size() ? sphere_output_bonus[good_index] : fixed_point_t::_0;
+		}
+		memory::vector<fixed_point_t>& get_sphere_output_bonus_mutable() {
+			return sphere_output_bonus;
 		}
 		// The leader of the sphere of the country: itself when it leads one (nullptr: no sphere)
 		CountryInstance const* get_sphere_leader() const {

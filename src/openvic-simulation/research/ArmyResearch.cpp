@@ -170,9 +170,10 @@ void OpenVic::update_army_research(InstanceManager& instance_manager, const bool
 		}
 
 		// A day of research, and the parts of a day of the literacy (version 89, docs/LITERACY.md: +LITERACY_RESEARCH at 100 %)
+		// (and the principles of the sphere, version 94: the exchange of the specialists)
 		const fixed_point_t literacy_days = research_defines.literacy_research.of(
 			std::clamp(country.get_average_literacy(), fixed_point_t::_0, fixed_point_t::_1)
-		);
+		) + country.get_sphere_principle_bonus(principle_effect_t::RESEARCH);
 		memory::vector<std::uint32_t> done;
 		for (ArmyResearchProgress& progress : country.get_army_research_mutable()) {
 			progress.days_done++;

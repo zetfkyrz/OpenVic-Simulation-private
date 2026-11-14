@@ -1329,6 +1329,21 @@ bool Dataloader::load_defines(
 		SPDLOG_INFO("Loaded {} spheres of the start", start_sphere_count);
 	}
 	{
+		// The principles of the spheres (ov_data/common/ov_sphere_principles, version 94)
+		std::size_t principle_count = 0;
+		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_sphere_principles", ".txt", false)) {
+			const v2script::Parser parser = parse_defines(file);
+			if (parser.has_fatal_error() || parser.has_error()) {
+				spdlog::warn_s("The sphere principles file {} is skipped, it has errors", file);
+				continue;
+			}
+			principle_count += definition_manager.get_sphere_principle_definitions().load_file(
+				file.string(), parser.get_file_node(), definition_manager.get_economy_manager().get_good_definition_manager()
+			);
+		}
+		SPDLOG_INFO("Loaded {} principles of the spheres", principle_count);
+	}
+	{
 		// The buildings of the RGOs (ov_data/common/ov_rgo_buildings)
 		std::size_t rgo_building_count = 0;
 		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_rgo_buildings", ".txt", false)) {

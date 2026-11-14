@@ -6582,6 +6582,85 @@ namespace {
 		spheres.change_kind(im, *prussia, sphere_kind_t::CUSTOMS_UNION);
 	}
 
+	// The principles of the spheres (version 94, docs/PLAN_SPHERES.md): the data, the slots by the countries, the bonus for the leader and the
+	// members, the level by the years, the output of the chosen goods only, the freight of the trading posts
+	void test_sphere_principles(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		SphereManager& spheres = im.get_sphere_manager();
+		SpherePrincipleDefinitions const& definitions = im.definition_manager.get_sphere_principle_definitions();
+		GoodDefinitionManager const& goods = im.definition_manager.get_economy_manager().get_good_definition_manager();
+		CountryInstance* const prussia = countries.get_country_instance_by_identifier("PRU");
+		CountryInstance* const bavaria = countries.get_country_instance_by_identifier("BAV");
+		const std::uint32_t specialists = definitions.find("specialists_exchange");
+		const std::uint32_t industry = definitions.find("military_industry");
+		const std::uint32_t posts = definitions.find("trading_posts");
+		GoodDefinition const* const small_arms = goods.get_good_definition_by_identifier("small_arms");
+		GoodDefinition const* const oil = goods.get_good_definition_by_identifier("oil");
+		GoodDefinition const* const grain = goods.get_good_definition_by_identifier("grain");
+		r.check(definitions.get_principles().size() >= 6 && specialists != Sphere::NO_PRINCIPLE && industry != Sphere::NO_PRINCIPLE
+				&& posts != Sphere::NO_PRINCIPLE,
+			"sphere principles: the principles are read from ov_data/common/ov_sphere_principles",
+			fmt::format("{} principles", definitions.get_principles().size()));
+		Sphere const* const zollverein = prussia != nullptr ? spheres.find_led_by(prussia) : nullptr;
+		if (zollverein == nullptr || bavaria == nullptr || spheres.find_of(bavaria) != zollverein || specialists == Sphere::NO_PRINCIPLE
+			|| industry == Sphere::NO_PRINCIPLE || posts == Sphere::NO_PRINCIPLE || small_arms == nullptr || oil == nullptr || grain == nullptr) {
+			fmt::println("TEST INFO sphere principles: no customs union of Prussia with Bavaria, or no principles or goods, not checked");
+			return;
+		}
+		// (the AI of Prussia may have filled the slots already)
+		for (std::size_t slot = 0; slot < Sphere::MAX_PRINCIPLE_SLOTS; ++slot) {
+			spheres.set_principle(im, *prussia, slot, Sphere::NO_PRINCIPLE);
+		}
+		r.check(spheres.get_principle_slots(im, *zollverein) == 3 && bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == fixed_point_t::_0,
+			"sphere principles: a sphere of more than 4 countries has 3 slots",
+			fmt::format("{} slots for {} countries", spheres.get_principle_slots(im, *zollverein), zollverein->members.size() + 1));
+
+		const fixed_point_t five = fixed_point_t::_1 / 20;
+		r.check(spheres.set_principle(im, *prussia, 0, specialists) && bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == five
+				&& prussia->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == five,
+			"sphere principles: a principle gives its bonus to the leader and the members");
+		r.check(!spheres.set_principle_block_reason(im, *prussia, 1, specialists).empty() && !spheres.set_principle_block_reason(im, *bavaria, 1, industry).empty(),
+			"sphere principles: a principle is in one slot only, and only the leader sets them");
+
+		// the level grows with the years in the slot: x1.5 after 5 years, x2 after 15
+		const auto age = [&](const std::int32_t years) {
+			const_cast<Sphere*>(spheres.find_led_by(prussia))->principles[0].since = im.get_today() - Timespan::from_years(years);
+			spheres.refresh_principles(im);
+		};
+		age(6);
+		const fixed_point_t level2 = bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH);
+		age(16);
+		const fixed_point_t level3 = bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH);
+		r.check(level2 == five * 3 / 2 && level3 == five * 2 && spheres.get_principle_level(im, spheres.find_led_by(prussia)->principles[0]) == 3,
+			"sphere principles: the level grows with the years (x1.5 after 5, x2 after 15)",
+			fmt::format("{:.4f}, {:.4f}", static_cast<double>(level2), static_cast<double>(level3)));
+		spheres.set_principle(im, *prussia, 0, Sphere::NO_PRINCIPLE);
+		spheres.set_principle(im, *prussia, 0, specialists);
+		r.check(bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == five, "sphere principles: a principle put in again starts at the level 1");
+
+		// the military industry: the military goods and the oil, not the grain
+		spheres.set_principle(im, *prussia, 1, industry);
+		r.check(bavaria->get_sphere_output_bonus(type_safe::get(small_arms->index)) == five && bavaria->get_sphere_output_bonus(type_safe::get(oil->index)) == five
+				&& bavaria->get_sphere_output_bonus(type_safe::get(grain->index)) == fixed_point_t::_0,
+			"sphere principles: the military industry raises the output of the military goods and the oil only");
+
+		// the trading posts: the freight between the countries of the sphere is lower
+		spheres.set_principle(im, *prussia, 2, posts);
+		TradeNetwork& network = im.get_trade_network();
+		if (network.is_enabled()) {
+			network.update(im);
+			r.check(network.get_sphere_freight_factor(type_safe::get(bavaria->index), type_safe::get(prussia->index)) == fixed_point_t::_1 - five,
+				"sphere principles: the trading posts lower the freight between the countries of the sphere");
+		}
+
+		for (std::size_t slot = 0; slot < Sphere::MAX_PRINCIPLE_SLOTS; ++slot) {
+			spheres.set_principle(im, *prussia, slot, Sphere::NO_PRINCIPLE);
+		}
+		r.check(bavaria->get_sphere_output_bonus(type_safe::get(small_arms->index)) == fixed_point_t::_0
+				&& bavaria->get_sphere_principle_bonus(principle_effect_t::RESEARCH) == fixed_point_t::_0,
+			"sphere principles: the bonuses go with the principles");
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8572,6 +8651,7 @@ namespace {
 		test_diplomacy_ai(r, *im); // last: it makes alliances and goals
 		test_spheres(r, *im); // after it: it founds a sphere and changes the members
 		test_sphere_kinds(r, *im); // a war of its own
+		test_sphere_principles(r, *im);
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

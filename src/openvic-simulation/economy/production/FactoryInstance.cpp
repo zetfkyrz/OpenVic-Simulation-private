@@ -855,6 +855,10 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 			output *= fixed_point_t::_1 + owner->get_literacy_output_cap() * std::clamp(literacy_sum / men, fixed_point_t::_0, fixed_point_t::_1);
 		}
 	}
+	// The principles of the sphere of the owner (version 94: the military industry)
+	if (const fixed_point_t principle = owner->get_sphere_output_bonus(type_safe::get(production_type->output_good.index)); principle != fixed_point_t::_0) {
+		output *= fixed_point_t::_1 + principle;
+	}
 	// The men of the poor pops that are mobilised are away from the work (docs/RECRUITMENT.md, "Мобилизация"): 1 when the country is not mobilised
 	if (owner->mobilisation_output_multiplier != fixed_point_t::_1) {
 		output *= owner->mobilisation_output_multiplier;
