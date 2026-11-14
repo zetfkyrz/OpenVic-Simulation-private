@@ -19,6 +19,7 @@
 #include "openvic-simulation/country/Colonisation.hpp"
 #include "openvic-simulation/country/CountryInstanceManager.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
+#include "openvic-simulation/country/Sphere.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/credit/Credit.hpp"
 #include "openvic-simulation/economy/production/ArtisanalProducerDeps.hpp"
@@ -53,6 +54,8 @@ namespace OpenVic {
 		ThreadPool thread_pool;
 
 		CountryRelationManager PROPERTY_REF(country_relation_manager);
+		// The spheres of influence (version 92, docs/PLAN_SPHERES.md)
+		SphereManager PROPERTY_REF(sphere_manager);
 		const GameActionManager game_action_manager;
 		GameRulesManager const& game_rules_manager;
 		GoodInstanceManager PROPERTY_REF(good_instance_manager);

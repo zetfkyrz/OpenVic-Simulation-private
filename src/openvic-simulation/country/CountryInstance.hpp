@@ -551,8 +551,15 @@ namespace OpenVic {
 		Date PROPERTY_RW(ai_goal_until);
 		// The help of the AI for the player (version 91): the goods of the stockpile, the borders without troops in a war (once per enemy)
 		bool PROPERTY_RW(ai_assist, false);
+		// The sphere of influence (version 92, docs/PLAN_SPHERES.md): the country leads one, and its colour (for the map of the spheres)
+		bool PROPERTY_RW(leads_sphere, false);
+		colour_t PROPERTY_RW(sphere_colour);
 		memory::vector<CountryInstance const*> ai_assist_warned_borders;
 	public:
+		// The leader of the sphere the country is a member of (nullptr: none), set by the SphereManager
+		void set_sphere_owner_country(CountryInstance const* leader) {
+			sphere_owner.set(leader);
+		}
 		memory::vector<CountryInstance const*> const& get_ai_assist_warned_borders() const {
 			return ai_assist_warned_borders;
 		}

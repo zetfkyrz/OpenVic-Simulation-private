@@ -464,8 +464,13 @@ void CRM::add_war_scar(CountryInstance* country, CountryInstance* recipient) {
 }
 
 relation_value_type CRM::get_effective_relation(CountryInstance const* country, CountryInstance const* recipient) const {
-	const std::int32_t value = static_cast<std::int32_t>(get_country_relation(country, recipient))
+	std::int32_t value = static_cast<std::int32_t>(get_country_relation(country, recipient))
 		+ get_war_scar(country, recipient).floor<std::int32_t>();
+	// The leader of a sphere and its members (version 92, docs/PLAN_SPHERES.md): +SPHERE_LEADER_RELATION, never under SPHERE_RELATION_FLOOR
+	if (diplomacy_defines != nullptr && country != nullptr && recipient != nullptr
+		&& (country->get_sphere_owner_untracked() == recipient || recipient->get_sphere_owner_untracked() == country)) {
+		value = std::max(value + diplomacy_defines->sphere_leader_relation, diplomacy_defines->sphere_relation_floor);
+	}
 	return static_cast<relation_value_type>(std::clamp(value, -200, 200));
 }
 
@@ -491,7 +496,10 @@ std::int32_t CRM::get_relation_limit(CountryInstance const* country, CountryInst
 	if (diplomacy_defines == nullptr) {
 		return 200;
 	}
-	return get_country_alliance(country, recipient) ? diplomacy_defines->relation_allied_max : diplomacy_defines->relation_max;
+	// an alliance or a sphere (the leader and a member, version 92) allow the relation above RELATION_MAX
+	const bool sphere = country != nullptr && recipient != nullptr
+		&& (country->get_sphere_owner_untracked() == recipient || recipient->get_sphere_owner_untracked() == country);
+	return get_country_alliance(country, recipient) || sphere ? diplomacy_defines->relation_allied_max : diplomacy_defines->relation_max;
 }
 
 std::size_t CRM::get_alliance_count(CountryInstance const* country) const {

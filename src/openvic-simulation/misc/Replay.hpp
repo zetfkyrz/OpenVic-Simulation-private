@@ -170,7 +170,10 @@ namespace OpenVic {
 		// 91: the scars of the wars heal by 1 a month, 5 diplomatic points at the start; the diplomacy of the AI (threats, alliances, relations,
 		//     the goals of the great powers every 5 years, war targets by the relations; ai/DiplomacyAI.cpp); the help of the AI for the
 		//     player (new action set_ai_assist)
-		inline constexpr int SIMULATION_VERSION = 91;
+		// 92: the spheres of influence, stage S1 and S2 (docs/PLAN_SPHERES.md): founded by a great power, the influence from the trade and the
+		//     credits x the relation and the neighbourhood, joining and leaving, +25 relation with the leader and a floor of -175, no wars inside;
+		//     new actions found_sphere, invite_to_sphere, leave_sphere, set_sphere_look
+		inline constexpr int SIMULATION_VERSION = 92;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

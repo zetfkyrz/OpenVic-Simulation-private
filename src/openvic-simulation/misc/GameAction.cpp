@@ -380,6 +380,34 @@ bool GameActionManager::VariantVisitor::operator() (set_ai_assist_argument_t con
 	return true;
 }
 
+// The spheres of influence (version 92, docs/PLAN_SPHERES.md): found one (a great power), invite a country (an AI answers by the influence),
+// leave, and the colour (RGB) and the icon of the sphere
+bool GameActionManager::VariantVisitor::operator() (found_sphere_argument_t const& argument) const {
+	const auto [country_index, kind] = argument;
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return kind < static_cast<std::uint32_t>(sphere_kind_t::COUNT)
+		&& instance_manager.get_sphere_manager().found(instance_manager, country, static_cast<sphere_kind_t>(kind));
+}
+
+bool GameActionManager::VariantVisitor::operator() (invite_to_sphere_argument_t const& argument) const {
+	const auto [leader_index, country_index] = argument;
+	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
+	return instance_manager.get_sphere_manager().invite(
+		instance_manager, countries.get_country_instance_by_index(leader_index), countries.get_country_instance_by_index(country_index)
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (leave_sphere_argument_t const& argument) const {
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument));
+	return instance_manager.get_sphere_manager().leave(instance_manager, country);
+}
+
+bool GameActionManager::VariantVisitor::operator() (set_sphere_look_argument_t const& argument) const {
+	const auto [country_index, rgb, icon] = argument;
+	CountryInstance const& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return instance_manager.get_sphere_manager().set_look(country, colour_t::from_integer(rgb), icon);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

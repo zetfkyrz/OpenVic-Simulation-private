@@ -1316,6 +1316,19 @@ bool Dataloader::load_defines(
 		ret = false;
 	}
 	{
+		// The spheres at the start of the game (ov_data/common/ov_spheres)
+		std::size_t start_sphere_count = 0;
+		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_spheres", ".txt", false)) {
+			const v2script::Parser parser = parse_defines(file);
+			if (parser.has_fatal_error() || parser.has_error()) {
+				spdlog::warn_s("The start spheres file {} is skipped, it has errors", file);
+				continue;
+			}
+			start_sphere_count += definition_manager.get_start_sphere_definitions().load_file(file.string(), parser.get_file_node());
+		}
+		SPDLOG_INFO("Loaded {} spheres of the start", start_sphere_count);
+	}
+	{
 		// The buildings of the RGOs (ov_data/common/ov_rgo_buildings)
 		std::size_t rgo_building_count = 0;
 		for (fs::path const& file : lookup_files_in_dir_load_order("common/ov_rgo_buildings", ".txt", false)) {

@@ -1127,7 +1127,30 @@ namespace OpenVic {
 	INT(AI_GOAL_YEARS, ai_goal_years, 5, 1, 100) \
 	RATE(AI_CONQUEST_MAX_POWER, ai_conquest_max_power, Rate(60, 100), 0, 100) \
 	INT(AI_CONQUEST_WORSEN_TO, ai_conquest_worsen_to, -50, -200, 200) \
-	INT(AI_CONTROL_TARGETS, ai_control_targets, 2, 0, 100)
+	INT(AI_CONTROL_TARGETS, ai_control_targets, 2, 0, 100) \
+	/* The spheres (version 92, docs/PLAN_SPHERES.md). The influence of a great power on a country: points of the trade (what the country bought */ \
+	/* from it, 1 % of its GDP = 10 points) and of the investments (its credits, the same scale), x (1 + the percents of the relation: below -100 */ \
+	/* SPHERE_RELATION_HOSTILE_PCT, -100..0 SPHERE_RELATION_NEGATIVE_PCT, 1..100 SPHERE_RELATION_POSITIVE_PCT, above SPHERE_RELATION_HIGH_PCT; */ \
+	/* + SPHERE_NEIGHBOUR_PCT for a neighbour), smoothed by SPHERE_INFLUENCE_SMOOTHING a month. A country joins at SPHERE_JOIN_INFLUENCE, the AI */ \
+	/* leaves under SPHERE_LEAVE_INFLUENCE; a member of another sphere moves at SPHERE_SWITCH_MARGIN more. The leader of a sphere has */ \
+	/* SPHERE_LEADER_RELATION more relation with every member, never under SPHERE_RELATION_FLOOR; the sphere ends SPHERE_GRACE_MONTHS after its */ \
+	/* leader stopped being a great power. The AI leader invites SPHERE_AI_INVITES_PER_MONTH countries a month */ \
+	INT(SPHERE_RELATION_HOSTILE_PCT, sphere_relation_hostile_pct, -100, -100, 1000) \
+	INT(SPHERE_RELATION_NEGATIVE_PCT, sphere_relation_negative_pct, -50, -100, 1000) \
+	INT(SPHERE_RELATION_POSITIVE_PCT, sphere_relation_positive_pct, 25, -100, 1000) \
+	INT(SPHERE_RELATION_HIGH_PCT, sphere_relation_high_pct, 50, -100, 1000) \
+	INT(SPHERE_NEIGHBOUR_PCT, sphere_neighbour_pct, 25, -100, 1000) \
+	RATE(SPHERE_INFLUENCE_SMOOTHING, sphere_influence_smoothing, Rate(1, 3), 0, 1) \
+	INT(SPHERE_JOIN_INFLUENCE, sphere_join_influence, 100, 0, 100000) \
+	INT(SPHERE_LEAVE_INFLUENCE, sphere_leave_influence, 50, 0, 100000) \
+	INT(SPHERE_SWITCH_MARGIN, sphere_switch_margin, 50, 0, 100000) \
+	INT(SPHERE_LEADER_RELATION, sphere_leader_relation, 25, 0, 200) \
+	INT(SPHERE_RELATION_FLOOR, sphere_relation_floor, -175, -200, 200) \
+	INT(SPHERE_GRACE_MONTHS, sphere_grace_months, 12, 0, 1200) \
+	INT(SPHERE_AI_INVITES_PER_MONTH, sphere_ai_invites_per_month, 1, 0, 100) \
+	/* The spheres of the history (ov_data/common/ov_spheres/start_spheres.txt): their AI members do not leave and are not drawn away, */ \
+	/* and the sphere does not end when its leader is no great power, for SPHERE_START_PROTECTION_YEARS years */ \
+	INT(SPHERE_START_PROTECTION_YEARS, sphere_start_protection_years, 20, 0, 1000)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "openvic-simulation/country/CountryDefinition.hpp"
+#include "openvic-simulation/country/Sphere.hpp"
 #include "openvic-simulation/defines/Define.hpp"
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/economy/EconomyManager.hpp"
@@ -43,6 +44,7 @@ namespace OpenVic {
 		ScriptManager PROPERTY_REF(script_manager);
 		SongChanceManager PROPERTY_REF(song_chance_manager);
 		SoundEffectManager PROPERTY_REF(sound_effect_manager);
+		StartSphereDefinitions PROPERTY_REF(start_sphere_definitions);
 
 	public:
 		DefinitionManager();

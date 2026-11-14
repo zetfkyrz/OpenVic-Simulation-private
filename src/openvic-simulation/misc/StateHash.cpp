@@ -158,6 +158,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(country.get_mobilisation_level()) + 0x6d6f62ULL);
 		// the diplomatic points (version 90)
 		hasher.add(country.get_diplomatic_points());
+		// the sphere (version 92)
+		hasher.add((country.get_sphere_owner_untracked() != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.get_sphere_owner_untracked()->index)) + 1 : 0)
+			+ (country.get_leads_sphere() ? 1ULL << 32 : 0));
 		// the goal of a great power of the AI and the help of the AI (version 91)
 		hasher.add(static_cast<std::uint64_t>(country.get_ai_goal()) + (country.get_ai_goal_target() != nullptr
 			? (static_cast<std::uint64_t>(type_safe::get(country.get_ai_goal_target()->index)) + 1) << 8 : 0) + (country.get_ai_assist() ? 1ULL << 40 : 0));

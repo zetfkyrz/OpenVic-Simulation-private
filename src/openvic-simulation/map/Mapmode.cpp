@@ -319,7 +319,34 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 		"MAPMODE_12"
 	);
 	ret &= add_mapmode("mapmode_culture", shaded_mapmode<Culture,pop_sum_t>(&ProvinceInstance::get_population_by_culture), "MAPMODE_13");
-	ret &= add_mapmode("mapmode_sphere", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_14");
+	// The spheres of influence (version 92, docs/PLAN_SPHERES.md): the countries in the colour of their sphere, the leader brighter; the others grey
+	ret &= add_mapmode(
+		"mapmode_sphere",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			CountryInstance const* const leader = owner->get_leads_sphere() ? owner : owner->get_sphere_owner_untracked();
+			if (leader == nullptr || !leader->get_leads_sphere()) {
+				return DEFAULT_COLOUR_GREY;
+			}
+			const colour_t colour = leader->get_sphere_colour();
+			if (owner == leader) {
+				return colour_argb_t { colour, ALPHA_VALUE };
+			}
+			// a member: the colour of the sphere, a little darker
+			return colour_argb_t { static_cast<colour_argb_t::value_type>(colour.red * 3 / 4), static_cast<colour_argb_t::value_type>(colour.green * 3 / 4),
+				static_cast<colour_argb_t::value_type>(colour.blue * 3 / 4), ALPHA_VALUE };
+		},
+		"MAPMODE_14"
+	);
 	// Supply: the supply limit of the province for the armies of the player (with the coefficient of the land that the player and his
 	// friends do not hold) divided by their load (without an army of the player there: by the load of a standard division); the colours
 	// are in the defines ov_supply (docs/PLAN_ARMY_SUPPLY_FRONTS.md, sections 1 and 2). The friends of the player are worked out once

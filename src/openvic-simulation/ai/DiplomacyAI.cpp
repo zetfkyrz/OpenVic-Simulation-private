@@ -357,6 +357,14 @@ fixed_point_t DiplomacyAI::war_target_score(InstanceManager const& instance_mana
 	if (country.has_alliance_with(target) || relation >= defines.ai_war_max_relation) {
 		return fixed_point_t::_0;
 	}
+	// one sphere (version 92, docs/PLAN_SPHERES.md): the members and the leader do not attack each other
+	CountryInstance const* const own_sphere = country.get_sphere_owner_untracked() != nullptr ? country.get_sphere_owner_untracked()
+		: country.get_leads_sphere() ? &country : nullptr;
+	CountryInstance const* const target_sphere = target.get_sphere_owner_untracked() != nullptr ? target.get_sphere_owner_untracked()
+		: target.get_leads_sphere() ? &target : nullptr;
+	if (own_sphere != nullptr && own_sphere == target_sphere) {
+		return fixed_point_t::_0;
+	}
 	// weaker is better, a bad relation is better, the target of the goal much better, a great power is a risk
 	fixed_point_t score = power_of(country) / power_of(target);
 	score *= fixed_point_t::_1 + fixed_point_t(std::max(0, -relation)) / 100;

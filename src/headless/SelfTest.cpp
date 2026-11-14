@@ -6398,6 +6398,72 @@ namespace {
 		country->set_ai(was_ai);
 	}
 
+	// The spheres of influence (version 92, docs/PLAN_SPHERES.md): the spheres of the history at the start, the relation bonus and its floor,
+	// leaving and joining, who may found one; the AI members of the history stay though the influence is small
+	void test_spheres(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		SphereManager& spheres = im.get_sphere_manager();
+		OpenVicDiplomacyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+		CountryInstance* const prussia = countries.get_country_instance_by_identifier("PRU");
+		CountryInstance* const bavaria = countries.get_country_instance_by_identifier("BAV");
+		CountryInstance* const saxony = countries.get_country_instance_by_identifier("SAX");
+		CountryInstance* const sweden = countries.get_country_instance_by_identifier("SWE");
+		if (prussia == nullptr || bavaria == nullptr || saxony == nullptr || sweden == nullptr || im.definition_manager.get_start_sphere_definitions().get_entries().empty()) {
+			fmt::println("TEST INFO spheres: no Prussia, Bavaria, Saxony or Sweden, or no start spheres, not checked");
+			return;
+		}
+		Sphere const* const zollverein = spheres.find_led_by(prussia);
+		r.check(zollverein != nullptr && zollverein->kind == sphere_kind_t::CUSTOMS_UNION && spheres.find_of(bavaria) == zollverein
+				&& bavaria->get_sphere_owner_untracked() == prussia && prussia->get_leads_sphere(),
+			"spheres: Prussia starts with the customs union of the history (Bavaria is a member)",
+			fmt::format("{} spheres", spheres.get_spheres().size()));
+		if (zollverein == nullptr || spheres.find_of(bavaria) != zollverein || spheres.find_of(saxony) != zollverein) {
+			return;
+		}
+		// the relation: +25 with the leader, never under -175 (a war scar of -200 stops there)
+		const CountryRelationManager::relation_value_type base = relations.get_country_relation(prussia, bavaria);
+		r.check(static_cast<std::int32_t>(relations.get_effective_relation(prussia, bavaria))
+				== std::clamp(static_cast<std::int32_t>(base) + relations.get_war_scar(prussia, bavaria).floor<std::int32_t>() + defines.sphere_leader_relation, -200, 200),
+			"spheres: the leader has +25 relation with a member");
+		relations.set_country_relation(prussia, saxony, -100);
+		relations.add_war_scar(prussia, saxony);
+		r.check(static_cast<std::int32_t>(relations.get_effective_relation(prussia, saxony)) == defines.sphere_relation_floor,
+			"spheres: the relation of the leader and a member never goes under -175",
+			fmt::format("relation {}", relations.get_effective_relation(prussia, saxony)));
+		// the AI members of the history stay a month though the influence is far under the threshold
+		spheres.monthly_update(im);
+		r.check(spheres.find_of(bavaria) == spheres.find_led_by(prussia) && spheres.find_of(saxony) == spheres.find_led_by(prussia),
+			"spheres: an AI member of the history stays, whatever the influence and the relation");
+		// leaving, and coming back by the invitation (a player country is not asked)
+		const bool bavaria_ai = bavaria->is_ai();
+		r.check(spheres.leave(im, *bavaria) && spheres.find_of(bavaria) == nullptr && bavaria->get_sphere_owner_untracked() == nullptr
+				&& relations.get_effective_relation(prussia, bavaria) == std::clamp<std::int32_t>(base + relations.get_war_scar(prussia, bavaria).floor<std::int32_t>(), -200, 200),
+			"spheres: a member leaves, the bonus of the relation goes");
+		bavaria->set_ai(false);
+		r.check(spheres.invite(im, *prussia, *bavaria) && spheres.find_of(bavaria) == spheres.find_led_by(prussia), "spheres: the leader invites a country back");
+		bavaria->set_ai(bavaria_ai);
+		r.check(!spheres.invite_block_reason(im, *prussia, *bavaria).empty(), "spheres: a member is not invited twice");
+		// who founds: only a great power out of the spheres, no Alliance without the technology
+		r.check(!spheres.found_block_reason(im, *sweden, sphere_kind_t::IMPERIAL).empty(), "spheres: a country that is no great power founds no sphere");
+		r.check(!spheres.found_block_reason(im, *prussia, sphere_kind_t::MILITARY).empty(), "spheres: a leader founds no second sphere");
+		CountryInstance* founder = nullptr;
+		for (CountryInstance& country : countries.get_country_instances()) {
+			const std::size_t rank = country.get_total_rank();
+			if (founder == nullptr && country.exists() && !country.get_owned_provinces().empty() && rank > 0
+				&& rank <= static_cast<std::size_t>(defines.great_power_rank) && spheres.find_of(&country) == nullptr) {
+				founder = &country;
+			}
+		}
+		if (founder == nullptr) {
+			fmt::println("TEST INFO spheres: every great power is in a sphere, founding not checked");
+			return;
+		}
+		r.check(!spheres.found_block_reason(im, *founder, sphere_kind_t::ALLIANCE).empty() && spheres.found(im, *founder, sphere_kind_t::IDEOLOGICAL)
+				&& spheres.find_led_by(founder) != nullptr && founder->get_leads_sphere(),
+			"spheres: a great power out of the spheres founds one (the Alliance needs the technology)", fmt::format("{}", founder->get_identifier()));
+	}
+
 	void test_laws(Results& r, InstanceManager& im) {
 		LawManager const& law_manager = im.definition_manager.get_politics_manager().get_law_manager();
 		CountryInstance* const russia = im.get_country_instance_manager().get_country_instance_by_identifier("RUS");
@@ -8386,6 +8452,7 @@ namespace {
 		test_army_orders(r, *im);
 		test_canned_food_grain(r, *im); // it changes the stockpile and the armies of a country
 		test_diplomacy_ai(r, *im); // last: it makes alliances and goals
+		test_spheres(r, *im); // after it: it founds a sphere and changes the members
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

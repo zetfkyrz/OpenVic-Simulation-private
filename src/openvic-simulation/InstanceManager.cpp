@@ -366,6 +366,8 @@ void InstanceManager::tick() {
 				// The relations: the diplomatic points, the processes of the buttons, the scars of the wars (docs/DIPLOMACY.md)
 				OV_PROFILE_SCOPE(tick_profiler, "diplomacy");
 				country_relation_manager.monthly_update(*this);
+				// the spheres of influence (version 92, docs/PLAN_SPHERES.md)
+				sphere_manager.monthly_update(*this);
 			}
 			{
 				OV_PROFILE_SCOPE(tick_profiler, "rebels");
@@ -513,6 +515,8 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 	for (CountryInstance& country : country_instance_manager.get_country_instances()) {
 		country.set_diplomatic_points(definition_manager.get_define_manager().get_openvic_defines().diplomacy.diplomatic_points_start);
 	}
+	// The spheres of the history (version 92, docs/PLAN_SPHERES.md)
+	sphere_manager.setup_start_spheres(*this, definition_manager.get_start_sphere_definitions());
 
 	ret &= map_instance.get_state_manager().generate_states(
 		definition_manager.get_map_definition(),

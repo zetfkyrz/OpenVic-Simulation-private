@@ -2423,6 +2423,38 @@ static void run_command_dump(InstanceManager& instance_manager) {
 // --dump-wars: the wars of the day (WAR) and the groups of the field marshals of the countries at war (WAR_GROUP)
 static void run_war_dump(InstanceManager& instance_manager, const size_t day) {
 	WarManager const& war_manager = instance_manager.get_war_manager();
+	// SPHERE (version 92): every sphere with its members, and the three countries of the most influence of every great power
+	{
+		SphereManager const& spheres = instance_manager.get_sphere_manager();
+		for (Sphere const& sphere : spheres.get_spheres()) {
+			std::string members;
+			for (CountryInstance const* member : sphere.members) {
+				members += fmt::format(" {}", member->get_identifier());
+			}
+			fmt::println("SPHERE day={} leader={} kind={} members={}{}", day, sphere.leader->get_identifier(), sphere_kind_identifier(sphere.kind),
+				sphere.members.size(), members);
+		}
+		for (CountryInstance& leader : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (!leader.exists() || leader.get_total_rank() == 0 || leader.get_total_rank() > 8) {
+				continue;
+			}
+			std::vector<std::pair<fixed_point_t, CountryInstance const*>> best;
+			for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+				const SphereManager::influence_t value = spheres.get_influence(&leader, &country);
+				if (value.value > fixed_point_t::_0) {
+					best.emplace_back(value.value, &country);
+				}
+			}
+			std::stable_sort(best.begin(), best.end(), [](auto const& a, auto const& b) { return a.first > b.first; });
+			std::string text;
+			for (std::size_t i = 0; i < best.size() && i < 4; ++i) {
+				const SphereManager::influence_t value = spheres.get_influence(&leader, best[i].second);
+				text += fmt::format(" {}={:.1f}(trade {:.1f} inv {:.1f} x{:+.2f})", best[i].second->get_identifier(), static_cast<double>(value.value),
+					static_cast<double>(value.trade), static_cast<double>(value.investment), static_cast<double>(value.multiplier));
+			}
+			fmt::println("SPHERE_INFLUENCE day={} {}{}", day, leader.get_identifier(), text);
+		}
+	}
 	// AI_WAR (version 91): why the AI attacks or not - for the 16 first countries of the ranking at peace, every land neighbour: can a war be
 	// declared, its power over ours, an ally of it stronger than us, the relation, the score of the diplomacy of the AI, a casus belli
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
