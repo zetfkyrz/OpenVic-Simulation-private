@@ -25,7 +25,8 @@ namespace OpenVic {
 			NONE = 0,      // no goal: the war can only be won by occupation
 			CONQUER_STATE = 1, // take the state (state_province is any province of it)
 			HUMILIATE = 2, // prestige: the winner gains and the loser loses it
-			REPARATIONS = 3 // the loser pays a part of its treasury
+			REPARATIONS = 3, // the loser pays a part of its treasury
+		INDEPENDENCE = 4 // a subject fights its overlord (version 101): no casus belli needed
 		};
 		type_t type = type_t::NONE;
 		ProvinceInstance const* state_province = nullptr;
@@ -50,6 +51,10 @@ namespace OpenVic {
 		bool destroy_forts = false;
 		bool destroy_naval_bases = false;
 		bool remove_cores = false;
+		// version 101 (stage D6): the leader of the losers becomes a puppet of the leader of the winners; the leader of the winners, a subject
+		// of the leader of the losers, is free
+		bool make_puppet = false;
+		bool independence = false;
 	};
 
 	// The answer to the last offer of a country, shown in the peace window
@@ -415,6 +420,8 @@ namespace OpenVic {
 		memory::vector<reparation_t> reparations;
 		// Every day: the reparations are paid (REPARATIONS_TAX_HIT of the income of the payer), the disarmaments end
 		void update_reparations(InstanceManager& instance_manager);
+		// Why the subject terms (the puppet, the independence) cannot be in the terms (empty: they can, version 101)
+		std::string_view get_subject_terms_block_reason(War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const;
 		// The terms applied as if the peace was signed (for the self-tests)
 		void apply_peace_terms_now(InstanceManager& instance_manager, War const& war, bool proposer_is_attacker, PeaceTerms const& terms) {
 			apply_peace_terms(instance_manager, war, proposer_is_attacker, terms);

@@ -1,5 +1,6 @@
 #include "CountryAI.hpp"
 #include "openvic-simulation/ai/DiplomacyAI.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 
 #include "openvic-simulation/military/Unlocks.hpp"
 
@@ -995,6 +996,11 @@ namespace {
 					continue;
 				}
 				if (owner->is_rebel_country() || !war_manager.can_declare_war(country, *owner, today)) {
+					continue;
+				}
+				// (the war of independence is decided by DiplomacyAI::ai_subjects; the overlord of a subject defends it, version 101)
+				if (country.overlord == owner || (owner->overlord != nullptr && Subjects::overlord_defends(owner->subject_type)
+					&& owner->overlord->military_power.get_untracked() > own_power)) {
 					continue;
 				}
 				const std::int32_t limit =

@@ -9,6 +9,7 @@
 #include "openvic-simulation/population/PopDynamics.hpp"
 #include "openvic-simulation/ai/DiplomacyAI.hpp"
 #include "openvic-simulation/politics/LawDynamics.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/console/ConsoleInstance.hpp"
@@ -178,6 +179,7 @@ InstanceManager::InstanceManager(
 	CountryInstance::set_openvic_research_defines(definition_manager.get_define_manager().get_openvic_defines().research);
 	CountryRelationManager::set_diplomacy_defines(definition_manager.get_define_manager().get_openvic_defines().diplomacy);
 	CountryInstance::infamy_casus_belli_limit = definition_manager.get_define_manager().get_country_defines().get_infamy_containment_limit();
+	CountryInstance::subject_research_discount_pct = definition_manager.get_define_manager().get_openvic_defines().diplomacy.subject_research_discount_pct;
 	CountryInstance::set_company_type_manager(definition_manager.get_military_manager().get_company_type_manager());
 	CountryInstance::set_law_manager(definition_manager.get_politics_manager().get_law_manager());
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
@@ -337,6 +339,8 @@ void InstanceManager::tick() {
 			// the proposals that waited too long for the answer of a player are declined (version 96)
 			OV_PROFILE_SCOPE(tick_profiler, "diplomatic proposals");
 			definition_manager.get_diplomatic_action_manager().daily_update(*this);
+			// the payments of the subjects (version 101)
+			Subjects::daily_update(*this);
 		}
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
@@ -377,6 +381,8 @@ void InstanceManager::tick() {
 				// The relations: the diplomatic points, the processes of the buttons, the scars of the wars (docs/DIPLOMACY.md)
 				OV_PROFILE_SCOPE(tick_profiler, "diplomacy");
 				country_relation_manager.monthly_update(*this);
+				// the discontent of the subjects (version 101)
+				Subjects::monthly_update(*this);
 				// the spheres of influence (version 92, docs/PLAN_SPHERES.md)
 				sphere_manager.monthly_update(*this);
 			}
@@ -528,6 +534,8 @@ bool InstanceManager::load_bookmark(Bookmark const& new_bookmark) {
 	}
 	// The spheres of the history (version 92, docs/PLAN_SPHERES.md)
 	sphere_manager.setup_start_spheres(*this, definition_manager.get_start_sphere_definitions());
+	// The subjects of the history (version 101): Vic2 vassals and unions are puppets, substates crown lands
+	Subjects::setup_history(*this);
 
 	ret &= map_instance.get_state_manager().generate_states(
 		definition_manager.get_map_definition(),

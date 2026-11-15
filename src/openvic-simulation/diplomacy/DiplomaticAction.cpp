@@ -12,6 +12,7 @@
 #include "openvic-simulation/defines/Define.hpp"
 #include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
@@ -184,6 +185,27 @@ DiplomaticActionManager::action_terms_t DiplomaticActionManager::get_terms(const
 	if (identifier == "end_war_subsidies") {
 		return { d.get_cancelwarsubsidy_diplomatic_cost(), value(d.get_cancelwarsubsidy_relation_on_accept()), 0, false };
 	}
+	// the actions of an overlord (version 101): the annexation needs the consent of the subject
+	if (OpenVicDiplomacyDefines const* const o = CountryRelationManager::diplomacy_defines; o != nullptr) {
+		if (identifier == "annex_subject") {
+			return { o->subject_annex_cost, 0, o->subject_annex_decline_relation, true };
+		}
+		if (identifier == "release_subject") {
+			return { fixed_point_t::_0, o->subject_release_relation, 0, false };
+		}
+		if (identifier == "raise_subject_tribute") {
+			return { o->subject_tribute_change_cost, o->subject_raise_tribute_relation, 0, false };
+		}
+		if (identifier == "lower_subject_tribute") {
+			return { fixed_point_t::_0, o->subject_lower_tribute_relation, 0, false };
+		}
+		if (identifier == "grant_autonomy") {
+			return { o->subject_autonomy_cost, o->subject_autonomy_relation, 0, false };
+		}
+		if (identifier == "subject_join_war") {
+			return { o->subject_coerce_cost, o->subject_coerce_relation, 0, false };
+		}
+	}
 	return {};
 }
 
@@ -353,7 +375,9 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 				},
 			.allowed =
 				[](Argument const& arg) {
-					return !arg.sender->has_alliance_with(*arg.receiver) && !arg.sender->is_at_war_with(*arg.receiver);
+					// (a puppet has no foreign policy, version 101)
+					return !arg.sender->has_alliance_with(*arg.receiver) && !arg.sender->is_at_war_with(*arg.receiver) && !arg.sender->is_puppet()
+						&& !arg.receiver->is_puppet();
 				},
 			// An AI country answers by its interests (version 91, docs/DIPLOMACY.md); between players the alliance is made
 			.get_acceptance =
@@ -745,6 +769,106 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 			.allowed =
 				[](Argument const& arg) {
 					return arg.receiver->has_military_access_to(*arg.sender);
+				},
+		}
+	);
+	// Version 101 (stage D6, diplomacy/Subjects.hpp): the actions of an overlord with its subject
+	const auto our_subject = [](Argument const& arg) -> bool {
+		return arg.receiver->overlord == arg.sender;
+	};
+	result &= add_diplomatic_action(
+		"annex_subject",
+		{
+			.commit =
+				[](Argument& arg) {
+					Subjects::annex(arg.instance_manager, *arg.sender, *arg.receiver);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return Subjects::get_annex_block_reason(arg.instance_manager, *arg.sender, *arg.receiver).empty();
+				},
+		}
+	);
+	result &= add_diplomatic_action(
+		"release_subject",
+		{
+			.commit =
+				[](Argument& arg) {
+					Subjects::release(arg.instance_manager, *arg.receiver);
+				},
+			.allowed = our_subject,
+		}
+	);
+	result &= add_diplomatic_action(
+		"raise_subject_tribute",
+		{
+			.commit =
+				[](Argument& arg) {
+					OpenVicDiplomacyDefines const& o = *CountryRelationManager::diplomacy_defines;
+					arg.receiver->subject_tribute_pct = std::min(arg.receiver->subject_tribute_pct + o.subject_tribute_step_pct,
+						Subjects::get_max_tribute_pct(o, arg.receiver->subject_type));
+				},
+			.allowed =
+				[our_subject](Argument const& arg) {
+					return our_subject(arg) && CountryRelationManager::diplomacy_defines != nullptr && Subjects::tribute_is_changeable(arg.receiver->subject_type)
+						&& arg.receiver->subject_tribute_pct < Subjects::get_max_tribute_pct(*CountryRelationManager::diplomacy_defines, arg.receiver->subject_type);
+				},
+		}
+	);
+	result &= add_diplomatic_action(
+		"lower_subject_tribute",
+		{
+			.commit =
+				[](Argument& arg) {
+					OpenVicDiplomacyDefines const& o = *CountryRelationManager::diplomacy_defines;
+					arg.receiver->subject_tribute_pct = std::max(arg.receiver->subject_tribute_pct - o.subject_tribute_step_pct,
+						Subjects::get_min_tribute_pct(o, arg.receiver->subject_type));
+				},
+			.allowed =
+				[our_subject](Argument const& arg) {
+					return our_subject(arg) && CountryRelationManager::diplomacy_defines != nullptr && Subjects::tribute_is_changeable(arg.receiver->subject_type)
+						&& arg.receiver->subject_tribute_pct > Subjects::get_min_tribute_pct(*CountryRelationManager::diplomacy_defines, arg.receiver->subject_type);
+				},
+		}
+	);
+	result &= add_diplomatic_action(
+		"grant_autonomy",
+		{
+			// the next kind of the table; a dominion is set free
+			.commit =
+				[](Argument& arg) {
+					const CountryInstance::subject_type_t next = Subjects::get_more_autonomy(arg.receiver->subject_type);
+					if (next == CountryInstance::subject_type_t::NONE) {
+						Subjects::release(arg.instance_manager, *arg.receiver);
+					} else {
+						Subjects::set_type(arg.instance_manager, *arg.receiver, next);
+						arg.instance_manager.get_notification_log().add(
+							arg.instance_manager.get_today(), arg.receiver, "became_subject", Subjects::get_type_key(next), arg.sender
+						);
+					}
+				},
+			.allowed = our_subject,
+		}
+	);
+	result &= add_diplomatic_action(
+		"subject_join_war",
+		{
+			// the coercion: a colonial subject or a crown land joins the war of its overlord (not a puppet, not a protectorate)
+			.commit =
+				[](Argument& arg) {
+					WarManager& war_manager = arg.instance_manager.get_war_manager();
+					if (War const* const war = war_manager.get_war_to_call_into(*arg.sender); war != nullptr) {
+						war_manager.join_war(arg.instance_manager, war->id, *arg.receiver, war->is_attacker(*arg.sender));
+					}
+				},
+			.allowed =
+				[our_subject](Argument const& arg) {
+					if (!our_subject(arg) || !Subjects::tribute_is_changeable(arg.receiver->subject_type)) {
+						return false;
+					}
+					WarManager const& war_manager = arg.instance_manager.get_war_manager();
+					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
+					return war != nullptr && war_manager.can_join_war(*war, war->is_attacker(*arg.sender), *arg.receiver);
 				},
 		}
 	);

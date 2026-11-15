@@ -59,6 +59,7 @@
 #include <openvic-simulation/military/UnitType.hpp>
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
+#include <openvic-simulation/diplomacy/Subjects.hpp>
 #include <openvic-simulation/misc/MoneyLedger.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/misc/StateHash.hpp>
@@ -6888,6 +6889,140 @@ namespace {
 		std::erase_if(war_manager.reparations, [defender](WarManager::reparation_t const& entry) -> bool { return entry.payer == defender; });
 	}
 
+	// Stage D6 (version 101): the subjects (diplomacy/Subjects.hpp)
+	void test_diplomacy_d6(Results& r, InstanceManager& im) {
+		using subject_type_t = CountryInstance::subject_type_t;
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		WarManager& war_manager = im.get_war_manager();
+		OpenVicDiplomacyDefines const& defines = im.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+		const Date today = im.get_today();
+		std::size_t history_subjects = 0;
+		for (CountryInstance const& country : countries.get_country_instances()) {
+			history_subjects += country.overlord != nullptr ? 1 : 0;
+		}
+		r.check(history_subjects > 0, "diplomacy D6: the subjects of the history (Vic2 vassals and substates) are set", std::to_string(history_subjects));
+
+		const auto has_subjects = [&countries](CountryInstance const& lord) -> bool {
+			return std::any_of(countries.get_country_instances().begin(), countries.get_country_instances().end(),
+				[&lord](CountryInstance const& other) -> bool { return other.overlord == &lord; });
+		};
+		const auto free_country = [&](CountryInstance const& country) -> bool {
+			return country.exists() && !country.is_rebel_country() && !country.is_at_war() && !country.get_owned_provinces().empty()
+				&& relations.get_alliance_count(&country) == 0 && country.get_sphere_owner_untracked() == nullptr && !country.get_leads_sphere()
+				&& country.overlord == nullptr && !has_subjects(country);
+		};
+		CountryInstance* lord = nullptr;
+		CountryInstance* sub = nullptr;
+		CountryInstance* third = nullptr;
+		CountryInstance* fourth = nullptr;
+		for (CountryInstance& a : countries.get_country_instances()) {
+			if (lord != nullptr) {
+				break;
+			}
+			if (!free_country(a)) {
+				continue;
+			}
+			for (CountryInstance& b : countries.get_country_instances()) {
+				if (lord != nullptr) {
+					break;
+				}
+				if (&b == &a || !free_country(b) || b.is_great_power() || !war_manager.can_declare_war(a, b, today)) {
+					continue;
+				}
+				for (CountryInstance& c : countries.get_country_instances()) {
+					if (lord != nullptr) {
+						break;
+					}
+					if (&c == &a || &c == &b || !free_country(c) || !war_manager.can_declare_war(c, b, today) || !war_manager.can_declare_war(c, a, today)) {
+						continue;
+					}
+					for (CountryInstance& d : countries.get_country_instances()) {
+						if (&d != &a && &d != &b && &d != &c && free_country(d) && !d.is_great_power() && war_manager.can_declare_war(a, d, today)) {
+							lord = &a;
+							sub = &b;
+							third = &c;
+							fourth = &d;
+							break;
+						}
+					}
+				}
+			}
+		}
+		if (lord == nullptr) {
+			fmt::println("TEST INFO diplomacy D6: no four free countries, not checked");
+			return;
+		}
+
+		// a colonial subject: the bonus of the relation, no war between the two, more raw goods, the payments
+		const std::int32_t before = relations.get_effective_relation(lord, sub);
+		Subjects::make_subject(im, *sub, *lord, subject_type_t::COLONIAL);
+		const std::int32_t after = relations.get_effective_relation(lord, sub);
+		r.check(sub->overlord == lord && after == std::min(before + defines.subject_relation_colonial, 200)
+				&& !war_manager.can_declare_war(*sub, *lord, today) && !war_manager.can_declare_war(*lord, *sub, today)
+				&& sub->subject_rgo_multiplier > fixed_point_t::_1 && sub->subject_factory_multiplier < fixed_point_t::_1
+				&& sub->subject_tribute_pct == defines.subject_tribute_colonial_pct,
+			"diplomacy D6: a colonial subject: the relation bonus, no war with the overlord, the output, the payments");
+
+		// a crown land pays SUBJECT_TRIBUTE_CROWN_LAND_PCT of its income of yesterday
+		Subjects::set_type(im, *sub, subject_type_t::CROWN_LAND);
+		const fixed_point_t income = sub->get_income_yesterday();
+		const fixed_point_t sub_cash = sub->get_cash_stockpile().load();
+		const fixed_point_t lord_cash = lord->get_cash_stockpile().load();
+		const fixed_point_t expected = income > fixed_point_t::_0 ? std::min(income * sub->subject_tribute_pct / 100, sub_cash) : fixed_point_t::_0;
+		Subjects::daily_update(im);
+		r.check(sub_cash - sub->get_cash_stockpile().load() == expected && lord->get_cash_stockpile().load() - lord_cash == expected,
+			"diplomacy D6: a crown land pays its share of the income to the overlord", fmt::format("income {} paid {}", income, expected));
+
+		// the overlord defends its crown land
+		const bool declared = war_manager.declare_war(im, *third, *sub);
+		War* war = war_manager.find_war_between(*third, *sub);
+		const bool defends = war != nullptr && war->is_defender(*lord);
+		if (war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		r.check(declared && defends, "diplomacy D6: the overlord joins the defence of its crown land");
+
+		// free again
+		Subjects::release(im, *sub);
+		const bool released = sub->overlord == nullptr && sub->subject_rgo_multiplier == fixed_point_t::_1;
+		r.check(released, "diplomacy D6: the release of a subject");
+
+		// a peace makes a puppet (no foreign policy); the peace of a war of independence frees it
+		bool puppet = false;
+		bool no_policy = false;
+		bool independence = false;
+		if (war_manager.declare_war(im, *lord, *fourth) && (war = war_manager.find_war_between(*lord, *fourth)) != nullptr) {
+			PeaceTerms terms;
+			terms.war_id = war->id;
+			terms.make_puppet = true;
+			war_manager.apply_peace_terms_now(im, *war, true, terms);
+			puppet = fourth->is_puppet() && fourth->overlord == lord;
+			no_policy = !war_manager.get_justify_block_reason(*fourth, *third, today).empty() && !war_manager.can_declare_war(*fourth, *third, today);
+			PeaceTerms free_terms;
+			free_terms.war_id = war->id;
+			free_terms.independence = true;
+			const bool allowed = war_manager.get_subject_terms_block_reason(*war, *fourth, free_terms).empty()
+				&& !war_manager.get_subject_terms_block_reason(*war, *lord, free_terms).empty();
+			war_manager.apply_peace_terms_now(im, *war, false, free_terms);
+			independence = allowed && fourth->overlord == nullptr;
+			war_manager.end_war(im, war->id);
+		}
+		r.check(puppet && no_policy && independence, "diplomacy D6: a puppet by the peace (no foreign policy), the independence by the peace");
+
+		// the annexation: years and a good relation, the land goes to the overlord
+		Subjects::make_subject(im, *sub, *lord, subject_type_t::PUPPET);
+		const std::size_t provinces = sub->get_owned_provinces().size() + lord->get_owned_provinces().size();
+		const bool blocked = !Subjects::get_annex_block_reason(im, *lord, *sub).empty();
+		sub->subject_since = Date {};
+		relations.set_country_relation(lord, sub, 100);
+		const memory::string reason = Subjects::get_annex_block_reason(im, *lord, *sub);
+		const bool annexed = Subjects::annex(im, *lord, *sub);
+		r.check(blocked && annexed && !sub->exists() && sub->overlord == nullptr && lord->get_owned_provinces().size() == provinces,
+			"diplomacy D6: the annexation of a subject (only after years and with a good relation): its land goes to the overlord",
+			std::string { reason.c_str() });
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -8966,6 +9101,7 @@ namespace {
 		test_diplomacy_d2(r, *im);
 		test_diplomacy_d3(r, *im);
 		test_diplomacy_d5(r, *im);
+		test_diplomacy_d6(r, *im); // last: it annexes a country
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

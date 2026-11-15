@@ -419,6 +419,10 @@ fixed_point_t ResourceGatheringOperation::produce() {
 			principle != fixed_point_t::_0) {
 			output_multiplier *= fixed_point_t::_1 + principle;
 		}
+		// a colonial subject makes more raw goods (version 101)
+		if (principle_owner->subject_rgo_multiplier != fixed_point_t::_1) {
+			output_multiplier *= principle_owner->subject_rgo_multiplier;
+		}
 	}
 
 	fixed_point_t throughput_from_workers = 0;

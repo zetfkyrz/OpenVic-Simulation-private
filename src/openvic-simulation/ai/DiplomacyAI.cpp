@@ -19,6 +19,7 @@
 #include "openvic-simulation/map/State.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/military/War.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
@@ -287,6 +288,21 @@ namespace {
 			out.emplace_back(other, direction);
 		};
 		std::vector<CountryInstance*> const& own_neighbours = neighbours[type_safe::get(country.index)];
+		// The subjects (version 101): their relation goes down every month; it is kept at AI_OVERLORD_KEEP_RELATION, a neighbour is brought up
+		// to the annexation
+		{
+			CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
+			for (CountryInstance& subject : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (subject.overlord != &country || !is_active(subject)) {
+					continue;
+				}
+				const std::int32_t wanted = contains(own_neighbours, &subject)
+					? defines.subject_annex_min_relation - Subjects::get_relation_bonus(defines, subject.subject_type) : defines.ai_overlord_keep_relation;
+				if (relations.get_country_relation(&country, &subject) < std::min(wanted, defines.relation_max)) {
+					add(&subject, 1);
+				}
+			}
+		}
 		// A war of conquest: the relation with the target goes down
 		if (country.get_ai_goal() == ai_goal_t::CONQUEST && country.get_ai_goal_target() != nullptr
 			&& country.get_relations_with(*country.get_ai_goal_target()) > defines.ai_conquest_worsen_to) {
@@ -590,6 +606,66 @@ void DiplomacyAI::ai_military_access(
 	}
 }
 
+void DiplomacyAI::ai_subjects(InstanceManager& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance& country, const Date today) {
+	CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
+	DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+	// A subject: the war of independence when the overlord is weak and not liked
+	if (CountryInstance* const overlord = country.overlord; overlord != nullptr) {
+		if (Subjects::may_attack_overlord(country.subject_type) && !country.is_at_war()
+			&& (today - country.subject_since).to_int() >= defines.ai_subject_independence_min_years * 365
+			&& relations.get_effective_relation(&country, overlord) < defines.ai_subject_independence_max_relation
+			&& dice(country, today, 0x6d1) < defines.ai_subject_independence_chance) {
+			// the power of the overlord that would fight: half while it fights another war
+			fixed_point_t overlord_power = power_of(*overlord);
+			if (overlord->is_at_war()) {
+				overlord_power /= 2;
+			}
+			if (power_of(country) * 100 >= overlord_power * defines.ai_subject_independence_power_pct
+				&& instance_manager.get_war_manager().declare_war_as_country(
+					instance_manager, country, *overlord, WarGoal { WarGoal::type_t::INDEPENDENCE, nullptr }
+				)) {
+				SPDLOG_INFO("AI: {} fights for its independence from {}", country.get_identifier(), overlord->get_identifier());
+			}
+		}
+		return;
+	}
+	// An overlord: its subjects (in the order of the countries)
+	const auto act = [&actions, &instance_manager, &country](std::string_view identifier, CountryInstance& subject) -> bool {
+		const std::optional<std::size_t> index = actions.get_action_index(identifier);
+		return index.has_value() && actions.execute_diplomatic_action(*index, &country, &subject, {}, instance_manager);
+	};
+	std::uint64_t salt = 0x6e0;
+	for (CountryInstance& subject : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (subject.overlord != &country || !is_active(subject)) {
+			continue;
+		}
+		salt++;
+		if (Subjects::get_annex_block_reason(instance_manager, country, subject).empty() && dice(country, today, salt) < defines.ai_overlord_annex_chance) {
+			if (act("annex_subject", subject)) {
+				SPDLOG_INFO("AI: {} annexes its subject {}", country.get_identifier(), subject.get_identifier());
+			}
+			continue;
+		}
+		if (!Subjects::tribute_is_changeable(subject.subject_type)) {
+			continue;
+		}
+		// the payments: more with a deficit while the subject likes us, less when it does not
+		const std::int32_t relation = relations.get_effective_relation(&country, &subject);
+		if (country.get_balance_before_investment_average() < fixed_point_t::_0 && relation >= defines.ai_overlord_keep_relation
+			&& subject.subject_tribute_pct + defines.subject_tribute_step_pct <= Subjects::get_max_tribute_pct(defines, subject.subject_type)) {
+			act("raise_subject_tribute", subject);
+		} else if (relation < 0 && subject.subject_tribute_pct - defines.subject_tribute_step_pct >= Subjects::get_min_tribute_pct(defines, subject.subject_type)) {
+			act("lower_subject_tribute", subject);
+		}
+		// the coercion: into the war of the overlord
+		if (country.is_at_war() && !subject.is_at_war() && dice(country, today, salt + 0x100) < defines.ai_overlord_coerce_chance) {
+			if (act("subject_join_war", subject)) {
+				SPDLOG_INFO("AI: {} draws its subject {} into its war", country.get_identifier(), subject.get_identifier());
+			}
+		}
+	}
+}
+
 std::int32_t DiplomacyAI::military_access_acceptance(
 	InstanceManager const& instance_manager, CountryInstance const& asker, CountryInstance const& giver
 ) {
@@ -613,6 +689,10 @@ std::int32_t DiplomacyAI::military_access_acceptance(
 std::int32_t DiplomacyAI::alliance_acceptance(InstanceManager const& instance_manager, CountryInstance const& proposer, CountryInstance const& receiver) {
 	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
 	CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
+	// (a puppet has no foreign policy, version 101)
+	if (proposer.is_puppet() || receiver.is_puppet()) {
+		return 0;
+	}
 	if (proposer.is_at_war() || receiver.is_at_war_with(proposer)
 		|| alliance_count(relations, &receiver) >= static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))
 		|| receiver.get_relations_with(proposer) < defines.ai_alliance_accept_relation) {
@@ -744,6 +824,14 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 					SPDLOG_INFO("AI: {} allies with {} against {}", country.get_identifier(), candidate->get_identifier(), threat_country->get_identifier());
 				}
 			}
+		}
+
+		// The subjects (version 101)
+		section.reset();
+		section.emplace(profiler.scope("subjects"));
+		ai_subjects(instance_manager, defines, country, today);
+		if (!is_active(country)) {
+			continue;
 		}
 
 		// The war subsidies (version 99, the owner 2026-11-15) and the military access (version 99)

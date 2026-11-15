@@ -714,6 +714,13 @@ namespace OpenVic {
 	INT(REMOVE_CORES_COST, remove_cores_cost, 5, 0, 10000) \
 	INT(DISARM_YEARS, disarm_years, 5, 0, 100) \
 	INT(REPARATIONS_YEARS, reparations_years, 5, 0, 100) \
+	/* Stage D6 (version 101): the loser becomes a puppet of the winner (not a great power, not a subject), a subject wins its independence */ \
+	/* (half the price as the goal of a war of independence); a winning AI great power makes a puppet of a loser with at most */ \
+	/* AI_PUPPET_SIZE_PCT percent of its provinces in AI_PUPPET_CHANCE_PCT percent of the wars */ \
+	INT(PUPPET_COST, puppet_cost, 40, 0, 10000) \
+	INT(INDEPENDENCE_COST, independence_cost, 20, 0, 10000) \
+	INT(AI_PUPPET_SIZE_PCT, ai_puppet_size_pct, 25, 0, 10000) \
+	INT(AI_PUPPET_CHANCE_PCT, ai_puppet_chance_pct, 50, 0, 100) \
 	INT(WAR_GOAL_COST_DIVISOR, war_goal_cost_divisor, 2, 1, 1000) \
 	INT(WHITE_PEACE_SCORE_GAP, white_peace_score_gap, 15, 0, 10000) \
 	INT(WHITE_PEACE_WAR_DAYS, white_peace_war_days, 1095, 0, 36500) \
@@ -1209,7 +1216,60 @@ namespace OpenVic {
 	/* The military access of the AI (version 99): an AI at war asks a neighbour that borders an enemy of it for access, one a month */ \
 	/* Stage D3 (version 98): a country with more infamy than BADBOY_LIMIT of defines.lua (25) can be attacked by anybody with a casus belli, */ \
 	/* and the AI fears it AI_INFAMOUS_THREAT_PCT percent more */ \
-	INT(AI_INFAMOUS_THREAT_PCT, ai_infamous_threat_pct, 50, 0, 1000)
+	INT(AI_INFAMOUS_THREAT_PCT, ai_infamous_threat_pct, 50, 0, 1000) \
+	/* Stage D6 (version 101): the subjects (docs/PLAN_DIPLOMACY_VIC2.md, "Субъекты"). The bonus of the relation of a subject and its */ \
+	/* overlord by the kind (puppet, protectorate, colonial subject, crown land, dominion) */ \
+	INT(SUBJECT_RELATION_PUPPET, subject_relation_puppet, 10, -200, 200) \
+	INT(SUBJECT_RELATION_PROTECTORATE, subject_relation_protectorate, 25, -200, 200) \
+	INT(SUBJECT_RELATION_COLONIAL, subject_relation_colonial, 10, -200, 200) \
+	INT(SUBJECT_RELATION_CROWN_LAND, subject_relation_crown_land, 15, -200, 200) \
+	INT(SUBJECT_RELATION_DOMINION, subject_relation_dominion, 5, -200, 200) \
+	/* the payments to the overlord, percent of the income of the day (a colonial subject: of the growth of its treasury, the average balance) */ \
+	INT(SUBJECT_TRIBUTE_PUPPET_PCT, subject_tribute_puppet_pct, 5, 0, 100) \
+	INT(SUBJECT_TRIBUTE_PROTECTORATE_PCT, subject_tribute_protectorate_pct, 5, 0, 100) \
+	INT(SUBJECT_TRIBUTE_COLONIAL_PCT, subject_tribute_colonial_pct, 50, 0, 100) \
+	INT(SUBJECT_TRIBUTE_CROWN_LAND_PCT, subject_tribute_crown_land_pct, 15, 0, 100) \
+	INT(SUBJECT_TRIBUTE_DOMINION_PCT, subject_tribute_dominion_pct, 3, 0, 100) \
+	/* the overlord changes the payments of a colonial subject and a crown land by SUBJECT_TRIBUTE_STEP_PCT within these limits */ \
+	INT(SUBJECT_COLONIAL_MIN_PCT, subject_colonial_min_pct, 25, 0, 100) \
+	INT(SUBJECT_COLONIAL_MAX_PCT, subject_colonial_max_pct, 75, 0, 100) \
+	INT(SUBJECT_CROWN_LAND_MIN_PCT, subject_crown_land_min_pct, 5, 0, 100) \
+	INT(SUBJECT_CROWN_LAND_MAX_PCT, subject_crown_land_max_pct, 30, 0, 100) \
+	INT(SUBJECT_TRIBUTE_STEP_PCT, subject_tribute_step_pct, 5, 1, 100) \
+	/* a colonial subject: its RGOs make SUBJECT_COLONIAL_RGO_PCT percent more, its factories SUBJECT_COLONIAL_FACTORY_PCT percent less; */ \
+	/* a colonial subject and a crown land research the technologies their overlord knows SUBJECT_RESEARCH_DISCOUNT_PCT percent cheaper */ \
+	INT(SUBJECT_COLONIAL_RGO_PCT, subject_colonial_rgo_pct, 10, 0, 100) \
+	INT(SUBJECT_COLONIAL_FACTORY_PCT, subject_colonial_factory_pct, 10, 0, 100) \
+	INT(SUBJECT_RESEARCH_DISCOUNT_PCT, subject_research_discount_pct, 25, 0, 100) \
+	/* everybody wants to be sovereign: the relation of a subject with its overlord goes down every month, not under the floor */ \
+	INT(SUBJECT_DISCONTENT_PER_MONTH, subject_discontent_per_month, 1, 0, 100) \
+	INT(SUBJECT_DISCONTENT_FLOOR, subject_discontent_floor, -50, -200, 200) \
+	/* the annexation of a subject (its consent): SUBJECT_ANNEX_MIN_YEARS years a subject, a relation (with the bonus) of SUBJECT_ANNEX_MIN_RELATION */ \
+	INT(SUBJECT_ANNEX_MIN_YEARS, subject_annex_min_years, 10, 0, 1000) \
+	INT(SUBJECT_ANNEX_MIN_RELATION, subject_annex_min_relation, 100, -200, 200) \
+	/* the diplomatic points of the actions of the overlord and the change of the relation they make */ \
+	FIXED(SUBJECT_ANNEX_COST, subject_annex_cost, 5, 0, 1000) \
+	FIXED(SUBJECT_TRIBUTE_CHANGE_COST, subject_tribute_change_cost, 1, 0, 1000) \
+	FIXED(SUBJECT_AUTONOMY_COST, subject_autonomy_cost, 1, 0, 1000) \
+	FIXED(SUBJECT_COERCE_COST, subject_coerce_cost, 1, 0, 1000) \
+	INT(SUBJECT_ANNEX_DECLINE_RELATION, subject_annex_decline_relation, -20, -200, 200) \
+	INT(SUBJECT_RAISE_TRIBUTE_RELATION, subject_raise_tribute_relation, -20, -200, 200) \
+	INT(SUBJECT_LOWER_TRIBUTE_RELATION, subject_lower_tribute_relation, 10, -200, 200) \
+	INT(SUBJECT_AUTONOMY_RELATION, subject_autonomy_relation, 20, -200, 200) \
+	INT(SUBJECT_RELEASE_RELATION, subject_release_relation, 50, -200, 200) \
+	INT(SUBJECT_COERCE_RELATION, subject_coerce_relation, -10, -200, 200) \
+	/* the AI: a puppet or a dominion fights for its independence (a dice of AI_SUBJECT_INDEPENDENCE_CHANCE percent a month) when it is a */ \
+	/* subject for AI_SUBJECT_INDEPENDENCE_MIN_YEARS years, its relation with the overlord is under AI_SUBJECT_INDEPENDENCE_MAX_RELATION and */ \
+	/* its power is at least AI_SUBJECT_INDEPENDENCE_POWER_PCT percent of the power of the overlord (half of it while the overlord fights another */ \
+	/* war); an overlord keeps the relation with its subjects at AI_OVERLORD_KEEP_RELATION (the neighbours up to the annexation), annexes them */ \
+	/* (AI_OVERLORD_ANNEX_CHANCE a month), raises the payments with a deficit and draws them into its wars (AI_OVERLORD_COERCE_CHANCE) */ \
+	INT(AI_SUBJECT_INDEPENDENCE_CHANCE, ai_subject_independence_chance, 10, 0, 100) \
+	INT(AI_SUBJECT_INDEPENDENCE_MIN_YEARS, ai_subject_independence_min_years, 2, 0, 1000) \
+	INT(AI_SUBJECT_INDEPENDENCE_MAX_RELATION, ai_subject_independence_max_relation, 25, -200, 200) \
+	INT(AI_SUBJECT_INDEPENDENCE_POWER_PCT, ai_subject_independence_power_pct, 75, 0, 100000) \
+	INT(AI_OVERLORD_KEEP_RELATION, ai_overlord_keep_relation, 50, -200, 200) \
+	INT(AI_OVERLORD_ANNEX_CHANCE, ai_overlord_annex_chance, 25, 0, 100) \
+	INT(AI_OVERLORD_COERCE_CHANCE, ai_overlord_coerce_chance, 50, 0, 100)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

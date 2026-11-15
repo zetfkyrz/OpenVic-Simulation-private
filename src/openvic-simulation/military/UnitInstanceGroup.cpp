@@ -66,8 +66,8 @@ bool UnitInstanceGroup::can_country_enter(CountryInstance const& country, Provin
 	if (owner == nullptr || owner == &country || controller == &country) {
 		return true;
 	}
-	// (an ally, or a partner of the same military union, version 93)
-	if (country.is_military_partner(*owner) || country.has_military_access_to(*owner)) {
+	// (an ally, or a partner of the same military union, version 93; a subject and its overlord, version 101)
+	if (country.is_military_partner(*owner) || country.has_military_access_to(*owner) || country.overlord == owner || owner->overlord == &country) {
 		return true;
 	}
 	if (country.is_at_war_with(*owner) || (controller != nullptr && country.is_at_war_with(*controller))) {

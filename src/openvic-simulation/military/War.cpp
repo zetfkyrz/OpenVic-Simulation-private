@@ -24,6 +24,7 @@
 #include "openvic-simulation/military/UnitModifiers.hpp"
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
@@ -217,6 +218,16 @@ bool WarManager::can_declare_war(CountryInstance const& attacker, CountryInstanc
 	if (attacker.is_at_war_with(defender) || attacker.is_military_partner(defender)) {
 		return false;
 	}
+	// the subjects (version 101): a puppet fights only for its independence, a protectorate, a colonial subject and a crown land never against
+	// their overlord, an overlord never against its subject
+	if (defender.overlord == &attacker) {
+		return false;
+	}
+	if (attacker.overlord != nullptr) {
+		if (attacker.overlord == &defender ? !Subjects::may_attack_overlord(attacker.subject_type) : !Subjects::has_foreign_policy(attacker.subject_type)) {
+			return false;
+		}
+	}
 	return !has_truce(attacker, defender, today);
 }
 
@@ -269,6 +280,25 @@ bool WarManager::declare_war(
 			war.defenders.push_back(&country);
 		}
 	}
+
+	// the overlords of the two (version 101): an overlord defends its puppets, protectorates, colonial subjects and crown lands, and joins
+	// the wars its colonial subjects and crown lands declare (not when it is allied with the other side)
+	const auto add_overlord = [&war, &instance_manager](CountryInstance& subject, const bool attacker_side) -> void {
+		CountryInstance* const lord = subject.overlord;
+		if (lord == nullptr || !lord->exists() || war.has_participant(*lord)
+			|| !(attacker_side ? Subjects::overlord_joins_attacks(subject.subject_type) : Subjects::overlord_defends(subject.subject_type))) {
+			return;
+		}
+		for (CountryInstance const* enemy : war.get_side(!attacker_side)) {
+			if (lord->is_military_partner(*enemy) || enemy->overlord == lord) {
+				return;
+			}
+		}
+		(attacker_side ? war.attackers : war.defenders).push_back(lord);
+		instance_manager.get_notification_log().add(instance_manager.get_today(), lord, "subject_war_joined", "", &subject);
+	};
+	add_overlord(attacker, true);
+	add_overlord(defender, false);
 
 	// the military unions of the two (version 93)
 	draw_union_members(instance_manager, war, attacker, true, true);
@@ -2334,6 +2364,17 @@ std::string_view WarManager::get_justify_block_reason(CountryInstance const& cou
 	if (country.has_alliance_with(target)) {
 		return "Союзник";
 	}
+	// the subjects (version 101)
+	if (target.overlord == &country) {
+		return "Это наш субъект";
+	}
+	if (country.overlord == &target) {
+		return Subjects::may_attack_overlord(country.subject_type) ? "Повод не нужен: война за независимость"
+			: "Субъект не может воевать со своим сюзереном";
+	}
+	if (country.overlord != nullptr && !Subjects::has_foreign_policy(country.subject_type)) {
+		return "У марионетки нет своей внешней политики";
+	}
 	if (country.shares_sphere_of_kind(target, sphere_kind_t::MILITARY)) {
 		return "Военный союз: войны между членами запрещены";
 	}
@@ -2360,6 +2401,10 @@ bool WarManager::declare_war_as_country(
 	InstanceManager& instance_manager, CountryInstance& attacker, CountryInstance& defender, WarGoal const& goal
 ) {
 	const Date today = instance_manager.get_today();
+	// the war of a subject against its overlord is the war of independence (version 101): no casus belli, no infamy
+	if (attacker.overlord == &defender) {
+		return declare_war(instance_manager, attacker, defender, WarGoal { WarGoal::type_t::INDEPENDENCE, nullptr });
+	}
 	const bool justified = attacker.has_casus_belli_against(defender, today);
 	if (!declare_war(instance_manager, attacker, defender, goal)) {
 		return false;

@@ -6,6 +6,7 @@
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/modifier/ModifierEffectCache.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 
 using namespace OpenVic;
 using CRM = CountryRelationManager;
@@ -476,6 +477,14 @@ relation_value_type CRM::get_effective_relation(CountryInstance const* country, 
 		&& (country->shares_sphere_of_kind(*recipient, sphere_kind_t::IMPERIAL) || country->shares_sphere_of_kind(*recipient, sphere_kind_t::IDEOLOGICAL))) {
 		// two members of an imperial sphere or an ideological union (version 93): +SPHERE_MEMBER_RELATION
 		value += diplomacy_defines->sphere_member_relation;
+	}
+	// a subject and its overlord (version 101): the bonus of the kind
+	if (diplomacy_defines != nullptr && country != nullptr && recipient != nullptr) {
+		if (country->overlord == recipient) {
+			value += Subjects::get_relation_bonus(*diplomacy_defines, country->subject_type);
+		} else if (recipient->overlord == country) {
+			value += Subjects::get_relation_bonus(*diplomacy_defines, recipient->subject_type);
+		}
 	}
 	return static_cast<relation_value_type>(std::clamp(value, -200, 200));
 }

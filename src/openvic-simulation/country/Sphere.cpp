@@ -522,7 +522,8 @@ void SphereManager::daily_update(InstanceManager& instance_manager) {
 		// pay their overlord (the plan of the subjects) will be left out
 		for (CountryInstance* member : sphere.members) {
 			const fixed_point_t income = member->get_income_yesterday();
-			if (income <= fixed_point_t::_0) {
+			// (a subject pays its overlord instead, version 101)
+			if (income <= fixed_point_t::_0 || member->overlord != nullptr) {
 				continue;
 			}
 			const fixed_point_t tribute = std::min(defines.sphere_imperial_tribute.of(income), member->get_cash_stockpile().load());

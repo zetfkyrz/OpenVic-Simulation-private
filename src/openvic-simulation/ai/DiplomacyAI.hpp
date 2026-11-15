@@ -26,6 +26,9 @@ namespace OpenVic {
 			InstanceManager& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance& country,
 			std::vector<CountryInstance*> const& own_neighbours, std::vector<std::vector<CountryInstance*>> const& neighbours
 		);
+		// The subjects of an AI country (version 101): a subject fights for its independence, an overlord annexes, changes the payments and draws
+		// its subjects into its wars; once a month
+		void ai_subjects(InstanceManager& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance& country, Date today);
 		// Whether the AI country giver lets the armies of asker through (version 96): 1 yes, 0 no
 		std::int32_t military_access_acceptance(InstanceManager const& instance_manager, CountryInstance const& asker, CountryInstance const& giver);
 

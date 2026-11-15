@@ -859,6 +859,10 @@ void FactoryInstance::tick(State& state, MarketInstance& market_instance, const 
 	if (const fixed_point_t principle = owner->get_sphere_output_bonus(type_safe::get(production_type->output_good.index)); principle != fixed_point_t::_0) {
 		output *= fixed_point_t::_1 + principle;
 	}
+	// a colonial subject makes fewer factory goods (version 101)
+	if (owner->subject_factory_multiplier != fixed_point_t::_1) {
+		output *= owner->subject_factory_multiplier;
+	}
 	// The men of the poor pops that are mobilised are away from the work (docs/RECRUITMENT.md, "Мобилизация"): 1 when the country is not mobilised
 	if (owner->mobilisation_output_multiplier != fixed_point_t::_1) {
 		output *= owner->mobilisation_output_multiplier;

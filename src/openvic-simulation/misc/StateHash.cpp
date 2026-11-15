@@ -174,6 +174,10 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(country.get_diplomatic_points());
 		// the detected justification and the disarmament (version 100)
 		hasher.add((country.justify_detected ? 1ULL : 0ULL) + (country.is_disarmed() ? 2ULL : 0ULL));
+		// the subject (version 101)
+		hasher.add((country.overlord != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.overlord->index)) + 1 : 0)
+			+ (static_cast<std::uint64_t>(country.subject_type) << 32) + (static_cast<std::uint64_t>(static_cast<std::uint32_t>(country.subject_tribute_pct)) << 40));
+		hasher.add(static_cast<std::uint64_t>((country.subject_since - Date {}).to_int()));
 		// the sphere (version 92)
 		hasher.add((country.get_sphere_owner_untracked() != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.get_sphere_owner_untracked()->index)) + 1 : 0)
 			+ (country.get_leads_sphere() ? 1ULL << 32 : 0));

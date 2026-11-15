@@ -3,6 +3,7 @@
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/economy/BuildingInstance.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 #include "War.hpp"
 
 #include <algorithm>
@@ -272,7 +273,46 @@ fixed_point_t WarManager::get_terms_cost(War const& war, CountryInstance const& 
 	if (terms.remove_cores) {
 		cost += get_peace_defines().remove_cores_cost;
 	}
+	// version 101 (stage D6)
+	if (terms.make_puppet) {
+		cost += get_peace_defines().puppet_cost;
+	}
+	if (terms.independence) {
+		const fixed_point_t independence = get_peace_defines().independence_cost;
+		cost += is_war_goal(war, winners_are_attackers, WarGoal::type_t::INDEPENDENCE) ? independence / divisor : independence;
+	}
 	return cost;
+}
+
+std::string_view WarManager::get_subject_terms_block_reason(War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const {
+	if (!terms.make_puppet && !terms.independence) {
+		return {};
+	}
+	const bool proposer_is_attacker = war.is_attacker(proposer);
+	const bool winners_are_attackers = terms.concede ? !proposer_is_attacker : proposer_is_attacker;
+	if (war.get_side(winners_are_attackers).empty() || war.get_side(!winners_are_attackers).empty()) {
+		return "Война без сторон";
+	}
+	CountryInstance const& winner = *war.get_side(winners_are_attackers).front();
+	CountryInstance const& loser = *war.get_side(!winners_are_attackers).front();
+	if (terms.make_puppet && terms.independence) {
+		return "Нельзя одновременно сделать марионеткой и получить независимость";
+	}
+	if (terms.make_puppet) {
+		if (loser.is_great_power()) {
+			return "Великую державу нельзя сделать марионеткой";
+		}
+		if (loser.overlord != nullptr) {
+			return "Побеждённый уже чей-то субъект";
+		}
+		if (winner.overlord != nullptr) {
+			return "У субъекта не может быть своих субъектов";
+		}
+	}
+	if (terms.independence && winner.overlord != &loser) {
+		return "Независимость — только для субъекта побеждённого";
+	}
+	return {};
 }
 
 bool WarManager::evaluate_offer(
@@ -300,7 +340,11 @@ bool WarManager::evaluate_offer(
 	}
 
 	const bool empty_terms = terms.states.empty() && !terms.reparations && !terms.humiliate && !terms.disarm && !terms.destroy_forts
-		&& !terms.destroy_naval_bases && !terms.remove_cores;
+		&& !terms.destroy_naval_bases && !terms.remove_cores && !terms.make_puppet && !terms.independence;
+	if (std::string_view const subject_reason = get_subject_terms_block_reason(war, *proposer, terms); !subject_reason.empty()) {
+		say(subject_reason);
+		return false;
+	}
 
 	if (terms.concede) {
 		// The proposer is losing and gives up territory: accepted if it is enough of what the winner could take
@@ -372,6 +416,9 @@ void WarManager::apply_peace_terms(
 		SPDLOG_INFO("Peace in war {}: also{}{}{}{}{}{}", war.id, terms.reparations ? " reparations" : "", terms.disarm ? " disarmament" : "",
 			terms.destroy_forts ? " forts" : "", terms.destroy_naval_bases ? " naval bases" : "", terms.remove_cores ? " cores" : "",
 			terms.humiliate ? " humiliation" : "");
+	}
+	if (terms.make_puppet || terms.independence) {
+		SPDLOG_INFO("Peace in war {}:{}{}", war.id, terms.make_puppet ? " puppet" : "", terms.independence ? " independence" : "");
 	}
 
 	std::unordered_set<CountryInstance*> changed_countries;
@@ -451,6 +498,16 @@ void WarManager::apply_peace_terms(
 		winner_leader.add_prestige(get_peace_defines().humiliate_prestige);
 		loser_leader.add_prestige(-get_peace_defines().humiliate_prestige);
 	}
+	// version 101 (stage D6): the subjects
+	if ((terms.make_puppet || terms.independence) && get_subject_terms_block_reason(war, *(terms.concede ? losers.front() : winners.front()),
+		terms).empty()) {
+		if (terms.independence) {
+			Subjects::release(instance_manager, winner_leader);
+			instance_manager.get_notification_log().add(today, &winner_leader, "independence_won", "", &loser_leader);
+		} else {
+			Subjects::make_subject(instance_manager, loser_leader, winner_leader, CountryInstance::subject_type_t::PUPPET);
+		}
+	}
 
 	for (CountryInstance* loser : losers) {
 		loser->set_last_war_loss_date(instance_manager.get_today());
@@ -497,6 +554,9 @@ bool WarManager::send_peace_offer(InstanceManager& instance_manager, CountryInst
 		}
 	}
 
+	if (std::string_view const subject_reason = get_subject_terms_block_reason(*war, proposer, terms); !subject_reason.empty()) {
+		return respond(false, subject_reason);
+	}
 	const fixed_point_t cost = get_terms_cost(*war, proposer, terms);
 	const fixed_point_t available = terms.concede ? war->get_score(!proposer_is_attacker) : war->get_score(proposer_is_attacker);
 	if (cost > available) {
@@ -558,7 +618,8 @@ bool WarManager::answer_peace_offer(
 namespace {
 	// Fills terms with the states that fit in the war score (cheap ones first), at most the share of it
 	PeaceTerms make_greedy_terms(
-		WarManager const& manager, War const& war, CountryInstance const& proposer, const bool concede, const fixed_point_t budget
+		WarManager const& manager, War const& war, CountryInstance const& proposer, const bool concede, const fixed_point_t budget,
+		const bool puppet_wanted = false
 	) {
 		PeaceTerms terms;
 		terms.war_id = war.id;
@@ -572,6 +633,29 @@ namespace {
 		});
 
 		fixed_point_t remaining = budget;
+		// the subjects first (version 101): the independence of a subject that wins (or that its losing overlord gives), a puppet of a small
+		// loser of a great power
+		{
+			OpenVicPeaceDefines const& pd = manager.get_peace_defines();
+			CountryInstance const* const winner = war.get_side(winners_are_attackers).front();
+			CountryInstance const* const loser = war.get_side(!winners_are_attackers).front();
+			if (winner->overlord == loser) {
+				PeaceTerms probe = terms;
+				probe.independence = true;
+				const fixed_point_t cost = manager.get_terms_cost(war, proposer, probe);
+				if (cost <= remaining) {
+					remaining -= cost;
+					terms.independence = true;
+				}
+			} else if (!concede && puppet_wanted && winner->is_great_power() && !loser->is_great_power() && loser->overlord == nullptr
+				&& winner->overlord == nullptr
+				&& static_cast<std::int64_t>(loser->get_owned_provinces().size()) * 100
+					<= static_cast<std::int64_t>(winner->get_owned_provinces().size()) * pd.ai_puppet_size_pct
+				&& fixed_point_t(pd.puppet_cost) <= remaining) {
+				remaining -= pd.puppet_cost;
+				terms.make_puppet = true;
+			}
+		}
 		for (ProvinceInstance const* candidate : candidates) {
 			const fixed_point_t cost = manager.get_state_cost(war, winners_are_attackers, *candidate);
 			if (cost <= remaining) {
@@ -681,8 +765,10 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 			PeaceTerms terms;
 			bool make_offer = false;
 			if (winning) {
-				terms = make_greedy_terms(*this, *war, leader, false, pd.ai_terms_score_share.of(war->get_score(attacker_side)));
-				make_offer = !terms.states.empty();
+				// (a puppet in AI_PUPPET_CHANCE_PCT percent of the wars, by the id of the war)
+				const bool puppet_wanted = static_cast<std::int32_t>((war_id * 2654435761u) % 100u) < pd.ai_puppet_chance_pct;
+				terms = make_greedy_terms(*this, *war, leader, false, pd.ai_terms_score_share.of(war->get_score(attacker_side)), puppet_wanted);
+				make_offer = !terms.states.empty() || terms.make_puppet || terms.independence;
 			} else if (losing) {
 				terms = make_greedy_terms(*this, *war, leader, true, pd.ai_terms_score_share.of(war->get_score(!attacker_side)));
 				make_offer = true; // even an empty list is a request for a white peace

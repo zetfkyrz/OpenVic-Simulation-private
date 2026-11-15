@@ -1223,9 +1223,16 @@ bool CountryInstance::is_primary_or_accepted_culture(Culture const& culture) con
 
 fixed_point_t CountryInstance::calculate_research_cost(Technology const& technology) const {
 	// TODO - what if research bonus is -100%? Divide by 0 -> infinite cost?
-	return technology.cost / (fixed_point_t::_1 + get_modifier_effect_value(
+	fixed_point_t cost = technology.cost / (fixed_point_t::_1 + get_modifier_effect_value(
 		*modifier_effect_cache.get_research_bonus_effects(technology.area.folder)
 	));
+	// a colonial subject and a crown land: cheaper what the overlord knows (version 101)
+	if (overlord != nullptr && subject_research_discount_pct > 0
+		&& (subject_type == subject_type_t::COLONIAL || subject_type == subject_type_t::CROWN_LAND)
+		&& overlord->is_technology_unlocked(technology)) {
+		cost = cost * (100 - subject_research_discount_pct) / 100;
+	}
+	return cost;
 }
 
 bool CountryInstance::can_research_tech(Technology const& technology, const Date today) const {

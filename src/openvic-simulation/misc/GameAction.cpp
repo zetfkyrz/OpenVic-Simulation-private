@@ -1473,6 +1473,13 @@ bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t 
 	case 8:
 		draft.remove_cores = enabled;
 		return true;
+	// version 101 (stage D6)
+	case 9:
+		draft.make_puppet = enabled;
+		return true;
+	case 10:
+		draft.independence = enabled;
+		return true;
 	}
 	return false;
 }

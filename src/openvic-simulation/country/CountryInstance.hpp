@@ -736,6 +736,25 @@ namespace OpenVic {
 			disarmed = new_disarmed;
 		}
 		memory::vector<std::pair<CountryInstance*, Date>> casus_belli;
+		// The subjects (version 101, stage D6, diplomacy/Subjects.hpp): the overlord of the country (nullptr: independent), the kind, the
+		// payments (percent of the income; a colonial subject: of the growth of its treasury), since when, the multipliers of the output of its
+		// RGOs and factories (a colonial subject: more raw goods, fewer factory goods) and the payment of yesterday (the interface)
+		enum class subject_type_t : std::uint8_t { NONE, PUPPET, PROTECTORATE, COLONIAL, CROWN_LAND, DOMINION };
+		CountryInstance* overlord = nullptr;
+		subject_type_t subject_type = subject_type_t::NONE;
+		std::int32_t subject_tribute_pct = 0;
+		Date subject_since;
+		fixed_point_t subject_rgo_multiplier = fixed_point_t::_1;
+		fixed_point_t subject_factory_multiplier = fixed_point_t::_1;
+		fixed_point_t subject_tribute_yesterday;
+		// a colonial subject and a crown land research what the overlord knows this percent cheaper (SUBJECT_RESEARCH_DISCOUNT_PCT)
+		static inline std::int32_t subject_research_discount_pct = 0;
+		[[nodiscard]] bool is_subject() const {
+			return overlord != nullptr;
+		}
+		[[nodiscard]] bool is_puppet() const {
+			return overlord != nullptr && subject_type == subject_type_t::PUPPET;
+		}
 		// More infamy than this (BADBOY_LIMIT of defines.lua, version 98): everybody has a casus belli against the country
 		static inline fixed_point_t infamy_casus_belli_limit = fixed_point_t::_0;
 		[[nodiscard]] bool is_infamous() const {
