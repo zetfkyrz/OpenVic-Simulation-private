@@ -455,6 +455,23 @@ bool GameActionManager::VariantVisitor::operator() (give_war_subsidies_argument_
 	return index.has_value() && actions.execute_diplomatic_action(*index, &sender, &receiver, {}, instance_manager);
 }
 
+// A goal added to a war that goes on (version 100, stage D5): 1 a state (the province), 2 humiliation, 3 reparations
+bool GameActionManager::VariantVisitor::operator() (add_war_goal_argument_t const& argument) const {
+	const auto [country_index, war_id, type, province_index] = argument;
+	if (type < 1 || type > 3) {
+		return false;
+	}
+	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	WarGoal goal { static_cast<WarGoal::type_t>(type), nullptr };
+	if (goal.type == WarGoal::type_t::CONQUER_STATE) {
+		goal.state_province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+		if (goal.state_province == nullptr) {
+			return false;
+		}
+	}
+	return instance_manager.get_war_manager().add_war_goal(instance_manager, war_id, country, goal);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
@@ -1442,6 +1459,19 @@ bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t 
 		return true;
 	case 4:
 		manager.clear_peace_draft(country);
+		return true;
+	// version 100 (stage D5)
+	case 5:
+		draft.disarm = enabled;
+		return true;
+	case 6:
+		draft.destroy_forts = enabled;
+		return true;
+	case 7:
+		draft.destroy_naval_bases = enabled;
+		return true;
+	case 8:
+		draft.remove_cores = enabled;
 		return true;
 	}
 	return false;

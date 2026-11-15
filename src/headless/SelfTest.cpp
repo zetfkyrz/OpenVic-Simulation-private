@@ -6800,6 +6800,94 @@ namespace {
 		r.check(!before && after, "diplomacy D3: more infamy than BADBOY_LIMIT gives everybody a casus belli against the country");
 	}
 
+	// Stage D5 (version 100): a goal added in a war, the terms of Vic2 that were missing (disarmament, forts, reparations for years)
+	void test_diplomacy_d5(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		WarManager& war_manager = im.get_war_manager();
+		const auto free_country = [&](CountryInstance const& country) -> bool {
+			return country.exists() && !country.is_rebel_country() && !country.is_at_war() && !country.get_owned_provinces().empty()
+				&& relations.get_alliance_count(&country) == 0 && country.get_sphere_owner_untracked() == nullptr && !country.get_leads_sphere();
+		};
+		CountryInstance* attacker = nullptr;
+		CountryInstance* defender = nullptr;
+		for (CountryInstance& a : countries.get_country_instances()) {
+			if (attacker != nullptr) {
+				break;
+			}
+			if (!free_country(a)) {
+				continue;
+			}
+			for (CountryInstance& d : countries.get_country_instances()) {
+				if (&d != &a && free_country(d) && d.get_owned_provinces().size() >= 2 && war_manager.can_declare_war(a, d, im.get_today())) {
+					attacker = &a;
+					defender = &d;
+					break;
+				}
+			}
+		}
+		if (attacker == nullptr || !war_manager.declare_war(im, *attacker, *defender)) {
+			fmt::println("TEST INFO diplomacy D5: no two free countries, not checked");
+			return;
+		}
+		War* war = war_manager.find_war_between(*attacker, *defender);
+		if (war == nullptr) {
+			return;
+		}
+		const std::uint32_t war_id = war->id;
+		attacker->casus_belli.clear();
+		attacker->set_diplomatic_points(fixed_point_t(5));
+		const fixed_point_t infamy = attacker->get_infamy_untracked();
+		const bool added = war_manager.add_war_goal(im, war_id, *attacker, WarGoal { WarGoal::type_t::HUMILIATE, nullptr });
+		war = war_manager.find_war_between(*attacker, *defender);
+		PeaceTerms humiliate;
+		humiliate.war_id = war_id;
+		humiliate.humiliate = true;
+		const std::int32_t divisor = std::max(1, war_manager.get_peace_defines().war_goal_cost_divisor);
+		r.check(added && WarManager::is_war_goal(*war, true, WarGoal::type_t::HUMILIATE) && attacker->get_diplomatic_points() == fixed_point_t(4)
+				&& attacker->get_infamy_untracked() > infamy
+				&& war_manager.get_terms_cost(*war, *attacker, humiliate) == fixed_point_t(war_manager.get_peace_defines().humiliate_cost) / divisor
+				&& !war_manager.add_war_goal(im, war_id, *attacker, WarGoal { WarGoal::type_t::HUMILIATE, nullptr }),
+			"diplomacy D5: a goal added in the war costs a diplomatic point, infamy without a casus belli, halves its price, not twice");
+
+		// a fort of the defender, the terms: disarmament, the forts, reparations for years
+		BuildingInstance* fort = nullptr;
+		for (ProvinceInstance* province : defender->get_owned_provinces()) {
+			for (BuildingInstance& building : province->get_mutable_buildings()) {
+				if (building.building_type.get_identifier() == "fort") {
+					fort = &building;
+				}
+			}
+			if (fort != nullptr) {
+				break;
+			}
+		}
+		if (fort != nullptr) {
+			fort->set_level(building_level_t { 1 });
+		}
+		PeaceTerms terms;
+		terms.war_id = war_id;
+		terms.disarm = true;
+		terms.destroy_forts = true;
+		terms.reparations = true;
+		war_manager.apply_peace_terms_now(im, *war, true, terms);
+		bool paying = false;
+		for (WarManager::reparation_t const& entry : war_manager.reparations) {
+			paying = paying || (entry.payer == defender && entry.receiver == attacker && entry.until > im.get_today());
+		}
+		const fixed_point_t defender_cash = defender->get_cash_stockpile().load();
+		const fixed_point_t attacker_cash = attacker->get_cash_stockpile().load();
+		war_manager.update_reparations(im);
+		const fixed_point_t paid = attacker->get_cash_stockpile().load() - attacker_cash;
+		r.check(defender->is_disarmed() && defender->disarmed_until > im.get_today() && (fort == nullptr || fort->get_level() == building_level_t { 0 })
+				&& paying && paid == defender_cash - defender->get_cash_stockpile().load(),
+			"diplomacy D5: the peace disarms the loser, destroys its forts and makes it pay reparations for years (a share of its income a day)",
+			fmt::format("fort {}, reparations paid {}", fort != nullptr, paid));
+		war_manager.end_war(im, war_id);
+		defender->set_disarmed(false);
+		std::erase_if(war_manager.reparations, [defender](WarManager::reparation_t const& entry) -> bool { return entry.payer == defender; });
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -8877,6 +8965,7 @@ namespace {
 		test_diplomacy_d1(r, *im);
 		test_diplomacy_d2(r, *im);
 		test_diplomacy_d3(r, *im);
+		test_diplomacy_d5(r, *im);
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

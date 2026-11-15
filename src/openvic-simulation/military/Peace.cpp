@@ -1,3 +1,8 @@
+#include "openvic-simulation/DefinitionManager.hpp"
+#include "openvic-simulation/defines/DiplomacyDefines.hpp"
+#include "openvic-simulation/economy/BuildingType.hpp"
+#include "openvic-simulation/economy/BuildingInstance.hpp"
+#include "openvic-simulation/misc/NotificationLog.hpp"
 #include "War.hpp"
 
 #include <algorithm>
@@ -37,6 +42,102 @@ namespace {
 
 	std::uint64_t offer_key(const std::uint32_t war_id, CountryInstance const* country) {
 		return (static_cast<std::uint64_t>(war_id) << 32) ^ static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(country) >> 4);
+	}
+}
+
+bool WarManager::is_war_goal(War const& war, const bool attackers, const WarGoal::type_t type, ProvinceInstance const* const state_province) {
+	const auto matches = [type, state_province](WarGoal const& goal) -> bool {
+		if (goal.type != type) {
+			return false;
+		}
+		if (type != WarGoal::type_t::CONQUER_STATE) {
+			return true;
+		}
+		return state_province != nullptr && goal.state_province != nullptr && same_state(*goal.state_province, *state_province);
+	};
+	if (attackers && matches(war.goal)) {
+		return true;
+	}
+	for (WarGoalEntry const& entry : war.extra_goals) {
+		if (entry.attackers == attackers && matches(entry.goal)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+memory::string WarManager::get_add_war_goal_block_reason(
+	InstanceManager const& instance_manager, War const& war, CountryInstance const& country, WarGoal const& goal
+) const {
+	if (!war.has_participant(country)) {
+		return "Мы не участвуем в этой войне";
+	}
+	const bool attackers = war.is_attacker(country);
+	if (war.get_side(attackers).empty() || war.get_side(attackers).front() != &country) {
+		return "Цели добавляет только лидер стороны";
+	}
+	if (goal.type == WarGoal::type_t::NONE) {
+		return "Нет такой цели";
+	}
+	if (goal.type == WarGoal::type_t::CONQUER_STATE) {
+		if (goal.state_province == nullptr || goal.state_province->get_owner() == nullptr
+			|| !war.has_participant(*goal.state_province->get_owner()) || war.is_attacker(*goal.state_province->get_owner()) == attackers) {
+			return "Область должна принадлежать врагу в этой войне";
+		}
+	}
+	if (is_war_goal(war, attackers, goal.type, goal.state_province)) {
+		return "Это уже цель войны";
+	}
+	const fixed_point_t cost = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_addwargoal_diplomatic_cost();
+	if (country.get_diplomatic_points() < cost) {
+		return "Не хватает очков дипломатии";
+	}
+	return {};
+}
+
+bool WarManager::add_war_goal(InstanceManager& instance_manager, const std::uint32_t war_id, CountryInstance& country, WarGoal const& goal) {
+	War* const war = find_war(war_id);
+	if (war == nullptr || !get_add_war_goal_block_reason(instance_manager, *war, country, goal).empty()) {
+		return false;
+	}
+	DiplomacyDefines const& dd = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines();
+	const bool attackers = war->is_attacker(country);
+	CountryInstance* const enemy = war->get_side(!attackers).empty() ? nullptr : war->get_side(!attackers).front();
+	country.set_diplomatic_points(country.get_diplomatic_points() - dd.get_addwargoal_diplomatic_cost());
+	// a goal without a casus belli against the enemy leader costs infamy
+	if (enemy == nullptr || !country.has_casus_belli_against(*enemy, instance_manager.get_today())) {
+		country.change_infamy(dd.get_add_unjustified_goal_badboy());
+	}
+	war->extra_goals.push_back({ attackers, goal });
+	if (enemy != nullptr) {
+		instance_manager.get_notification_log().add(instance_manager.get_today(), enemy, "war_goal_added", "", &country);
+	}
+	return true;
+}
+
+void WarManager::update_reparations(InstanceManager& instance_manager) {
+	const Date today = instance_manager.get_today();
+	if (!reparations.empty()) {
+		const fixed_point_t share = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_reparations_tax_hit();
+		std::erase_if(reparations, [today](reparation_t const& entry) -> bool {
+			return today >= entry.until || !entry.payer->exists() || !entry.receiver->exists();
+		});
+		for (reparation_t const& entry : reparations) {
+			const fixed_point_t amount = std::min(
+				share * std::max(entry.payer->get_income_yesterday(), fixed_point_t::_0), entry.payer->get_cash_stockpile().load()
+			);
+			if (amount > fixed_point_t::_0) {
+				entry.payer->spend_cash(amount);
+				entry.receiver->add_cash(amount);
+			}
+		}
+	}
+	if (today.is_month_start()) {
+		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+			if (country.is_disarmed() && today >= country.disarmed_until) {
+				country.set_disarmed(false);
+			}
+		}
 	}
 }
 
@@ -93,9 +194,8 @@ fixed_point_t WarManager::get_state_cost(
 		cost = fixed_point_t::_1;
 	}
 
-	// The war goal of the attacker costs half
-	if (winners_are_attackers && war.goal.type == WarGoal::type_t::CONQUER_STATE && war.goal.state_province != nullptr
-		&& same_state(*war.goal.state_province, state_province)) {
+	// A war goal of the winners costs half (the goal of the declaration and the goals added in the war, version 100)
+	if (is_war_goal(war, winners_are_attackers, WarGoal::type_t::CONQUER_STATE, &state_province)) {
 		cost /= get_peace_defines().war_goal_cost_divisor;
 	}
 	return cost;
@@ -150,11 +250,27 @@ fixed_point_t WarManager::get_terms_cost(War const& war, CountryInstance const& 
 	for (ProvinceInstance const* state_province : terms.states) {
 		cost += get_state_cost(war, winners_are_attackers, *state_province);
 	}
+	const std::int32_t divisor = std::max(1, get_peace_defines().war_goal_cost_divisor);
 	if (terms.reparations) {
-		cost += get_peace_defines().reparations_cost;
+		const fixed_point_t reparations = get_peace_defines().reparations_cost;
+		cost += is_war_goal(war, winners_are_attackers, WarGoal::type_t::REPARATIONS) ? reparations / divisor : reparations;
 	}
 	if (terms.humiliate) {
-		cost += get_peace_defines().humiliate_cost;
+		const fixed_point_t humiliate = get_peace_defines().humiliate_cost;
+		cost += is_war_goal(war, winners_are_attackers, WarGoal::type_t::HUMILIATE) ? humiliate / divisor : humiliate;
+	}
+	// version 100 (stage D5)
+	if (terms.disarm) {
+		cost += get_peace_defines().disarm_cost;
+	}
+	if (terms.destroy_forts) {
+		cost += get_peace_defines().destroy_forts_cost;
+	}
+	if (terms.destroy_naval_bases) {
+		cost += get_peace_defines().destroy_naval_bases_cost;
+	}
+	if (terms.remove_cores) {
+		cost += get_peace_defines().remove_cores_cost;
 	}
 	return cost;
 }
@@ -183,7 +299,8 @@ bool WarManager::evaluate_offer(
 		tiredness = receiver->get_war_exhaustion() / receiver->get_war_exhaustion_max();
 	}
 
-	const bool empty_terms = terms.states.empty() && !terms.reparations && !terms.humiliate;
+	const bool empty_terms = terms.states.empty() && !terms.reparations && !terms.humiliate && !terms.disarm && !terms.destroy_forts
+		&& !terms.destroy_naval_bases && !terms.remove_cores;
 
 	if (terms.concede) {
 		// The proposer is losing and gives up territory: accepted if it is enough of what the winner could take
@@ -251,6 +368,11 @@ void WarManager::apply_peace_terms(
 	SPDLOG_INFO("Peace in war {}: {} wins against {}, {} states, attackers {:.1f} defenders {:.1f}{}", war.id, winners.front()->get_identifier(),
 		losers.front()->get_identifier(), terms.states.size(), static_cast<double>(war.attacker_score), static_cast<double>(war.defender_score),
 		terms.states.empty() ? " (white peace)" : "");
+	if (terms.reparations || terms.disarm || terms.destroy_forts || terms.destroy_naval_bases || terms.remove_cores || terms.humiliate) {
+		SPDLOG_INFO("Peace in war {}: also{}{}{}{}{}{}", war.id, terms.reparations ? " reparations" : "", terms.disarm ? " disarmament" : "",
+			terms.destroy_forts ? " forts" : "", terms.destroy_naval_bases ? " naval bases" : "", terms.remove_cores ? " cores" : "",
+			terms.humiliate ? " humiliation" : "");
+	}
 
 	std::unordered_set<CountryInstance*> changed_countries;
 	for (ProvinceInstance const* state_province : terms.states) {
@@ -291,12 +413,38 @@ void WarManager::apply_peace_terms(
 	CountryInstance& winner_leader = *winners.front();
 	CountryInstance& loser_leader = *losers.front();
 
+	const Date today = instance_manager.get_today();
 	if (terms.reparations) {
-		// A quarter of the treasury of the leader of the losers
-		const fixed_point_t amount = get_peace_defines().reparations_share.of(loser_leader.get_cash_stockpile().load());
-		if (amount > fixed_point_t::_0) {
-			loser_leader.spend_cash(amount);
-			winner_leader.add_cash(amount);
+		// As in Vic2 (version 100): REPARATIONS_TAX_HIT of the income of the leader of the losers every day for REPARATIONS_YEARS years
+		reparations.push_back({ &loser_leader, &winner_leader, today + Timespan::from_years(get_peace_defines().reparations_years) });
+	}
+	if (terms.disarm) {
+		// no recruitment and the static modifier "disarming" for DISARM_YEARS years
+		loser_leader.set_disarmed(true);
+		loser_leader.disarmed_until = today + Timespan::from_years(get_peace_defines().disarm_years);
+	}
+	if (terms.destroy_forts || terms.destroy_naval_bases) {
+		for (CountryInstance* loser : losers) {
+			for (ProvinceInstance* province : loser->get_owned_provinces()) {
+				for (BuildingInstance& building : province->get_mutable_buildings()) {
+					std::string_view const identifier = building.building_type.get_identifier();
+					if ((terms.destroy_forts && identifier == "fort") || (terms.destroy_naval_bases && identifier == "naval_base")) {
+						building.set_level(building_level_t { 0 });
+					}
+				}
+			}
+		}
+	}
+	if (terms.remove_cores) {
+		// the cores of the losers on the land of the winners
+		for (CountryInstance* winner : winners) {
+			for (ProvinceInstance* province : winner->get_owned_provinces()) {
+				for (CountryInstance* loser : losers) {
+					if (province->get_cores().contains(loser)) {
+						province->remove_core(*loser, false);
+					}
+				}
+			}
 		}
 	}
 	if (terms.humiliate) {
@@ -431,6 +579,25 @@ namespace {
 				terms.states.push_back(candidate);
 			}
 		}
+		// What is left of the budget of a winner (version 100): the reparations, the forts and the disarmament of the loser, in this order
+		if (!concede) {
+			OpenVicPeaceDefines const& pd = manager.get_peace_defines();
+			const std::int32_t divisor = std::max(1, pd.war_goal_cost_divisor);
+			const fixed_point_t reparations = WarManager::is_war_goal(war, winners_are_attackers, WarGoal::type_t::REPARATIONS)
+				? fixed_point_t(pd.reparations_cost) / divisor : fixed_point_t(pd.reparations_cost);
+			if (reparations <= remaining) {
+				remaining -= reparations;
+				terms.reparations = true;
+			}
+			if (fixed_point_t(pd.destroy_forts_cost) <= remaining) {
+				remaining -= pd.destroy_forts_cost;
+				terms.destroy_forts = true;
+			}
+			if (fixed_point_t(pd.disarm_cost) <= remaining) {
+				remaining -= pd.disarm_cost;
+				terms.disarm = true;
+			}
+		}
 		return terms;
 	}
 }
@@ -488,6 +655,29 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 
 			const bool winning = attacker_side ? attackers_lead : defenders_lead;
 			const bool losing = attacker_side ? defenders_lead : attackers_lead;
+			// A winning AI adds a state of the enemy it holds to its goals (version 100): not more than AI_MAX_ADDED_GOALS, and without a
+			// casus belli only while the infamy stays below the limit
+			if (winning) {
+				std::size_t added = 0;
+				for (WarGoalEntry const& entry : war->extra_goals) {
+					added += entry.attackers == attacker_side ? 1 : 0;
+				}
+				if (added < 3) {
+					for (ProvinceInstance const* candidate : get_peace_candidates(*war, leader, false)) {
+						if (candidate->get_controller() != &leader || is_war_goal(*war, attacker_side, WarGoal::type_t::CONQUER_STATE, candidate)) {
+							continue;
+						}
+						const bool justified = leader.has_casus_belli_against(other_leader, today);
+						const fixed_point_t infamy_after = leader.get_infamy_untracked()
+							+ instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_add_unjustified_goal_badboy();
+						if (justified || CountryInstance::infamy_casus_belli_limit <= fixed_point_t::_0
+							|| infamy_after <= CountryInstance::infamy_casus_belli_limit) {
+							add_war_goal(instance_manager, war_id, leader, WarGoal { WarGoal::type_t::CONQUER_STATE, candidate });
+						}
+						break;
+					}
+				}
+			}
 			PeaceTerms terms;
 			bool make_offer = false;
 			if (winning) {

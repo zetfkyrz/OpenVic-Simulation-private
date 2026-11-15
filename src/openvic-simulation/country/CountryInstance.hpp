@@ -728,6 +728,13 @@ namespace OpenVic {
 		// belli the country has: the target and the last day it is valid
 		CountryInstance* justify_target = nullptr;
 		std::int32_t justify_days_left = 0;
+		// the target found out about the justification (version 100: once a justification, ON_CB_DETECTED_RELATION_CHANGE)
+		bool justify_detected = false;
+		// disarmed by a peace until this date (version 100)
+		Date disarmed_until;
+		void set_disarmed(const bool new_disarmed) {
+			disarmed = new_disarmed;
+		}
 		memory::vector<std::pair<CountryInstance*, Date>> casus_belli;
 		// More infamy than this (BADBOY_LIMIT of defines.lua, version 98): everybody has a casus belli against the country
 		static inline fixed_point_t infamy_casus_belli_limit = fixed_point_t::_0;

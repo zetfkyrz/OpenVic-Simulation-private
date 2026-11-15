@@ -704,6 +704,16 @@ namespace OpenVic {
 	INT(HUMILIATE_COST, humiliate_cost, 8, 0, 10000) \
 	RATE(REPARATIONS_SHARE, reparations_share, Rate(25, 100), 0, 1) \
 	INT(HUMILIATE_PRESTIGE, humiliate_prestige, 5, 0, 10000) \
+	/* Stage D5 (version 100): the terms of Vic2 that were missing, their price in war score: disarmament (no recruitment, the static */ \
+	/* modifier "disarming", DISARM_YEARS years), the forts and the naval bases of the loser destroyed, the cores of the loser on the land of */ \
+	/* the winners removed. The reparations are paid as in Vic2: REPARATIONS_TAX_HIT of defines.lua of the income of the loser every day for */ \
+	/* REPARATIONS_YEARS years (before: REPARATIONS_SHARE of its treasury at once) */ \
+	INT(DISARM_COST, disarm_cost, 15, 0, 10000) \
+	INT(DESTROY_FORTS_COST, destroy_forts_cost, 5, 0, 10000) \
+	INT(DESTROY_NAVAL_BASES_COST, destroy_naval_bases_cost, 5, 0, 10000) \
+	INT(REMOVE_CORES_COST, remove_cores_cost, 5, 0, 10000) \
+	INT(DISARM_YEARS, disarm_years, 5, 0, 100) \
+	INT(REPARATIONS_YEARS, reparations_years, 5, 0, 100) \
 	INT(WAR_GOAL_COST_DIVISOR, war_goal_cost_divisor, 2, 1, 1000) \
 	INT(WHITE_PEACE_SCORE_GAP, white_peace_score_gap, 15, 0, 10000) \
 	INT(WHITE_PEACE_WAR_DAYS, white_peace_war_days, 1095, 0, 36500) \

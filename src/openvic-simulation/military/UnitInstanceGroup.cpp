@@ -1852,6 +1852,9 @@ namespace {
 std::string UnitInstanceManager::get_division_recruitment_block_reason(
 	CountryInstance const& country, UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template, ProvinceInstance const& province
 ) const {
+	if (country.is_disarmed()) {
+		return "Страна разоружена по условиям мира: набор запрещён";
+	}
 	if (province.get_owner() != &country || province.get_controller() != &country) {
 		return "Набор возможен только в своей, не оккупированной провинции";
 	}
@@ -1993,6 +1996,9 @@ int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country
 std::string_view UnitInstanceManager::get_recruitment_block_reason(
 	CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
 ) const {
+	if (country.is_disarmed()) {
+		return "Страна разоружена по условиям мира: набор запрещён";
+	}
 	if (!country.is_unit_type_unlocked(regiment_type)) {
 		return "Тип полка ещё не открыт";
 	}

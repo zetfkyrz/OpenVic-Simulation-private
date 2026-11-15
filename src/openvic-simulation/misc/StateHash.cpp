@@ -172,6 +172,8 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(country.get_mobilisation_level()) + 0x6d6f62ULL);
 		// the diplomatic points (version 90)
 		hasher.add(country.get_diplomatic_points());
+		// the detected justification and the disarmament (version 100)
+		hasher.add((country.justify_detected ? 1ULL : 0ULL) + (country.is_disarmed() ? 2ULL : 0ULL));
 		// the sphere (version 92)
 		hasher.add((country.get_sphere_owner_untracked() != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.get_sphere_owner_untracked()->index)) + 1 : 0)
 			+ (country.get_leads_sphere() ? 1ULL << 32 : 0));
@@ -323,6 +325,16 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	hasher.add(instance_manager.get_war_manager().get_wars().size());
 	for (War const& war : instance_manager.get_war_manager().get_wars()) {
 		hasher.add(static_cast<std::uint64_t>(war.id) * 1000 + war.attackers.size() * 31 + war.defenders.size());
+		// the goals added in the war (version 100)
+		for (WarGoalEntry const& entry : war.extra_goals) {
+			hasher.add(static_cast<std::uint64_t>(entry.goal.type) + (entry.attackers ? 16 : 0)
+				+ (entry.goal.state_province != nullptr ? static_cast<std::uint64_t>(type_safe::get(entry.goal.state_province->index)) << 8 : 0));
+		}
+	}
+	// the reparations paid for years (version 100)
+	for (WarManager::reparation_t const& entry : instance_manager.get_war_manager().reparations) {
+		hasher.add(static_cast<std::uint64_t>(type_safe::get(entry.payer->index)) + (static_cast<std::uint64_t>(type_safe::get(entry.receiver->index)) << 32));
+		hasher.add_signed((entry.until - Date {}).to_int());
 	}
 	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
 		hasher.add(static_cast<std::uint64_t>(front.id));

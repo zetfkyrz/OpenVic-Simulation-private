@@ -31,6 +31,12 @@ namespace OpenVic {
 		ProvinceInstance const* state_province = nullptr;
 	};
 
+	// A goal added to a war that goes on (version 100, stage D5): for the attackers or the defenders
+	struct WarGoalEntry {
+		bool attackers = true;
+		WarGoal goal;
+	};
+
 	// Terms of a peace, built by a country before the offer is sent
 	struct PeaceTerms {
 		std::uint32_t war_id = 0;
@@ -39,6 +45,11 @@ namespace OpenVic {
 		memory::vector<ProvinceInstance const*> states; // one province of each state
 		bool reparations = false;
 		bool humiliate = false;
+		// version 100 (stage D5): the terms of Vic2 that were missing
+		bool disarm = false;
+		bool destroy_forts = false;
+		bool destroy_naval_bases = false;
+		bool remove_cores = false;
 	};
 
 	// The answer to the last offer of a country, shown in the peace window
@@ -73,6 +84,7 @@ namespace OpenVic {
 		fixed_point_t attacker_score;
 		fixed_point_t defender_score;
 		WarGoal goal; // of the attacker
+		memory::vector<WarGoalEntry> extra_goals; // the goals added while the war goes on (version 100)
 
 		bool is_attacker(CountryInstance const& country) const;
 		bool is_defender(CountryInstance const& country) const;
@@ -385,6 +397,30 @@ namespace OpenVic {
 		void update_raids(InstanceManager& instance_manager);
 		// The justifications of the day, the casus belli that expire, the monthly change of the infamy (badboy of the modifiers)
 		void update_justifications(InstanceManager& instance_manager);
+	public:
+		// Version 100 (stage D5 of docs/PLAN_DIPLOMACY_VIC2.md): the goals added to a war, the reparations paid for years
+		static bool is_war_goal(War const& war, bool attackers, WarGoal::type_t type, ProvinceInstance const* state_province = nullptr);
+		// Why the country cannot add the goal now (empty: it can): the leader of a side, a goal of the right kind, not twice, the diplomatic
+		// points of ADDWARGOAL_DIPLOMATIC_COST
+		memory::string get_add_war_goal_block_reason(
+			InstanceManager const& instance_manager, War const& war, CountryInstance const& country, WarGoal const& goal
+		) const;
+		// The goal is added (ADDWARGOAL_DIPLOMATIC_COST points; without a casus belli against the enemy leader ADD_UNJUSTIFIED_GOAL_BADBOY of infamy)
+		bool add_war_goal(InstanceManager& instance_manager, std::uint32_t war_id, CountryInstance& country, WarGoal const& goal);
+		struct reparation_t {
+			CountryInstance* payer = nullptr;
+			CountryInstance* receiver = nullptr;
+			Date until;
+		};
+		memory::vector<reparation_t> reparations;
+		// Every day: the reparations are paid (REPARATIONS_TAX_HIT of the income of the payer), the disarmaments end
+		void update_reparations(InstanceManager& instance_manager);
+		// The terms applied as if the peace was signed (for the self-tests)
+		void apply_peace_terms_now(InstanceManager& instance_manager, War const& war, bool proposer_is_attacker, PeaceTerms const& terms) {
+			apply_peace_terms(instance_manager, war, proposer_is_attacker, terms);
+		}
+
+	private:
 		void update_army_recovery(InstanceManager& instance_manager);
 		void update_attrition(InstanceManager& instance_manager);
 		void update_naval_combat(InstanceManager& instance_manager);

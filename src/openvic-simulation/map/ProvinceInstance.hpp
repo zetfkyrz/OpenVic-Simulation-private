@@ -129,6 +129,10 @@ namespace OpenVic {
 		constexpr TypedSpan<province_building_index_t, const BuildingInstance> get_buildings() const {
 			return buildings;
 		}
+		// (the peace that destroys the forts and the naval bases, version 100)
+		TypedSpan<province_building_index_t, BuildingInstance> get_mutable_buildings() {
+			return buildings;
+		}
 	private:
 		memory::vector<std::reference_wrapper<ArmyInstance>> SPAN_PROPERTY(armies);
 		memory::vector<std::reference_wrapper<NavyInstance>> SPAN_PROPERTY(navies);

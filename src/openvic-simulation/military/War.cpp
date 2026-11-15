@@ -2352,6 +2352,7 @@ bool WarManager::start_justification(CountryInstance& country, CountryInstance& 
 	}
 	country.justify_target = &target;
 	country.justify_days_left = get_war_defines().justify_war_days;
+	country.justify_detected = false;
 	return true;
 }
 
@@ -2384,6 +2385,24 @@ void WarManager::update_justifications(InstanceManager& instance_manager) {
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		if (country.justify_target != nullptr) {
 			CountryInstance& target = *country.justify_target;
+			// The preparation may be found out (version 100, stage D5): CB_DETECTION_CHANCE_BASE out of 1000 a day, once; the target likes
+			// the country ON_CB_DETECTED_RELATION_CHANGE less and both are told
+			if (!country.justify_detected && target.exists()) {
+				DiplomacyDefines const& dd = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines();
+				std::uint64_t x = (static_cast<std::uint64_t>(type_safe::get(country.index)) + 1) * 0x9E3779B97F4A7C15ULL;
+				x ^= static_cast<std::uint64_t>((today - Date {}).to_int()) * 0xBF58476D1CE4E5B9ULL;
+				x ^= x >> 31;
+				x *= 0x94D049BB133111EBULL;
+				x ^= x >> 29;
+				if (static_cast<std::int64_t>(x % 1000) < dd.get_cb_detection_chance_base().floor<std::int64_t>()) {
+					country.justify_detected = true;
+					instance_manager.get_country_relation_manager().change_relation(
+						&country, &target, dd.get_on_cb_detected_relation_change().round<std::int32_t>()
+					);
+					instance_manager.get_notification_log().add(today, &target, "casus_belli_detected", "", &country);
+					instance_manager.get_notification_log().add(today, &country, "our_casus_belli_detected", "", &target);
+				}
+			}
 			if (!target.exists() || country.is_military_partner(target) || country.is_at_war_with(target)) {
 				country.justify_target = nullptr;
 				country.justify_days_left = 0;
@@ -2913,6 +2932,7 @@ void WarManager::tick(InstanceManager& instance_manager) {
 	{
 		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "justifications");
 		update_justifications(instance_manager);
+		update_reparations(instance_manager);
 	}
 	{
 		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "leaders");
