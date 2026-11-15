@@ -1,5 +1,8 @@
 #include "PopDynamics.hpp"
 
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
+#include "openvic-simulation/utility/ThreadPool.hpp"
+
 #include <optional>
 #include <algorithm>
 #include <unordered_map>
@@ -136,26 +139,86 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	PopType const* const clerks = pop_manager.get_pop_type_by_identifier("clerks");
 	PopType const* const slaves = pop_manager.get_pop_type_by_identifier("slaves");
 	PopsDefines const& pops_defines = instance_manager.definition_manager.get_define_manager().get_pops_defines();
+	TickProfiler& profiler = instance_manager.get_tick_profiler();
+	// the parts of the month in the profiler (F12)
+	std::optional<TickProfiler::Scope> section;
+	section.emplace(profiler.scope("bureaucrats, officers"));
 	// The free jobs of the RGOs the hungry artisans of this month took (by province)
 	std::unordered_map<ProvinceInstance const*, std::int32_t> rgo_jobs_taken;
 
-	PopType const* const bureaucrats = pop_manager.get_pop_type_by_identifier("bureaucrats");
-	if (bureaucrats != nullptr) {
-		// The corruption of the laws (docs/LAWS_DESIGN.md, hereditary bureaucrats): the taxes the bureaucrats kept this month go from the treasury to
-		// the bureaucrats of the country, by their size
-		std::unordered_map<CountryInstance*, std::int64_t> bureaucrat_men;
-		for (ProvinceInstance& province : map_instance.get_province_instances()) {
-			CountryInstance* const country = province.get_country_to_report_economy();
-			if (country == nullptr || country->get_corruption_owed() <= fixed_point_t::_0) {
-				continue;
-			}
-			for (Pop const& pop : province.get_pops()) {
-				if (&pop.get_type() == bureaucrats) {
-					bureaucrat_men[country] += type_safe::get(pop.get_size());
-				}
+	// The parts below work the provinces (the states) in parallel: a province writes only its own pops, the sums of the countries are
+	// collected first and the money of the countries is added up in the order of the map afterwards
+	ThreadPool& thread_pool = instance_manager.get_thread_pool();
+	const auto for_each_index_parallel = [&thread_pool](const std::size_t count, std::function<void(std::size_t)> const& function) -> void {
+		if (thread_pool.is_initialised()) {
+			thread_pool.process_index_callback(count, function);
+		} else {
+			for (std::size_t index = 0; index < count; ++index) {
+				function(index);
 			}
 		}
-		std::unordered_map<CountryInstance*, fixed_point_t> corruption_pool;
+	};
+	forwardable_span<ProvinceInstance> const all_provinces = map_instance.get_province_instances();
+	const std::size_t province_count = all_provinces.size();
+
+	PopType const* const bureaucrats = pop_manager.get_pop_type_by_identifier("bureaucrats");
+	PopType const* const officers = pop_manager.get_pop_type_by_identifier("officers");
+	PopType const* const soldiers = pop_manager.get_pop_type_by_identifier("soldiers");
+	OpenVicEconomyDefines const& economy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().economy;
+	const bool bureaucrat_promotion = bureaucrats != nullptr && defines.bureaucrat_promotion_share.numerator > 0
+		&& farmers != nullptr && labourers != nullptr && craftsmen != nullptr;
+	const bool officer_promotion = officers != nullptr && soldiers != nullptr && defines.officer_promotion_share.numerator > 0;
+	const fixed_point_t admin_low_pay = economy_defines.admin_low_pay.fixed();
+	const bool low_pay_leave = bureaucrats != nullptr && artisans != nullptr && admin_low_pay > fixed_point_t::_0
+		&& economy_defines.admin_low_pay_leave.numerator > 0;
+
+	// The men of the provinces (in parallel), added up in the order of the map: none of the changes below changes them before they are used
+	// (the corruption is money, the bureaucrats come from farmers, labourers and craftsmen, not from the officers or the soldiers)
+	struct province_men_t {
+		std::int64_t bureaucrats = 0, all = 0, officers = 0, soldiers = 0;
+	};
+	std::vector<province_men_t> province_men(province_count);
+	for_each_index_parallel(province_count, [&](const std::size_t index) -> void {
+		province_men_t& men = province_men[index];
+		for (Pop const& pop : all_provinces[index].get_pops()) {
+			PopType const* const type = &pop.get_type();
+			const std::int64_t size = type_safe::get(pop.get_size());
+			men.all += size;
+			men.bureaucrats += type == bureaucrats ? size : 0;
+			men.officers += type == officers ? size : 0;
+			men.soldiers += type == soldiers ? size : 0;
+		}
+	});
+
+	// The corruption of the laws (docs/LAWS_DESIGN.md, hereditary bureaucrats): the taxes the bureaucrats kept this month go from the treasury to
+	// the bureaucrats of the country, by their size
+	std::unordered_map<CountryInstance*, std::int64_t> bureaucrat_men;
+	std::unordered_map<CountryInstance*, fixed_point_t> corruption_pool;
+	// The bureaucrats and all the men of the states (the bureaucrats come from the literate poor, see below)
+	std::unordered_map<State const*, std::pair<std::int64_t, std::int64_t>> state_men;
+	// The officers and the soldiers of the countries
+	std::unordered_map<CountryInstance const*, std::pair<std::int64_t, std::int64_t>> army_men;
+	for (std::size_t index = 0; index < province_count; ++index) {
+		ProvinceInstance& province = all_provinces[index];
+		province_men_t const& men = province_men[index];
+		if (bureaucrats != nullptr) {
+			CountryInstance* const country = province.get_country_to_report_economy();
+			if (country != nullptr && country->get_corruption_owed() > fixed_point_t::_0) {
+				bureaucrat_men[country] += men.bureaucrats;
+			}
+			if (bureaucrat_promotion && province.get_state() != nullptr && province.get_owner() != nullptr) {
+				auto& sums = state_men[province.get_state()];
+				sums.first += men.bureaucrats;
+				sums.second += men.all;
+			}
+		}
+		if (officer_promotion && province.get_owner() != nullptr) {
+			auto& sums = army_men[province.get_owner()];
+			sums.first += men.officers;
+			sums.second += men.soldiers;
+		}
+	}
+	if (bureaucrats != nullptr) {
 		for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 			const auto men = bureaucrat_men.find(&country);
 			const fixed_point_t owed = country.get_corruption_owed();
@@ -169,18 +232,26 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				corruption_pool[&country] = amount;
 			}
 		}
-		for (ProvinceInstance& province : map_instance.get_province_instances()) {
+	}
+
+	// Then every province by itself, in parallel
+	for_each_index_parallel(province_count, [&](const std::size_t index) -> void {
+		ProvinceInstance& province = all_provinces[index];
+		CountryInstance const* const owner = province.get_owner();
+		State const* const state = province.get_state();
+
+		// The corruption to the bureaucrats of the province
+		if (bureaucrats != nullptr) {
 			CountryInstance* const country = province.get_country_to_report_economy();
 			const auto pool = country != nullptr ? corruption_pool.find(country) : corruption_pool.end();
-			if (pool == corruption_pool.end()) {
-				continue;
-			}
-			const std::int32_t total = static_cast<std::int32_t>(bureaucrat_men[country]);
-			for (Pop& pop : province.get_mutable_pops()) {
-				if (&pop.get_type() == bureaucrats && pop.get_size() > pop_size_t(0)) {
-					const fixed_point_t share = pool->second * static_cast<std::int32_t>(type_safe::get(pop.get_size())) / total;
-					if (share > fixed_point_t::_0) {
-						pop.add_government_salary_administration(share);
+			if (pool != corruption_pool.end()) {
+				const std::int32_t total = static_cast<std::int32_t>(bureaucrat_men.find(country)->second);
+				for (Pop& pop : province.get_mutable_pops()) {
+					if (&pop.get_type() == bureaucrats && pop.get_size() > pop_size_t(0)) {
+						const fixed_point_t share = pool->second * static_cast<std::int32_t>(type_safe::get(pop.get_size())) / total;
+						if (share > fixed_point_t::_0) {
+							pop.add_government_salary_administration(share);
+						}
 					}
 				}
 			}
@@ -190,53 +261,69 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		// the share of the state, docs/ADMINISTRATION.md; before, the share the country wants), BUREAUCRAT_PROMOTION_SHARE x (1 + bureaucrat_promotion
 		// of the laws) x the factor of their pay x (1 + ADMIN_FOCUS_PROMOTION in the state of the priority) of the men of its farmers, labourers and
 		// craftsmen, times their literacy, become bureaucrats every month (of their culture, in their province)
-		OpenVicEconomyDefines const& economy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().economy;
-		if (defines.bureaucrat_promotion_share.numerator > 0 && farmers != nullptr && labourers != nullptr && craftsmen != nullptr) {
-			std::unordered_map<State const*, std::pair<std::int64_t, std::int64_t>> state_men; // bureaucrats, all
-			for (ProvinceInstance& province : map_instance.get_province_instances()) {
-				if (province.get_state() == nullptr || province.get_owner() == nullptr) {
-					continue;
-				}
-				auto& men = state_men[province.get_state()];
-				for (Pop const& pop : province.get_pops()) {
-					men.first += &pop.get_type() == bureaucrats ? type_safe::get(pop.get_size()) : 0;
-					men.second += type_safe::get(pop.get_size());
-				}
-			}
-			for (ProvinceInstance& province : map_instance.get_province_instances()) {
-				CountryInstance const* const owner = province.get_owner();
-				State const* const state = province.get_state();
-				if (owner == nullptr || state == nullptr) {
-					continue;
-				}
-				auto const& men = state_men[state];
-				const fixed_point_t wanted = state->get_admin_needed_share();
-				if (men.second <= 0 || wanted <= fixed_point_t::_0
-					|| fixed_point_t(static_cast<std::int32_t>(std::min<std::int64_t>(men.first * 10000 / men.second, 10000))) / 10000 >= wanted) {
-					continue;
-				}
+		if (bureaucrat_promotion && owner != nullptr && state != nullptr) {
+			const auto men_found = state_men.find(state);
+			const std::pair<std::int64_t, std::int64_t> men = men_found != state_men.end() ? men_found->second : std::pair<std::int64_t, std::int64_t> {};
+			const fixed_point_t wanted = state->get_admin_needed_share();
+			if (!(men.second <= 0 || wanted <= fixed_point_t::_0
+				|| fixed_point_t(static_cast<std::int32_t>(std::min<std::int64_t>(men.first * 10000 / men.second, 10000))) / 10000 >= wanted)) {
 				fixed_point_t share = defines.bureaucrat_promotion_share.fixed()
 					* std::max(fixed_point_t::_0, fixed_point_t::_1 + owner->get_law_effect(law_effect_t::bureaucrat_promotion))
 					* owner->get_bureaucrat_promotion_pay_factor();
 				if (owner->get_admin_focus_state() == state) {
 					share = share * (fixed_point_t::_1 + economy_defines.admin_focus_promotion.fixed());
 				}
-				if (share <= fixed_point_t::_0) {
-					continue;
+				if (share > fixed_point_t::_0) {
+					std::vector<Pop*> candidates;
+					for (Pop& pop : province.get_mutable_pops()) {
+						PopType const* const type = &pop.get_type();
+						if ((type == farmers || type == labourers || type == craftsmen) && pop.get_size() > pop_size_t(0) && pop.get_rebel_type() == nullptr) {
+							candidates.push_back(&pop);
+						}
+					}
+					for (Pop* pop : candidates) {
+						pop->migration_remainder += share * pop->get_literacy() * literacy_promotion_factor(defines, pop->get_literacy())
+							* static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+						const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
+						if (whole > 0) {
+							if (Pop* target = find_or_create_pop(province, *bureaucrats, pop->culture, *pop, pop_deps)) {
+								blend_literacy(*target, *pop, whole);
+								pop->change_size(-whole, 1);
+								target->change_size(whole, 1);
+							}
+						}
+					}
 				}
+			}
+		}
+
+		// The officers come from the literate (version 89, docs/LITERACY.md): while the officers of a country are fewer than OFFICERS_PER_SOLDIER of
+		// its soldiers, OFFICER_PROMOTION_SHARE x the literacy factor of the literate men of its middle and rich pops (the poor too with the unlock
+		// mechanic:poor_officers) become officers every month, in their province; not the officers, the bureaucrats and the slaves
+		if (officer_promotion && owner != nullptr) {
+			const auto men_found = army_men.find(owner);
+			const std::pair<std::int64_t, std::int64_t> men = men_found != army_men.end() ? men_found->second : std::pair<std::int64_t, std::int64_t> {};
+			if (!(men.second <= 0 || men.first * Rate::DENOMINATOR >= men.second * defines.officers_per_soldier.numerator)) {
+				const bool poor_officers = owner->has_unlock("mechanic:poor_officers");
 				std::vector<Pop*> candidates;
 				for (Pop& pop : province.get_mutable_pops()) {
 					PopType const* const type = &pop.get_type();
-					if ((type == farmers || type == labourers || type == craftsmen) && pop.get_size() > pop_size_t(0) && pop.get_rebel_type() == nullptr) {
-						candidates.push_back(&pop);
+					if (type == officers || type == bureaucrats || type == slaves || type->is_slave || pop.get_size() <= pop_size_t(0)
+						|| pop.get_rebel_type() != nullptr) {
+						continue;
 					}
+					if (type->strata.get_identifier() == "poor" && !poor_officers) {
+						continue;
+					}
+					candidates.push_back(&pop);
 				}
 				for (Pop* pop : candidates) {
-					pop->migration_remainder += share * pop->get_literacy() * literacy_promotion_factor(defines, pop->get_literacy())
+					const fixed_point_t literacy = std::clamp(pop->get_literacy(), fixed_point_t::_0, fixed_point_t::_1);
+					pop->migration_remainder += defines.officer_promotion_share.fixed() * literacy * literacy_promotion_factor(defines, literacy)
 						* static_cast<std::int32_t>(type_safe::get(pop->get_size()));
 					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 					if (whole > 0) {
-						if (Pop* target = find_or_create_pop(province, *bureaucrats, pop->culture, *pop, pop_deps)) {
+						if (Pop* target = find_or_create_pop(province, *officers, pop->culture, *pop, pop_deps)) {
 							blend_literacy(*target, *pop, whole);
 							pop->change_size(-whole, 1);
 							target->change_size(whole, 1);
@@ -245,104 +332,39 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				}
 			}
 		}
-	}
 
-	// The officers come from the literate (version 89, docs/LITERACY.md): while the officers of a country are fewer than OFFICERS_PER_SOLDIER of its
-	// soldiers, OFFICER_PROMOTION_SHARE x the literacy factor of the literate men of its middle and rich pops (the poor too with the unlock
-	// mechanic:poor_officers) become officers every month, in their province; not the officers, the bureaucrats and the slaves
-	if (PopType const* const officers = pop_manager.get_pop_type_by_identifier("officers"),
-		* const soldiers = pop_manager.get_pop_type_by_identifier("soldiers");
-		officers != nullptr && soldiers != nullptr && defines.officer_promotion_share.numerator > 0) {
-		std::unordered_map<CountryInstance const*, std::pair<std::int64_t, std::int64_t>> army_men; // officers, soldiers
-		for (ProvinceInstance const& province : map_instance.get_province_instances()) {
-			CountryInstance const* const owner = province.get_owner();
-			if (owner == nullptr) {
-				continue;
-			}
-			for (Pop const& pop : province.get_pops()) {
-				if (&pop.get_type() == officers) {
-					army_men[owner].first += type_safe::get(pop.get_size());
-				} else if (&pop.get_type() == soldiers) {
-					army_men[owner].second += type_safe::get(pop.get_size());
-				}
-			}
-		}
-		for (ProvinceInstance& province : map_instance.get_province_instances()) {
-			CountryInstance const* const owner = province.get_owner();
-			if (owner == nullptr) {
-				continue;
-			}
-			auto const& men = army_men[owner];
-			if (men.second <= 0 || men.first * Rate::DENOMINATOR >= men.second * defines.officers_per_soldier.numerator) {
-				continue;
-			}
-			const bool poor_officers = owner->has_unlock("mechanic:poor_officers");
-			std::vector<Pop*> candidates;
+		// The bureaucrats paid under ADMIN_LOW_PAY leave (version 88, docs/ADMINISTRATION.md): ADMIN_LOW_PAY_LEAVE x (1 - pay / ADMIN_LOW_PAY) of them
+		// become artisans of their province every month (the organisation of the regiments below reads only the literacy of their pops: this
+		// changes no literacy of a pop that loses people)
+		if (low_pay_leave && owner != nullptr && owner->get_administration_pay() < admin_low_pay) {
+			const fixed_point_t share = economy_defines.admin_low_pay_leave.of(fixed_point_t::_1 - owner->get_administration_pay() / admin_low_pay);
+			std::vector<Pop*> leaving;
 			for (Pop& pop : province.get_mutable_pops()) {
-				PopType const* const type = &pop.get_type();
-				if (type == officers || type == bureaucrats || type == slaves || type->is_slave || pop.get_size() <= pop_size_t(0)
-					|| pop.get_rebel_type() != nullptr) {
-					continue;
+				if (&pop.get_type() == bureaucrats && pop.get_size() > pop_size_t(0)) {
+					leaving.push_back(&pop);
 				}
-				if (type->strata.get_identifier() == "poor" && !poor_officers) {
-					continue;
-				}
-				candidates.push_back(&pop);
 			}
-			for (Pop* pop : candidates) {
-				const fixed_point_t literacy = std::clamp(pop->get_literacy(), fixed_point_t::_0, fixed_point_t::_1);
-				pop->migration_remainder += defines.officer_promotion_share.fixed() * literacy * literacy_promotion_factor(defines, literacy)
-					* static_cast<std::int32_t>(type_safe::get(pop->get_size()));
+			for (Pop* pop : leaving) {
+				pop->migration_remainder += share * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
 				const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
 				if (whole > 0) {
-					if (Pop* target = find_or_create_pop(province, *officers, pop->culture, *pop, pop_deps)) {
+					if (Pop* target = find_or_create_pop(province, *artisans, pop->culture, *pop, pop_deps)) {
 						blend_literacy(*target, *pop, whole);
-						pop->change_size(-whole, 1);
-						target->change_size(whole, 1);
+						pop->change_size(-whole, 2);
+						target->change_size(whole, 2);
 					}
 				}
 			}
 		}
-	}
+	});
 
 	// The maximum organisation of the regiments by the literacy of their soldiers (version 89, docs/LITERACY.md)
 	instance_manager.get_unit_instance_manager().update_literacy_organisation(
 		instance_manager.definition_manager.get_define_manager().get_openvic_defines().war.literacy_organisation
 	);
 
-	// The bureaucrats paid under ADMIN_LOW_PAY leave (version 88, docs/ADMINISTRATION.md): ADMIN_LOW_PAY_LEAVE x (1 - pay / ADMIN_LOW_PAY) of them
-	// become artisans of their province every month
-	if (bureaucrats != nullptr && artisans != nullptr) {
-		OpenVicEconomyDefines const& economy_defines = instance_manager.definition_manager.get_define_manager().get_openvic_defines().economy;
-		const fixed_point_t low = economy_defines.admin_low_pay.fixed();
-		if (low > fixed_point_t::_0 && economy_defines.admin_low_pay_leave.numerator > 0) {
-			for (ProvinceInstance& province : map_instance.get_province_instances()) {
-				CountryInstance const* const owner = province.get_owner();
-				if (owner == nullptr || owner->get_administration_pay() >= low) {
-					continue;
-				}
-				const fixed_point_t share = economy_defines.admin_low_pay_leave.of(fixed_point_t::_1 - owner->get_administration_pay() / low);
-				std::vector<Pop*> leaving;
-				for (Pop& pop : province.get_mutable_pops()) {
-					if (&pop.get_type() == bureaucrats && pop.get_size() > pop_size_t(0)) {
-						leaving.push_back(&pop);
-					}
-				}
-				for (Pop* pop : leaving) {
-					pop->migration_remainder += share * static_cast<std::int32_t>(type_safe::get(pop->get_size()));
-					const std::int32_t whole = std::min(take_whole(pop->migration_remainder), type_safe::get(pop->get_size()));
-					if (whole > 0) {
-						if (Pop* target = find_or_create_pop(province, *artisans, pop->culture, *pop, pop_deps)) {
-							blend_literacy(*target, *pop, whole);
-							pop->change_size(-whole, 2);
-							target->change_size(whole, 2);
-						}
-					}
-				}
-			}
-		}
-	}
-
+	section.reset();
+	section.emplace(profiler.scope("savings"));
 	// The money goes round: a pop that holds more than SAVINGS_MAX_DAYS days of what it earns or spends in a day (today's income and spending: the
 	// month starts after the market) passes SAVINGS_SHARE of the rest to the pops of its state that hold less, by their size (the pay for their
 	// services); a state with nobody to pay puts it into the investment fund of its country. The states one by one, in the order of the map
@@ -353,15 +375,25 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			CountryInstance const* const country = pop.get_location().get_country_to_report_economy();
 			return country != nullptr ? keep * std::max(fixed_point_t::_0, fixed_point_t::_1 + country->get_law_effect(law_effect_t::savings_threshold)) : keep;
 		};
+		// The states in the order of the map (of their first province); a state writes only its own pops, in parallel: what goes to the country
+		// is kept and added in this order afterwards
 		std::unordered_set<State const*> states_done;
-		std::vector<Pop*> givers, takers;
+		std::vector<State*> savings_states;
 		for (ProvinceInstance& first_province : map_instance.get_province_instances()) {
 			State* const state = first_province.get_state();
-			if (state == nullptr || !states_done.insert(state).second) {
-				continue;
+			if (state != nullptr && states_done.insert(state).second) {
+				savings_states.push_back(state);
 			}
-			givers.clear();
-			takers.clear();
+		}
+		struct savings_to_country_t {
+			CountryInstance* country = nullptr;
+			fixed_point_t to_fund = fixed_point_t::_0;
+			fixed_point_t to_treasury = fixed_point_t::_0;
+		};
+		std::vector<savings_to_country_t> to_countries(savings_states.size());
+		for_each_index_parallel(savings_states.size(), [&](const std::size_t index) -> void {
+			State* const state = savings_states[index];
+			std::vector<Pop*> givers, takers;
 			std::int64_t taker_people = 0;
 			for (ProvinceInstance& province : state->get_provinces()) {
 				if (province.get_country_to_report_economy() == nullptr) {
@@ -389,28 +421,24 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 				}
 			}
 			if (pool <= fixed_point_t::_0) {
-				continue;
+				return;
 			}
 			CountryInstance* const country = givers.front()->get_location().get_country_to_report_economy();
+			savings_to_country_t& to_country = to_countries[index];
+			to_country.country = country;
 			if (taker_people <= 0 || taker_people > std::numeric_limits<std::int32_t>::max()) {
-				if (country != nullptr) {
-					country->add_savings_to_investment_fund(pool);
-				}
-				continue;
+				to_country.to_fund = pool;
+				return;
 			}
 			// SAVINGS_FUND_SHARE into the investment fund, SAVINGS_TREASURY_SHARE into the treasury, the rest to the pops
 			if (country != nullptr) {
 				const fixed_point_t to_fund = defines.savings_fund_share.of(pool);
 				const fixed_point_t to_treasury = std::min(pool - to_fund, defines.savings_treasury_share.of(pool));
-				if (to_fund > fixed_point_t::_0) {
-					country->add_savings_to_investment_fund(to_fund);
-				}
-				if (to_treasury > fixed_point_t::_0) {
-					country->add_cash(to_treasury);
-				}
+				to_country.to_fund = to_fund;
+				to_country.to_treasury = to_treasury;
 				pool -= to_fund + to_treasury;
 				if (pool <= fixed_point_t::_0) {
-					continue;
+					return;
 				}
 			}
 			// The shares by size; what the rounding leaves goes to the biggest taker
@@ -429,9 +457,22 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			if (pool > paid) {
 				biggest->add_services_income(pool - paid);
 			}
+		});
+		for (savings_to_country_t const& to_country : to_countries) {
+			if (to_country.country == nullptr) {
+				continue;
+			}
+			if (to_country.to_fund > fixed_point_t::_0) {
+				to_country.country->add_savings_to_investment_fund(to_country.to_fund);
+			}
+			if (to_country.to_treasury > fixed_point_t::_0) {
+				to_country.country->add_cash(to_country.to_treasury);
+			}
 		}
 	}
 
+	section.reset();
+	section.emplace(profiler.scope("scores and jobs"));
 	// Scores of the provinces before anything moves
 	std::unordered_map<ProvinceInstance const*, ProvinceScore> scores;
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
@@ -611,6 +652,8 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 		return moved;
 	};
 
+	section.reset();
+	section.emplace(profiler.scope("growth, promotions, migration"));
 	// The data of the growth, the year and the multipliers of the countries (medicine, sanitation), worked out once for the month
 	PopulationGrowthData const& growth_data = pop_manager.get_growth_data();
 	const std::int32_t year = static_cast<std::int32_t>(instance_manager.get_today().get_year());
@@ -629,6 +672,8 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 	std::int32_t migrated_total = 0;
 	std::int32_t assimilated_total = 0;
 	std::int32_t promoted_total = 0;
+	// The base rates of the growth of the cultures of a province (see below)
+	std::vector<std::pair<Culture const*, fixed_point_t>> base_rates;
 
 	for (ProvinceInstance& province : map_instance.get_province_instances()) {
 		if (province.province_definition.is_water() || province.get_pop_count() == 0) {
@@ -717,6 +762,7 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 			}
 		}
 		const fixed_point_t own_income = rgo_income_per_worker(province.get_rgo());
+		base_rates.clear();
 
 		for (Pop* pop : pops) {
 			const std::int32_t size = type_safe::get(pop->get_size());
@@ -726,11 +772,21 @@ void PopDynamics::monthly_update(InstanceManager& instance_manager, PopDeps cons
 
 			// ---- Growth: the base of the data (country, culture, region, year), by the life needs and the modifiers of the country; starvation shrinks the pop
 			const fixed_point_t life = pop->get_life_needs_fulfilled();
-			fixed_point_t base_yearly = growth_data.get_yearly_rate(
-				owner != nullptr ? owner->get_identifier() : std::string_view {}, pop->culture.group.get_identifier(), pop->culture.get_identifier(),
-				province.province_definition.has_region() ? province.province_definition.get_region()->get_identifier() : std::string_view {}, year,
-				defines.growth_per_year.fixed()
-			);
+			// (the rules of the data compare strings: worked out once for every culture of the province, the owner, the region and the year
+			// are those of the province)
+			fixed_point_t base_yearly;
+			if (const auto known = std::find_if(base_rates.begin(), base_rates.end(), [pop](auto const& entry) -> bool {
+					return entry.first == &pop->culture;
+				}); known != base_rates.end()) {
+				base_yearly = known->second;
+			} else {
+				base_yearly = growth_data.get_yearly_rate(
+					owner != nullptr ? owner->get_identifier() : std::string_view {}, pop->culture.group.get_identifier(), pop->culture.get_identifier(),
+					province.province_definition.has_region() ? province.province_definition.get_region()->get_identifier() : std::string_view {}, year,
+					defines.growth_per_year.fixed()
+				);
+				base_rates.emplace_back(&pop->culture, base_yearly);
+			}
 			fixed_point_t growth_multiplier = fixed_point_t::_1;
 			if (owner != nullptr) {
 				const auto cached = growth_multipliers.find(owner);

@@ -189,6 +189,15 @@ void ThreadPool::loop_until_cancelled(
 					(*country_callback)(*country_claim_order[claim]);
 				}
 				break;
+			case work_t::INDEX_CALLBACK:
+				for (;;) {
+					const std::size_t claim = next_index_claim.fetch_add(1, std::memory_order_relaxed);
+					if (claim >= index_callback_count) {
+						break;
+					}
+					(*index_callback)(claim);
+				}
+				break;
 			case work_t::PROVINCE_CALLBACK:
 				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
 					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
@@ -475,6 +484,13 @@ void ThreadPool::process_province_update_gamestate(InstanceManager const& instan
 void ThreadPool::process_country_update_gamestate(MapInstance& map_instance) {
 	update_map_instance = &map_instance;
 	process_work(work_t::COUNTRY_UPDATE_GAMESTATE);
+}
+
+void ThreadPool::process_index_callback(const std::size_t count, std::function<void(std::size_t)> const& function) {
+	index_callback = &function;
+	index_callback_count = count;
+	next_index_claim = 0;
+	process_work(work_t::INDEX_CALLBACK);
 }
 
 void ThreadPool::process_province_callback(std::function<void(ProvinceInstance&)> const& function) {

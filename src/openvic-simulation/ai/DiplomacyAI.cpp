@@ -2,12 +2,15 @@
 
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/country/CountryInstanceManager.hpp"
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/map/MapDefinition.hpp"
@@ -90,6 +93,10 @@ namespace {
 
 	// The interest of a country in another, worked out once a month (monthly_update sets the cache for its run, it is empty outside of it)
 	std::unordered_map<std::uint64_t, fixed_point_t>* interest_cache = nullptr;
+	// What DiplomacyAI::interest needs of all the countries, worked out once for the run of monthly_update (nothing it reads changes
+	// during the run: the owners of the provinces and the navies): the land neighbours and the strongest navy (nullptr outside of the run)
+	std::vector<std::vector<CountryInstance*>> const* month_neighbours = nullptr;
+	fixed_point_t month_strongest_navy = fixed_point_t::_0;
 
 	fixed_point_t cached_interest(InstanceManager const& instance_manager, CountryInstance const& country, CountryInstance const& other) {
 		if (interest_cache == nullptr) {
@@ -103,6 +110,21 @@ namespace {
 		const fixed_point_t value = DiplomacyAI::interest(instance_manager, country, other);
 		interest_cache->emplace(key, value);
 		return value;
+	}
+
+	// The number of the alliances of a country: CountryRelationManager::get_alliance_count goes through all the pairs of alliances, and the
+	// AI asked it for every pair of countries. During monthly_update the counts are kept here and the counts of the two countries of a new
+	// alliance are worked out again (nullptr outside of the run)
+	std::vector<std::size_t>* month_alliance_counts = nullptr;
+
+	std::size_t alliance_count(CountryRelationManager const& relations, CountryInstance const* country) {
+		if (month_alliance_counts != nullptr) {
+			const std::size_t index = static_cast<std::size_t>(type_safe::get(country->index));
+			if (index < month_alliance_counts->size()) {
+				return (*month_alliance_counts)[index];
+			}
+		}
+		return relations.get_alliance_count(country);
 	}
 
 	// The capitals of the two are at most AI_INTEREST_DISTANCE apart
@@ -121,12 +143,14 @@ namespace {
 		return std::max(const_cast<CountryInstance&>(country).military_power.get_untracked(), fixed_point_t::_1);
 	}
 
-	// How dangerous the other is: its power over ours x (150 - the relation) / 150 (a third to twice), less when it is far
-	fixed_point_t threat(
+	// How dangerous the other is: its power over ours x (150 - the relation) / 150 (a third to twice), less when it is far.
+	// Without the alliance (an ally is no threat: threat() checks it) and, when shared_cache is false, without the cache of the interest
+	// (the table of the threats is worked out in parallel)
+	fixed_point_t threat_unless_allied(
 		InstanceManager const& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance const& country, CountryInstance const& other,
-		const bool neighbour
+		const bool neighbour, const bool shared_cache
 	) {
-		if (&country == &other || country.has_alliance_with(other)) {
+		if (&country == &other) {
 			return fixed_point_t::_0;
 		}
 		if (!neighbour && !is_great_power(defines, other)) {
@@ -137,10 +161,28 @@ namespace {
 		fixed_point_t value = power_of(other) / power_of(country) * relation_factor;
 		if (!neighbour) {
 			// a great power that is not a neighbour threatens as much as the country interests it (Argentina does not fear Russia)
-			value = defines.ai_far_threat.of(value) * cached_interest(instance_manager, other, country);
+			value = defines.ai_far_threat.of(value)
+				* (shared_cache ? cached_interest(instance_manager, other, country) : DiplomacyAI::interest(instance_manager, other, country));
 		}
 		return value;
 	}
+
+	fixed_point_t threat(
+		InstanceManager const& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance const& country, CountryInstance const& other,
+		const bool neighbour
+	) {
+		if (&country == &other || country.has_alliance_with(other)) {
+			return fixed_point_t::_0;
+		}
+		return threat_unless_allied(instance_manager, defines, country, other, neighbour, true);
+	}
+
+	// The threats of the other countries to every AI country without the alliances ([country index * count + other index]), worked out in
+	// parallel at the start of monthly_update: nothing they read changes during its run but the alliances, which biggest_threat checks
+	// itself. month_threat_rows: whether the row of a country was worked out (nullptr outside of the run)
+	std::vector<fixed_point_t>* month_threats = nullptr;
+	std::vector<char>* month_threat_rows = nullptr;
+	std::size_t month_threat_count = 0;
 
 	// The biggest threat of the country among its neighbours and the great powers (nullptr: none above AI_THREAT_MIN)
 	CountryInstance* biggest_threat(
@@ -149,16 +191,37 @@ namespace {
 	) {
 		CountryInstance* best = nullptr;
 		fixed_point_t best_value = defines.ai_threat_min.fixed();
-		for (CountryInstance& other : instance_manager.get_country_instance_manager().get_country_instances()) {
-			if (!is_active(other)) {
-				continue;
+		const std::size_t row = static_cast<std::size_t>(type_safe::get(country.index));
+		if (month_threats != nullptr && row < month_threat_count && (*month_threat_rows)[row] != 0) {
+			// the table of the month: the same values as threat(), the alliance is checked here (only for a value that would win)
+			fixed_point_t const* const values = month_threats->data() + row * month_threat_count;
+			std::size_t index = 0;
+			for (CountryInstance& other : instance_manager.get_country_instance_manager().get_country_instances()) {
+				const std::size_t other_index = index++;
+				if (!is_active(other)) {
+					continue;
+				}
+				fixed_point_t value = values[other_index];
+				if (value > best_value && country.has_alliance_with(other)) {
+					value = fixed_point_t::_0;
+				}
+				if (value > best_value) {
+					best_value = value;
+					best = &other;
+				}
 			}
-			// a neighbour by a colony far away counts as far (its threat goes by its interest in us)
-			const bool neighbour = contains(neighbours, &other) && close(instance_manager, defines, country, other);
-			const fixed_point_t value = threat(instance_manager, defines, country, other, neighbour);
-			if (value > best_value) {
-				best_value = value;
-				best = &other;
+		} else {
+			for (CountryInstance& other : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (!is_active(other)) {
+					continue;
+				}
+				// a neighbour by a colony far away counts as far (its threat goes by its interest in us)
+				const bool neighbour = contains(neighbours, &other) && close(instance_manager, defines, country, other);
+				const fixed_point_t value = threat(instance_manager, defines, country, other, neighbour);
+				if (value > best_value) {
+					best_value = value;
+					best = &other;
+				}
 			}
 		}
 		if (value_out != nullptr) {
@@ -179,7 +242,7 @@ namespace {
 			if (&other == &country || &other == &threat_country || !is_active(other) || country.has_alliance_with(other)
 				|| other.has_alliance_with(threat_country) || country.is_at_war_with(other) || other.is_at_war()
 				|| country.get_relations_with(other) < min_relation
-				|| relations.get_alliance_count(&other) >= static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
+				|| alliance_count(relations, &other) >= static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
 				continue;
 			}
 			const bool shares_threat = contains(neighbours[type_safe::get(other.index)], &threat_country);
@@ -227,7 +290,7 @@ namespace {
 		}
 		// An ally against the biggest threat: the relation with the best candidate goes up to make the alliance possible
 		if (CountryInstance* const threat_country = biggest_threat(instance_manager, defines, country, own_neighbours)) {
-			if (instance_manager.get_country_relation_manager().get_alliance_count(&country) < static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
+			if (alliance_count(instance_manager.get_country_relation_manager(), &country) < static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
 				CountryInstance* const candidate = alliance_candidate(instance_manager, defines, country, *threat_country, neighbours, 0);
 				if (candidate != nullptr && country.get_relations_with(*candidate) < defines.ai_alliance_min_relation) {
 					add(candidate, 1);
@@ -284,7 +347,7 @@ namespace {
 				++small_neighbours;
 			}
 		}
-		const std::size_t alliances = instance_manager.get_country_relation_manager().get_alliance_count(&country);
+		const std::size_t alliances = alliance_count(instance_manager.get_country_relation_manager(), &country);
 
 		// The weights of the goals, x 0.8..1.2 by the dice (a little of the unexpected)
 		std::array<fixed_point_t, 5> weight {};
@@ -323,18 +386,28 @@ fixed_point_t DiplomacyAI::interest(InstanceManager const& instance_manager, Cou
 	MapInstance const& map_instance = instance_manager.get_map_instance();
 	MapDefinition const& map_definition = static_cast<MapDefinition const&>(map_instance);
 	// A land neighbour: 1
-	for (ProvinceInstance const* province : country.get_owned_provinces()) {
-		for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
-			if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !adjacency.get_to().is_water()
-				&& map_instance.get_province_instance_by_definition(adjacency.get_to()).get_owner() == &other) {
-				return fixed_point_t::_1;
+	if (month_neighbours != nullptr) {
+		if (contains((*month_neighbours)[type_safe::get(country.index)], &other)) {
+			return fixed_point_t::_1;
+		}
+	} else {
+		for (ProvinceInstance const* province : country.get_owned_provinces()) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : province->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND && !adjacency.get_to().is_water()
+					&& map_instance.get_province_instance_by_definition(adjacency.get_to()).get_owner() == &other) {
+					return fixed_point_t::_1;
+				}
 			}
 		}
 	}
 	// By the sea: the closeness of the nearest state of ours x the share of our navy in the strongest one
 	fixed_point_t strongest_navy = fixed_point_t::_1;
-	for (CountryInstance const& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
-		strongest_navy = std::max(strongest_navy, candidate.get_military_power_from_sea_untracked());
+	if (month_neighbours != nullptr) {
+		strongest_navy = month_strongest_navy;
+	} else {
+		for (CountryInstance const& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+			strongest_navy = std::max(strongest_navy, candidate.get_military_power_from_sea_untracked());
+		}
 	}
 	const fixed_point_t navy_share = std::clamp(country.get_military_power_from_sea_untracked() / strongest_navy, fixed_point_t::_0, fixed_point_t::_1);
 	if (navy_share <= fixed_point_t::_0) {
@@ -381,7 +454,7 @@ std::int32_t DiplomacyAI::alliance_acceptance(InstanceManager const& instance_ma
 	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
 	CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
 	if (proposer.is_at_war() || receiver.is_at_war_with(proposer)
-		|| relations.get_alliance_count(&receiver) >= static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))
+		|| alliance_count(relations, &receiver) >= static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))
 		|| receiver.get_relations_with(proposer) < defines.ai_alliance_accept_relation) {
 		return 0;
 	}
@@ -399,12 +472,71 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 	}
 	const Date today = instance_manager.get_today();
 	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	TickProfiler& profiler = instance_manager.get_tick_profiler();
+	std::optional<TickProfiler::Scope> section;
+	section.emplace(profiler.scope("neighbours"));
 	const std::vector<std::vector<CountryInstance*>> neighbours = land_neighbours(instance_manager);
+	section.reset();
 	std::unordered_map<std::uint64_t, fixed_point_t> month_interest;
 	interest_cache = &month_interest;
+	month_neighbours = &neighbours;
+	month_strongest_navy = fixed_point_t::_1;
+	for (CountryInstance const& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+		month_strongest_navy = std::max(month_strongest_navy, candidate.get_military_power_from_sea_untracked());
+	}
+	std::vector<std::size_t> alliance_counts;
+	for (CountryInstance const& candidate : instance_manager.get_country_instance_manager().get_country_instances()) {
+		alliance_counts.push_back(relations.get_alliance_count(&candidate));
+	}
+	month_alliance_counts = &alliance_counts;
+
+	// The table of the threats, in parallel (see month_threats). The military power is worked out when it is first asked for: here, on one
+	// thread, before the threads read it
+	CountryInstanceManager& country_instance_manager = instance_manager.get_country_instance_manager();
+	const std::size_t country_count = country_instance_manager.get_country_instances().size();
+	for (CountryInstance const& candidate : country_instance_manager.get_country_instances()) {
+		(void) power_of(candidate);
+	}
+	std::vector<fixed_point_t> threats(country_count * country_count, fixed_point_t::_0);
+	std::vector<char> threat_rows(country_count, 0);
+	{
+		section.emplace(profiler.scope("threats"));
+		std::vector<CountryInstance*> all_countries;
+		for (CountryInstance& candidate : country_instance_manager.get_country_instances()) {
+			all_countries.push_back(&candidate);
+		}
+		country_instance_manager.for_each_country_parallel([&](CountryInstance& country) -> void {
+			if (!is_active(country) || !country.is_ai()) {
+				return;
+			}
+			const std::size_t row = static_cast<std::size_t>(type_safe::get(country.index));
+			if (row >= country_count) {
+				return;
+			}
+			std::vector<CountryInstance*> const& own_neighbours = neighbours[row];
+			fixed_point_t* const values = threats.data() + row * country_count;
+			for (std::size_t other_index = 0; other_index < country_count; ++other_index) {
+				CountryInstance const& other = *all_countries[other_index];
+				if (!is_active(other)) {
+					continue;
+				}
+				const bool neighbour = contains(own_neighbours, &other) && close(instance_manager, defines, country, other);
+				values[other_index] = threat_unless_allied(instance_manager, defines, country, other, neighbour, false);
+			}
+			threat_rows[row] = 1;
+		});
+		section.reset();
+	}
+	month_threats = &threats;
+	month_threat_rows = &threat_rows;
+	month_threat_count = country_count;
 	struct reset_cache_t {
 		~reset_cache_t() {
 			interest_cache = nullptr;
+			month_neighbours = nullptr;
+			month_alliance_counts = nullptr;
+			month_threats = nullptr;
+			month_threat_rows = nullptr;
 		}
 	} reset_cache;
 
@@ -415,6 +547,7 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 		std::vector<CountryInstance*> const& own_neighbours = neighbours[type_safe::get(country.index)];
 
 		// The goal of a great power: a new one every AI_GOAL_YEARS, or when the target is gone
+		section.emplace(profiler.scope("goals"));
 		if (is_great_power(defines, country)) {
 			CountryInstance const* const target = country.get_ai_goal_target();
 			if (country.get_ai_goal() == ai_goal_t::NONE || today >= country.get_ai_goal_until() || (target != nullptr && !is_active(*target))) {
@@ -426,7 +559,9 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 		}
 
 		// An ally against the biggest threat (at peace, under the limit of the alliances)
-		if (!country.is_at_war() && relations.get_alliance_count(&country) < static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
+		section.reset();
+		section.emplace(profiler.scope("alliances"));
+		if (!country.is_at_war() && alliance_count(relations, &country) < static_cast<std::size_t>(std::max(0, defines.ai_max_alliances))) {
 			if (CountryInstance* const threat_country = biggest_threat(instance_manager, defines, country, own_neighbours)) {
 				CountryInstance* const candidate = alliance_candidate(
 					instance_manager, defines, country, *threat_country, neighbours, defines.ai_alliance_min_relation
@@ -434,6 +569,8 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 				// the player answers his proposals himself (not yet: the AI does not propose to the player)
 				if (candidate != nullptr && candidate->is_ai() && alliance_acceptance(instance_manager, country, *candidate) > 0) {
 					country.set_alliance_with(*candidate, true);
+					alliance_counts[static_cast<std::size_t>(type_safe::get(country.index))] = relations.get_alliance_count(&country);
+					alliance_counts[static_cast<std::size_t>(type_safe::get(candidate->index))] = relations.get_alliance_count(candidate);
 					if (is_great_power(defines, country) || is_great_power(defines, *candidate)) {
 						instance_manager.get_notification_log().add(today, &country, "alliance_formed", "", candidate);
 					}
@@ -444,6 +581,8 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 
 		// The processes of the relations: the wanted ones, at most AI_MAX_RELATION_PROCESSES; the others stop
 		std::vector<std::pair<CountryInstance*, std::int8_t>> wanted;
+		section.reset();
+		section.emplace(profiler.scope("processes"));
 		wanted_processes(instance_manager, defines, country, neighbours, wanted);
 		if (static_cast<std::int32_t>(wanted.size()) > defines.ai_max_relation_processes) {
 			wanted.resize(static_cast<std::size_t>(std::max(0, defines.ai_max_relation_processes)));

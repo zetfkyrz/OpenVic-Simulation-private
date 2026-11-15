@@ -47,6 +47,11 @@ namespace OpenVic {
 
 	struct InstanceManager {
 		friend GameActionManager;
+	public:
+		// For the parallel parts of the monthly updates (ThreadPool::process_index_callback; not initialised before the game starts)
+		ThreadPool& get_thread_pool() {
+			return thread_pool;
+		}
 
 		using gamestate_updated_func_t = fu2::function_base<true, true, fu2::capacity_can_hold<void*>, false, false, void()>;
 

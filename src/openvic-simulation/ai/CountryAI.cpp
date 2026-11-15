@@ -12,6 +12,7 @@
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
 #include "openvic-simulation/country/CountryInstance.hpp"
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
 #include "openvic-simulation/economy/BuildingType.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/economy/production/FactoryInstance.hpp"
@@ -660,18 +661,40 @@ namespace {
 			return;
 		}
 
+		// The men and the goods are of the country (get_recruitment_block_reason counts the men of all its pops for every pop it is asked
+		// about): checked once, and again only after a regiment was started. They never grow during the loop, so when they are short no pop
+		// of any province can be recruited
+		const std::int64_t regiment_men = unit_manager.get_regiment_men(*regiment_type);
+		const auto country_can_recruit = [&]() -> bool {
+			if (unit_manager.get_manpower(country).free_men < regiment_men) {
+				return false;
+			}
+			for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
+				if (country.get_good_data(*good).stockpile_amount < quantity) {
+					return false;
+				}
+			}
+			return true;
+		};
+		bool can_recruit = country_can_recruit();
 		int started = 0;
 		for (ProvinceInstance* province : country.get_owned_provinces()) {
-			if (started >= ai.max_recruits_per_month) {
+			if (started >= ai.max_recruits_per_month || !can_recruit) {
 				break;
 			}
 			if (province->get_controller() != &country) {
 				continue;
 			}
 			for (Pop& pop : province->get_mutable_pops()) {
+				// (what the full check below asks of the pop itself, first: it is cheap)
+				if (!pop.get_type().can_be_recruited
+					|| !Pop::is_culture_status_allowed(country.get_allowed_regiment_cultures(), pop.get_culture_status())) {
+					continue;
+				}
 				if (unit_manager.get_recruitment_block_reason(country, *regiment_type, *province, pop).empty()
 					&& unit_manager.start_recruitment(country, *regiment_type, *province, pop)) {
 					++started;
+					can_recruit = country_can_recruit();
 					break;
 				}
 			}
@@ -1028,9 +1051,16 @@ namespace {
 }
 
 void CountryAI::monthly_update(InstanceManager& instance_manager) {
-	RgoBuildingData::monthly_update(instance_manager); // the pops of every country, the player's too
-	// The diplomacy of the AI first: the goals of the great powers, the alliances, the relations (version 91)
-	DiplomacyAI::monthly_update(instance_manager);
+	TickProfiler& profiler = instance_manager.get_tick_profiler();
+	{
+		OV_PROFILE_SCOPE(profiler, "rgo buildings");
+		RgoBuildingData::monthly_update(instance_manager); // the pops of every country, the player's too
+	}
+	{
+		// The diplomacy of the AI first: the goals of the great powers, the alliances, the relations (version 91)
+		OV_PROFILE_SCOPE(profiler, "diplomacy of the AI");
+		DiplomacyAI::monthly_update(instance_manager);
+	}
 	OpenVicAIDefines const& ai = get_ai_defines(instance_manager);
 	const Date today = instance_manager.get_today();
 
@@ -1039,7 +1069,10 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			continue;
 		}
 
-		balance_budget(instance_manager, country);
+		{
+			OV_PROFILE_SCOPE(profiler, "budget");
+			balance_budget(instance_manager, country);
+		}
 		// The priority of the administration (version 88): the state that loses most taxes (its people x what is not collected)
 		{
 			State const* best = nullptr;
@@ -1057,27 +1090,47 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 			}
 			country.set_admin_focus(best != nullptr ? best->get_capital() : nullptr);
 		}
-		build_factory(instance_manager, country);
-		build_transports(instance_manager, country);
-		choose_ai_production_types(instance_manager, country);
-		colonise(instance_manager, country);
+		{
+			OV_PROFILE_SCOPE(profiler, "build factory");
+			build_factory(instance_manager, country);
+		}
+		{
+			OV_PROFILE_SCOPE(profiler, "build transports");
+			build_transports(instance_manager, country);
+		}
+		{
+			OV_PROFILE_SCOPE(profiler, "production types");
+			choose_ai_production_types(instance_manager, country);
+		}
+		{
+			OV_PROFILE_SCOPE(profiler, "colonise");
+			colonise(instance_manager, country);
+		}
 
 		if (country.is_at_war()) {
+			OV_PROFILE_SCOPE(profiler, "war allies, navies, landings");
 			war_allies(instance_manager, country);
 			navies_at_war(instance_manager, country);
 			ai_landings(instance_manager, country);
 		}
+		OV_PROFILE_SCOPE(profiler, "army and wars");
 		// The goal "strengthen the army" of a great power (version 91): it recruits at peace too and keeps the military pay up
 		const bool army_goal = country.get_ai_goal() == CountryInstance::ai_goal_t::STRENGTHEN_ARMY;
 		if (country.is_at_war()) {
-			mobilise_if_weaker(instance_manager, country);
+			{
+				OV_PROFILE_SCOPE(profiler, "mobilise");
+				mobilise_if_weaker(instance_manager, country);
+			}
+			OV_PROFILE_SCOPE(profiler, "recruit");
 			recruit(instance_manager, country);
 		} else if (army_goal) {
 			if (country.get_military_spending_slider_value().get_value_untracked() < fixed_point_t::_1) {
 				country.set_military_spending_slider_value(fixed_point_t::_1);
 			}
+			OV_PROFILE_SCOPE(profiler, "recruit");
 			recruit(instance_manager, country);
 		} else {
+			OV_PROFILE_SCOPE(profiler, "disband");
 			disband_over_manpower(instance_manager, country);
 			disband_over_budget(instance_manager, country);
 		}
@@ -1091,6 +1144,7 @@ void CountryAI::monthly_update(InstanceManager& instance_manager) {
 				|| country.get_ai_goal() == CountryInstance::ai_goal_t::CONQUEST
 				|| dice(country, today, static_cast<std::uint64_t>(ai.war_decision_salt)) * 12 * (Rate::DENOMINATOR / 100)
 				< ai.war_chance_per_year.numerator)) {
+			OV_PROFILE_SCOPE(profiler, "look for war");
 			look_for_war(instance_manager, country);
 		}
 	}

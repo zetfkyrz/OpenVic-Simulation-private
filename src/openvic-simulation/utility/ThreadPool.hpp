@@ -65,7 +65,8 @@ namespace OpenVic {
 			PROVINCE_UPDATE_GAMESTATE,
 			COUNTRY_UPDATE_GAMESTATE,
 			COUNTRY_CALLBACK,
-			PROVINCE_CALLBACK
+			PROVINCE_CALLBACK,
+			INDEX_CALLBACK
 		};
 
 		constexpr static std::size_t WORK_BUNDLE_COUNT = 32;
@@ -89,6 +90,9 @@ namespace OpenVic {
 		MapInstance* update_map_instance = nullptr;
 		std::function<void(CountryInstance&)> const* country_callback = nullptr;
 		std::function<void(ProvinceInstance&)> const* province_callback = nullptr;
+		std::function<void(std::size_t)> const* index_callback = nullptr;
+		std::size_t index_callback_count = 0;
+		std::atomic<std::size_t> next_index_claim = 0;
 		// The callback over the countries takes the countries one by one, the biggest ones (by the provinces they own) first
 		forwardable_span<CountryInstance> all_countries;
 		memory::vector<CountryInstance*> country_claim_order;
@@ -152,5 +156,8 @@ namespace OpenVic {
 		void process_country_callback(std::function<void(CountryInstance&)> const& function);
 		// Calls the function for every province, in the bundles of the provinces (the function must only write what belongs to the province)
 		void process_province_callback(std::function<void(ProvinceInstance&)> const& function);
+		// Calls the function for every index below count, the indices are shared among the threads one by one (the function must only write
+		// what belongs to its index)
+		void process_index_callback(const std::size_t count, std::function<void(std::size_t)> const& function);
 	};
 }
