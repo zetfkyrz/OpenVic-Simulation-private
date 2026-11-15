@@ -29,6 +29,8 @@ namespace OpenVic {
 	private:
 		MapDefinition const& map_definition;
 		ThreadPool& thread_pool;
+		// update_modifier_sums: the provinces of every controller (by the index of the country), in the order of the provinces
+		memory::vector<memory::vector<ProvinceInstance*>> provinces_by_controller;
 
 		OV_IFLATMAP_PROPERTY(ProvinceDefinition, ProvinceInstance, province_instance_by_definition);
 

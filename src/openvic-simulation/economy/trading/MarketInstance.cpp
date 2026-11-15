@@ -55,6 +55,8 @@ void MarketInstance::place_market_sell_order(MarketSellOrder&& market_sell_order
 
 void MarketInstance::execute_orders() {
 	thread_pool.process_good_execute_orders();
+	// the pops only got the results of their orders from the markets: they work them into their money and needs now
+	thread_pool.process_province_settle_market();
 	pay_gold_orders();
 }
 

@@ -3723,14 +3723,19 @@ fixed_point_t CountryInstance::get_education_funding() const {
 }
 
 fixed_point_t CountryInstance::apply_tariff(const fixed_point_t money_spent_on_imports) {
+	const fixed_point_t tariff = get_tariff_on(money_spent_on_imports);
+	if (tariff != fixed_point_t::_0) {
+		actual_tariff_income += tariff;
+	}
+	return tariff;
+}
+
+fixed_point_t CountryInstance::get_tariff_on(const fixed_point_t money_spent_on_imports) {
 	const fixed_point_t effective_tariff_rate_value = effective_tariff_rate.get_untracked();
 	if (effective_tariff_rate_value <= 0) {
 		return 0;
 	}
-
-	const fixed_point_t tariff = effective_tariff_rate_value * money_spent_on_imports;
-	actual_tariff_income += tariff;
-	return tariff;
+	return effective_tariff_rate_value * money_spent_on_imports;
 }
 
 CountryInstance::supply_state_t CountryInstance::get_supply_state(UnitInstanceGroup const& group) const {

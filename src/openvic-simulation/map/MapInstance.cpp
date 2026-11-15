@@ -152,13 +152,55 @@ bool MapInstance::apply_history_to_provinces(
 }
 
 void MapInstance::update_modifier_sums(const Date today, StaticModifierCache const& static_modifier_cache) {
-	// One thread: a province makes room in the modifier sum of its controller (a country shared by many provinces)
-	for (ProvinceInstance& province : get_province_instances()) {
+	// The own sums of the provinces, in parallel (each writes only itself)
+	const std::function<void(ProvinceInstance&)> update_province = [today, &static_modifier_cache](ProvinceInstance& province) -> void {
 		province.update_modifier_sum(today, static_modifier_cache);
+	};
+	if (thread_pool.is_initialised()) {
+		thread_pool.process_province_callback(update_province);
+	} else {
+		for (ProvinceInstance& province : get_province_instances()) {
+			update_province(province);
+		}
 	}
 
+	// Then every controller adds the sums of its provinces to its own sum, the countries in parallel: a country takes its provinces in
+	// the order of the provinces, so its sum is the same as when all the provinces were added one after another
+	for (memory::vector<ProvinceInstance*>& provinces : provinces_by_controller) {
+		provinces.clear();
+	}
 	for (ProvinceInstance& province : get_province_instances()) {
-		province.update_country_modifier_sum();
+		CountryInstance* const controller = province.get_controller();
+		if (controller == nullptr) {
+			continue;
+		}
+		const std::size_t slot = static_cast<std::size_t>(type_safe::get(controller->index));
+		if (slot >= provinces_by_controller.size()) {
+			provinces_by_controller.resize(slot + 1);
+		}
+		provinces_by_controller[slot].push_back(&province);
+	}
+	const std::function<void(CountryInstance&)> add_provinces = [this](CountryInstance& country) -> void {
+		const std::size_t slot = static_cast<std::size_t>(type_safe::get(country.index));
+		if (slot >= provinces_by_controller.size()) {
+			return;
+		}
+		memory::vector<ProvinceInstance*> const& provinces = provinces_by_controller[slot];
+		for (ProvinceInstance const* province : provinces) {
+			country.make_room_for_province_modifier_sum(province->get_modifier_sum());
+		}
+		for (ProvinceInstance const* province : provinces) {
+			country.contribute_province_modifier_sum(province->get_modifier_sum());
+		}
+	};
+	if (thread_pool.is_initialised()) {
+		thread_pool.process_country_callback(add_provinces);
+	} else {
+		for (memory::vector<ProvinceInstance*>& provinces : provinces_by_controller) {
+			if (!provinces.empty()) {
+				add_provinces(*provinces.front()->get_controller());
+			}
+		}
 	}
 }
 

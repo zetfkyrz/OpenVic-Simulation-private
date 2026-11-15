@@ -756,22 +756,22 @@ void Pop::pop_tick_without_cleanup(
 		? std::nullopt
 		: std::optional<country_index_t>{country_to_report_economy_nullable->index};
 
+	// One purchase for every order: the orders point at them, so all the purchases are made first (the vector may grow only then)
+	market_purchases.clear();
 	for (std::size_t i = 0; i < good_count; ++i) {
-		const fixed_point_t max_quantity_to_buy = max_quantity_to_buy_per_good[i];
-
-		if (max_quantity_to_buy <= 0) {
-			continue;
+		if (max_quantity_to_buy_per_good[i] > 0) {
+			market_purchases.emplace_back().good_index = good_index_t(i);
 		}
-		
-		const fixed_point_t money_to_spend = money_to_spend_per_good[i];
-
+	}
+	for (market_purchase_t& purchase : market_purchases) {
+		const std::size_t i = static_cast<std::size_t>(type_safe::get(purchase.good_index));
 		market_instance.place_buy_up_to_order({
-			good_index_t(i),
+			purchase.good_index,
 			country_index_optional,
-			max_quantity_to_buy,
-			money_to_spend,
-			this,
-			after_buy
+			max_quantity_to_buy_per_good[i],
+			money_to_spend_per_good[i],
+			&purchase,
+			record_purchase
 		});
 	}
 
@@ -797,24 +797,75 @@ void Pop::pop_tick_without_cleanup(
 	}
 }
 
-void Pop::after_buy(void* actor, BuyResult const& buy_result) {
-	const fixed_point_t quantity_bought = buy_result.quantity_bought;
+void Pop::record_purchase(void* actor, BuyResult const& buy_result) {
+	market_purchase_t& purchase = *static_cast<market_purchase_t*>(actor);
+	purchase.quantity_bought = buy_result.quantity_bought;
+	purchase.money_spent_total = buy_result.money_spent_total;
+	purchase.money_spent_on_imports = buy_result.money_spent_on_imports;
+}
+
+void Pop::settle_market_purchases(CountryInstance* const country, PopMarketSettlement& settlement) {
+	for (market_purchase_t const& purchase : market_purchases) {
+		settle_market_purchase(purchase, country, settlement);
+	}
+	market_purchases.clear();
+}
+
+void PopMarketSettlement::add_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
+	const std::size_t type_index = static_cast<std::size_t>(type_safe::get(pop_type.index));
+	const std::size_t slot = type_index * good_count + static_cast<std::size_t>(type_safe::get(good_index));
+	if (OV_unlikely(slot >= need_consumption.size())) {
+		need_consumption.resize((type_index + 1) * good_count, fixed_point_t::_0);
+		is_touched.resize((type_index + 1) * good_count, 0);
+	}
+	if (OV_unlikely(type_index >= pop_types.size())) {
+		pop_types.resize(type_index + 1, nullptr);
+	}
+	pop_types[type_index] = &pop_type;
+	need_consumption[slot] += quantity;
+	if (!is_touched[slot]) {
+		is_touched[slot] = 1;
+		touched.push_back(slot);
+	}
+}
+
+void PopMarketSettlement::send_to(CountryInstance* const country) {
+	for (const std::size_t slot : touched) {
+		if (country != nullptr) {
+			country->report_pop_need_consumption(
+				*pop_types[slot / good_count], good_index_t(slot % good_count), need_consumption[slot]
+			);
+		}
+		need_consumption[slot] = fixed_point_t::_0;
+		is_touched[slot] = 0;
+	}
+	touched.clear();
+	if (country != nullptr && tariff != fixed_point_t::_0) {
+		country->add_tariff_income(tariff);
+	}
+	tariff = fixed_point_t::_0;
+}
+
+void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInstance* const country, PopMarketSettlement& settlement) {
+	const fixed_point_t quantity_bought = purchase.quantity_bought;
 
 	if (quantity_bought == 0) {
 		return;
 	}
 
-	Pop& pop = *static_cast<Pop*>(actor);
-	CountryInstance* const country_to_report_economy_nullable = pop.get_location().get_country_to_report_economy();
+	Pop& pop = *this;
+	CountryInstance* const country_to_report_economy_nullable = country;
 
-	fixed_point_t money_spent = buy_result.money_spent_total;
-	pop.yesterdays_import_value += buy_result.money_spent_on_imports;
+	fixed_point_t money_spent = purchase.money_spent_total;
+	pop.yesterdays_import_value += purchase.money_spent_on_imports;
 	if (country_to_report_economy_nullable != nullptr) {
-		const fixed_point_t tariff = country_to_report_economy_nullable->apply_tariff(buy_result.money_spent_on_imports);
+		// added up by the province and sent to the country once (PopMarketSettlement)
+		const fixed_point_t tariff = country_to_report_economy_nullable->get_tariff_on(purchase.money_spent_on_imports);
+		settlement.tariff += tariff;
 		money_spent += tariff;
 	}
 
-	const good_index_t good_index = buy_result.good_index;
+	const good_index_t good_index = purchase.good_index;
 	fixed_point_t quantity_left_to_consume = quantity_bought;
 	CountryInstance* const get_country_to_report_economy_nullable = country_to_report_economy_nullable;
 
@@ -836,7 +887,7 @@ void Pop::after_buy(void* actor, BuyResult const& buy_result) {
 				pop.need_category##_needs_acquired_quantity += consumed_quantity; \
 				quantity_left_to_consume -= consumed_quantity; \
 				if (get_country_to_report_economy_nullable != nullptr) { \
-					get_country_to_report_economy_nullable->report_pop_need_consumption_from_market(pop.type, good_index, consumed_quantity); \
+					settlement.add_need_consumption(pop.type, good_index, consumed_quantity); \
 				} \
 				/* (all of the purchase in one need, the usual case: the whole money, without the 128 bit division) */ \
 				const fixed_point_t expense = consumed_quantity == quantity_bought ? money_spent : fp::mul_div( \

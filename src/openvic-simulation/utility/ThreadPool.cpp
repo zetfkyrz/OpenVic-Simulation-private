@@ -67,6 +67,8 @@ void ThreadPool::loop_until_cancelled(
 	std::array<memory::vector<fixed_point_t>, VECTOR_COUNT> reusable_vectors;
 	std::span<memory::vector<fixed_point_t>, VECTOR_COUNT> reusable_vectors_span = std::span(reusable_vectors);
 	memory::vector<good_index_t> reusable_good_index_vector;
+	PopMarketSettlement pop_market_settlement;
+	pop_market_settlement.good_count = static_cast<std::size_t>(type_safe::get(good_count));
 	PopValuesFromProvince reusable_pop_values {
 		game_rules_manager,
 		good_instance_manager,
@@ -138,6 +140,13 @@ void ThreadPool::loop_until_cancelled(
 					}
 				});
 				break;
+			case work_t::PROVINCE_SETTLE_MARKET:
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
+					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
+						province.settle_market_purchases(pop_market_settlement);
+					}
+				});
+				break;
 			case work_t::PROVINCE_INITIALISE_FOR_NEW_GAME:
 				reusable_pop_values.clear_ranking_cache();
 				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
@@ -179,6 +188,13 @@ void ThreadPool::loop_until_cancelled(
 					}
 					(*country_callback)(*country_claim_order[claim]);
 				}
+				break;
+			case work_t::PROVINCE_CALLBACK:
+				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
+					for (ProvinceInstance& province : work_bundle.provinces_chunk) {
+						(*province_callback)(province);
+					}
+				});
 				break;
 			case work_t::COUNTRY_UPDATE_GAMESTATE:
 				for_each_claimed_bundle(work_type_copy, [&](WorkBundle& work_bundle) -> void {
@@ -435,6 +451,10 @@ void ThreadPool::process_province_ticks() {
 	process_work(work_t::PROVINCE_TICK);
 }
 
+void ThreadPool::process_province_settle_market() {
+	process_work(work_t::PROVINCE_SETTLE_MARKET);
+}
+
 void ThreadPool::process_province_initialise_for_new_game() {
 	process_work(work_t::PROVINCE_INITIALISE_FOR_NEW_GAME);
 }
@@ -455,6 +475,11 @@ void ThreadPool::process_province_update_gamestate(InstanceManager const& instan
 void ThreadPool::process_country_update_gamestate(MapInstance& map_instance) {
 	update_map_instance = &map_instance;
 	process_work(work_t::COUNTRY_UPDATE_GAMESTATE);
+}
+
+void ThreadPool::process_province_callback(std::function<void(ProvinceInstance&)> const& function) {
+	province_callback = &function;
+	process_work(work_t::PROVINCE_CALLBACK);
 }
 
 void ThreadPool::process_country_callback(std::function<void(CountryInstance&)> const& function) {

@@ -1374,5 +1374,10 @@ namespace OpenVic {
 		void request_salaries_and_welfare_and_import_subsidies(Pop& pop);
 		fixed_point_t calculate_minimum_wage_base(PopType const& pop_type);
 		fixed_point_t apply_tariff(const fixed_point_t money_spent_on_imports);
+		// The tariff on the imports without adding it to the income (the pops add up the tariffs of a province, PopMarketSettlement)
+		fixed_point_t get_tariff_on(const fixed_point_t money_spent_on_imports);
+		void add_tariff_income(const fixed_point_t tariff) {
+			actual_tariff_income += tariff;
+		}
 	};
 }

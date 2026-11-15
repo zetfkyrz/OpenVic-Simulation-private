@@ -59,11 +59,13 @@ namespace OpenVic {
 			GOOD_EXECUTE_ORDERS,
 			PROVINCE_INITIALISE_FOR_NEW_GAME,
 			PROVINCE_TICK,
+			PROVINCE_SETTLE_MARKET,
 			COUNTRY_TICK_BEFORE_MAP,
 			COUNTRY_TICK_AFTER_MAP,
 			PROVINCE_UPDATE_GAMESTATE,
 			COUNTRY_UPDATE_GAMESTATE,
-			COUNTRY_CALLBACK
+			COUNTRY_CALLBACK,
+			PROVINCE_CALLBACK
 		};
 
 		constexpr static std::size_t WORK_BUNDLE_COUNT = 32;
@@ -86,6 +88,7 @@ namespace OpenVic {
 		InstanceManager const* update_instance_manager = nullptr;
 		MapInstance* update_map_instance = nullptr;
 		std::function<void(CountryInstance&)> const* country_callback = nullptr;
+		std::function<void(ProvinceInstance&)> const* province_callback = nullptr;
 		// The callback over the countries takes the countries one by one, the biggest ones (by the provinces they own) first
 		forwardable_span<CountryInstance> all_countries;
 		memory::vector<CountryInstance*> country_claim_order;
@@ -132,6 +135,8 @@ namespace OpenVic {
 		void process_good_execute_orders();
 		void process_province_ticks();
 		void process_province_initialise_for_new_game();
+		// After the market: the pops work their purchases into their money and needs (Pop::settle_market_purchases)
+		void process_province_settle_market();
 		void process_country_ticks_before_map();
 		void process_country_ticks_after_map();
 		// The provinces are independent in the update of the game state (each writes only itself, they only read the others): the pool
@@ -145,5 +150,7 @@ namespace OpenVic {
 		// Calls the function for every country, the countries are shared among the threads (the function must only write what belongs to
 		// its own country and must not depend on the order of the countries)
 		void process_country_callback(std::function<void(CountryInstance&)> const& function);
+		// Calls the function for every province, in the bundles of the provinces (the function must only write what belongs to the province)
+		void process_province_callback(std::function<void(ProvinceInstance&)> const& function);
 	};
 }

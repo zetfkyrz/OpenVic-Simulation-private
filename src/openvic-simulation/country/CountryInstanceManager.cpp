@@ -294,9 +294,10 @@ bool CountryInstanceManager::apply_history_to_countries(InstanceManager& instanc
 }
 
 void CountryInstanceManager::update_modifier_sums(const Date today, StaticModifierCache const& static_modifier_cache) {
-	for (CountryInstance& country : country_instances) {
+	// every country works out only its own sum: in parallel
+	for_each_country_parallel([today, &static_modifier_cache](CountryInstance& country) -> void {
 		country.update_modifier_sum(today, static_modifier_cache);
-	}
+	});
 }
 
 void CountryInstanceManager::update_gamestate(const Date today, MapInstance& map_instance) {

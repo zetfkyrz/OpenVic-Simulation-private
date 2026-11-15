@@ -264,8 +264,8 @@ namespace OpenVic {
 			return political_support_cache_mismatch_count;
 		}
 
+		// Only the province's own sum (the provinces in parallel); the controller adds it to its sum in MapInstance::update_modifier_sums
 		void update_modifier_sum(Date today, StaticModifierCache const& static_modifier_cache);
-		void update_country_modifier_sum();
 		fixed_point_t get_modifier_effect_value(ModifierEffect const& effect) const;
 
 		void for_each_contributing_modifier(ModifierEffect const& effect, ContributingModifierCallback auto callback) const {
@@ -305,6 +305,9 @@ namespace OpenVic {
 				VECTORS_FOR_PROVINCE_TICK
 			> reusable_vectors
 		);
+
+		// The purchases of the market of today worked into the pops (after the market; the provinces in parallel)
+		void settle_market_purchases(PopMarketSettlement& settlement);
 
 		bool add_unit_instance_group(UnitInstanceGroup& group);
 		bool remove_unit_instance_group(UnitInstanceGroup const& group);

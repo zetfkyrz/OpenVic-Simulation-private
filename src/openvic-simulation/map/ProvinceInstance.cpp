@@ -314,16 +314,7 @@ void ProvinceInstance::update_modifier_sum(Date today, StaticModifierCache const
 	if (crime != nullptr) {
 		modifier_sum.add_modifier(*crime);
 	}
-
-	if (controller != nullptr) {
-		controller->make_room_for_province_modifier_sum(modifier_sum);
-	}
-}
-
-void ProvinceInstance::update_country_modifier_sum() {
-	if (controller != nullptr) {
-		controller->contribute_province_modifier_sum(modifier_sum);
-	}
+	// (the sum of the controller gets it later, MapInstance::update_modifier_sums: the provinces are worked in parallel)
 }
 
 fixed_point_t ProvinceInstance::get_modifier_effect_value(ModifierEffect const& effect) const {
@@ -514,6 +505,14 @@ void ProvinceInstance::province_tick(
 		building.tick(today);
 	}
 	rgo.rgo_tick(reusable_vectors[0]);
+}
+
+void ProvinceInstance::settle_market_purchases(PopMarketSettlement& settlement) {
+	CountryInstance* const country_to_report_economy_nullable = get_country_to_report_economy();
+	for (Pop& pop : pops) {
+		pop.settle_market_purchases(country_to_report_economy_nullable, settlement);
+	}
+	settlement.send_to(country_to_report_economy_nullable);
 }
 
 bool ProvinceInstance::add_unit_instance_group(UnitInstanceGroup& group) {

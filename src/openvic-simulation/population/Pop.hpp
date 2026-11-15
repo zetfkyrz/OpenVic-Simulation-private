@@ -38,6 +38,25 @@ namespace OpenVic {
 	// A list of goods with a quantity (the needs of a pop that are left to buy)
 	using need_list_t = memory::vector<std::pair<good_index_t, fixed_point_t>>;
 
+	// What the pops of a province give their country for the purchases of the market (Pop::settle_market_purchases): the consumption of
+	// the goods of the needs by pop type and the tariffs. Added up by the pops of the province and sent to the country once (exact fixed
+	// point sums: the same totals as when every purchase was sent by itself). One for every worker thread of the pool.
+	struct PopMarketSettlement {
+		std::size_t good_count = 0;
+		fixed_point_t tariff = fixed_point_t::_0;
+
+		void add_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity);
+		// Sends the sums to the country (nothing if it is nullptr) and empties them
+		void send_to(CountryInstance* country);
+
+	private:
+		// [pop type index * good count + good index]
+		memory::vector<fixed_point_t> need_consumption;
+		memory::vector<char> is_touched;
+		memory::vector<std::size_t> touched;
+		memory::vector<PopType const*> pop_types;
+	};
+
 	struct PopBase {
 		friend PopManager;
 
@@ -195,6 +214,18 @@ namespace OpenVic {
 		// Whether the pop has had a day of buying yet (before that the lists of fulfilled goods are empty, not "all false")
 		bool needs_fulfilled_goods_recorded = false;
 
+		// The purchases of today, one for every good the pop ordered (in the order of the goods). The market of a good only writes the
+		// result of the order into its purchase (record_purchase, one writer: no atomics, no locks), and the pop works them into its
+		// money and needs after the market, in its own province's thread (settle_market_purchases). Before, every purchase changed the
+		// atomic sums of the pop from the threads of all goods at the same time.
+		struct market_purchase_t {
+			good_index_t good_index;
+			fixed_point_t quantity_bought = fixed_point_t::_0;
+			fixed_point_t money_spent_total = fixed_point_t::_0;
+			fixed_point_t money_spent_on_imports = fixed_point_t::_0;
+		};
+		memory::vector<market_purchase_t> market_purchases;
+
 		memory::string get_pop_context_text() const;
 		void reserve_needs_fulfilled_goods();
 		void allocate_for_needs(
@@ -218,7 +249,9 @@ namespace OpenVic {
 		template<bool IsTaxable>
 		void add_artisanal_revenue(const fixed_point_t revenue);
 
-		static void after_buy(void* actor, BuyResult const& buy_result);
+		// The callback of the buy orders of the pop: the actor is the market_purchase_t of the order
+		static void record_purchase(void* actor, BuyResult const& buy_result);
+		void settle_market_purchase(market_purchase_t const& purchase, CountryInstance* country, PopMarketSettlement& settlement);
 		//matching GoodMarketSellOrder::callback_t
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 
@@ -233,6 +266,9 @@ namespace OpenVic {
 		Pop(Pop&&) = default;
 		Pop& operator=(Pop const&) = delete;
 		Pop& operator=(Pop&&) = delete;
+
+		// The purchases of the market of today worked into the money and the needs of the pop (after the market, one thread per province)
+		void settle_market_purchases(CountryInstance* country, PopMarketSettlement& settlement);
 
 		// The artisan business of the pop, nullptr if it is not an artisan (for the reports)
 		ArtisanalProducer const* get_artisanal_producer() const {
