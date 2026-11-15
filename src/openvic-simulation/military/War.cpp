@@ -1534,8 +1534,6 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 	CountryInstanceManager const& countries = instance_manager.get_country_instance_manager();
 	const std::size_t count = map_instance.get_province_instances().size();
 	supply_reach.clear();
-	std::deque<ProvinceInstance const*> queue;
-	std::vector<std::uint8_t> peace_reach;
 	// Over land and over the straits (Constantinople and Anatolia, Denmark and Scania...)
 	const auto connects = [](ProvinceDefinition::adjacency_t const& adjacency) -> bool {
 		return !adjacency.get_to().is_water() && (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::LAND
@@ -1549,15 +1547,22 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 		}
 		return false;
 	};
-	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+	// Every country by itself, in parallel: it writes only its own armies and its own reach (the reaches of the countries at war go into
+	// supply_reach afterwards, in the order of the countries)
+	const std::size_t country_count = instance_manager.get_country_instance_manager().get_country_instances().size();
+	std::vector<std::vector<std::uint8_t>> reaches(country_count);
+	std::vector<char> keep_reach(country_count, 0);
+	const std::function<void(CountryInstance&)> work = [&](CountryInstance& country) -> void {
+		const std::size_t country_index = static_cast<std::size_t>(type_safe::get(country.index));
+		std::deque<ProvinceInstance const*> queue;
 		if (!country.exists() || !country.has_armies()) {
-			continue;
+			return;
 		}
 		const bool at_war = country.is_at_war();
 		const SupplyFriends friends = SupplyFriends::build(country, countries, *this);
 		// 1: reached over land from the capital; 2: by the sea, from a port (ov_supply.SUPPLY_SEA_LOSS of the supply is lost on the way). A country at
 		// peace is never cut off: it only needs to know which of its armies are supplied by the sea
-		std::vector<std::uint8_t>& reach = at_war ? supply_reach[&country] : peace_reach;
+		std::vector<std::uint8_t>& reach = reaches[country_index];
 		reach.assign(count, 0);
 		queue.clear();
 		bool any_source = false;
@@ -1652,16 +1657,14 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 		};
 		// A country without any source (its capital and its ports are lost) is not cut off as a whole: its armies keep what they have
 		if (!any_source) {
-			if (at_war) {
-				supply_reach.erase(&country);
-			}
 			for (ArmyInstance& army : country.get_armies()) {
 				army.set_cut_off(false);
 				army.set_encircled(false);
 				army.set_supply_by_sea(false);
 			}
-			continue;
+			return;
 		}
+		keep_reach[country_index] = at_war ? 1 : 0;
 		if (!at_war) {
 			for (ArmyInstance& army : country.get_armies()) {
 				army.set_cut_off(false);
@@ -1669,7 +1672,7 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 				army.set_encircled_days(0);
 				army.set_supply_by_sea(army_reach(army) == 2);
 			}
-			continue;
+			return;
 		}
 		// The pockets: the land of the friends that is not reached, by its connected parts; a part next to the land of an enemy at war is a pocket (the
 		// others, a colony far from the war, are only cut off from the supply)
@@ -1719,6 +1722,13 @@ void WarManager::update_encirclements(InstanceManager& instance_manager) {
 			if (!pocket) {
 				army.set_encircled_days(0);
 			}
+		}
+	};
+	instance_manager.get_country_instance_manager().for_each_country_parallel(work);
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		const std::size_t country_index = static_cast<std::size_t>(type_safe::get(country.index));
+		if (country_index < country_count && keep_reach[country_index] != 0) {
+			supply_reach.emplace(&country, std::move(reaches[country_index]));
 		}
 	}
 }
@@ -2584,14 +2594,15 @@ void WarManager::update_navy_range(InstanceManager& instance_manager) {
 		return;
 	}
 	const std::size_t province_count = map_instance.get_province_instances().size();
-	std::vector<std::int32_t> distance;
-	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+	// Every country by itself, in parallel (it damages only its own ships)
+	const std::function<void(CountryInstance&)> work = [&](CountryInstance& country) -> void {
+		std::vector<std::int32_t> distance;
 		bool at_sea = false;
 		for (NavyInstance const& navy : country.get_navies()) {
 			at_sea |= !navy.empty() && navy.get_location().province_definition.is_water();
 		}
 		if (!at_sea) {
-			continue;
+			return;
 		}
 		fixed_point_t range_mult = fixed_point_t::_1;
 		if (cache.get_supply_range() != nullptr) {
@@ -2646,7 +2657,8 @@ void WarManager::update_navy_range(InstanceManager& instance_manager) {
 				ship.take_damage(std::min(ship.get_organisation(), wd.navy_out_of_range_org_loss.of(ship.get_max_organisation())), loss);
 			}
 		}
-	}
+	};
+	instance_manager.get_country_instance_manager().for_each_country_parallel(work);
 }
 
 void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
@@ -2708,18 +2720,31 @@ void WarManager::update_war_exhaustion(InstanceManager& instance_manager) {
 void WarManager::update_manpower(InstanceManager& instance_manager) {
 	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 	OpenVicWarDefines const& wd = get_war_defines();
-	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
-		// The mobilisation: the output of the economy while the men are away, the demobilisation after the war (docs/RECRUITMENT.md)
+	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
+	// The mobilisation: the output of the economy while the men are away, the demobilisation after the war (docs/RECRUITMENT.md); a country
+	// changes only its own pops and regiments
+	for (CountryInstance& country : countries.get_country_instances()) {
 		if (country.is_mobilised()) {
 			unit_manager.update_mobilisation(country);
 		}
+	}
+	// The manpower of every country (its pops and its regiments), in parallel
+	const std::size_t country_count = countries.get_country_instances().size();
+	std::vector<Manpower> manpowers(country_count);
+	countries.for_each_country_parallel([&](CountryInstance& country) -> void {
+		if (country.is_rebel_country() || country.get_armies().empty()) {
+			return;
+		}
+		manpowers[static_cast<std::size_t>(type_safe::get(country.index))] = unit_manager.get_manpower(country);
+	});
+	for (CountryInstance& country : countries.get_country_instances()) {
 		if (country.is_rebel_country() || country.get_armies().empty()) {
 			country.manpower_combat_multiplier = fixed_point_t::_1;
 			country.over_manpower_notified = false;
 			country.start_manpower_fitted = true;
 			continue;
 		}
-		Manpower manpower = unit_manager.get_manpower(country);
+		Manpower manpower = manpowers[static_cast<std::size_t>(type_safe::get(country.index))];
 		// The armies of the start that the pops of soldiers cannot man start weaker, at the maximum (not a loss: no one dies)
 		if (!country.start_manpower_fitted) {
 			country.start_manpower_fitted = true;
@@ -2755,9 +2780,15 @@ void WarManager::update_manpower(InstanceManager& instance_manager) {
 
 void WarManager::tick(InstanceManager& instance_manager) {
 	fought_today.clear();
-	update_manpower(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "manpower");
+		update_manpower(instance_manager);
+	}
 	// The ways by sea of the armies (P4d): the ones in their boarding port sail, the ones at sea land
-	instance_manager.get_unit_instance_manager().update_sea_transfers(instance_manager.get_map_instance());
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "sea transfers");
+		instance_manager.get_unit_instance_manager().update_sea_transfers(instance_manager.get_map_instance());
+	}
 
 	{
 		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "land battles");
@@ -2786,17 +2817,26 @@ void WarManager::tick(InstanceManager& instance_manager) {
 		}
 	}
 
-	update_naval_combat(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "naval battles");
+		update_naval_combat(instance_manager);
+	}
 	// The armies that follow others, the raids of the day (docs/WAR_ASSUMPTIONS.md, section 10)
 	instance_manager.get_unit_instance_manager().update_follows(instance_manager.get_map_instance());
-	update_raids(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "raids");
+		update_raids(instance_manager);
+	}
 	// The fleets far from their bases (the flag is set again every day)
 	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
 		for (NavyInstance& navy : country.get_navies()) {
 			navy.set_out_of_range(false);
 		}
 	}
-	update_navy_range(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "navy range");
+		update_navy_range(instance_manager);
+	}
 	// Sink the ships that lost all their men, the armies they cannot carry any more drown
 	{
 		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
@@ -2830,20 +2870,50 @@ void WarManager::tick(InstanceManager& instance_manager) {
 			}
 		}
 	}
-	update_blockades(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "blockades");
+		update_blockades(instance_manager);
+	}
 
-	update_sieges(instance_manager);
-	update_encirclements(instance_manager);
-	update_scores(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "sieges");
+		update_sieges(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "encirclements");
+		update_encirclements(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "scores");
+		update_scores(instance_manager);
+	}
 	// The men lost in the battles and by the attrition die: they are taken off the pops (the new men of today come out of what is left)
 	instance_manager.get_unit_instance_manager().apply_all_losses();
-	update_army_recovery(instance_manager);
-	update_attrition(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "recovery");
+		update_army_recovery(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "attrition");
+		update_attrition(instance_manager);
+	}
 	instance_manager.get_unit_instance_manager().apply_all_losses();
-	update_war_exhaustion(instance_manager);
-	update_justifications(instance_manager);
-	update_leaders(instance_manager);
-	update_ai_peace(instance_manager);
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "war exhaustion");
+		update_war_exhaustion(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "justifications");
+		update_justifications(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "leaders");
+		update_leaders(instance_manager);
+	}
+	{
+		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "peace of the AI");
+		update_ai_peace(instance_manager);
+	}
 	{
 		OV_PROFILE_SCOPE(instance_manager.get_tick_profiler(), "plans of the AI (every 10 days)");
 		update_auto_plan(instance_manager);

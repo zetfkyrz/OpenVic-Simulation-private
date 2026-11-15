@@ -307,7 +307,7 @@ void InstanceManager::tick() {
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "factories"); }
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "market (orders)");
-			market_instance.execute_orders();
+			market_instance.execute_orders(&tick_profiler);
 		}
 		{ OV_PROFILE_SCOPE(tick_profiler, "money ledger phases"); money_ledger.end_phase(*this, "market"); }
 		{

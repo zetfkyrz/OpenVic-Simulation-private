@@ -251,7 +251,17 @@ namespace OpenVic {
 
 		// The callback of the buy orders of the pop: the actor is the market_purchase_t of the order
 		static void record_purchase(void* actor, BuyResult const& buy_result);
-		void settle_market_purchase(market_purchase_t const& purchase, CountryInstance* country, PopMarketSettlement& settlement);
+		// What the purchases of a day add to the pop, added up first and given to the pop once (one atomic operation for each sum of the pop
+		// instead of several for every purchase; the sums are exact, the same as one by one)
+		struct settle_sums_t {
+			fixed_point_t imports = fixed_point_t::_0;
+			fixed_point_t artisan_inputs_expense = fixed_point_t::_0;
+			fixed_point_t life_acquired = fixed_point_t::_0, everyday_acquired = fixed_point_t::_0, luxury_acquired = fixed_point_t::_0;
+			fixed_point_t life_expense = fixed_point_t::_0, everyday_expense = fixed_point_t::_0, luxury_expense = fixed_point_t::_0;
+		};
+		void settle_market_purchase(
+			market_purchase_t const& purchase, CountryInstance* country, PopMarketSettlement& settlement, settle_sums_t& sums
+		);
 		//matching GoodMarketSellOrder::callback_t
 		static void after_sell(void* actor, SellResult const& sell_result, memory::vector<fixed_point_t>& reusable_vector);
 

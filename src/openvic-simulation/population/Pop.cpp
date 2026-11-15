@@ -805,10 +805,29 @@ void Pop::record_purchase(void* actor, BuyResult const& buy_result) {
 }
 
 void Pop::settle_market_purchases(CountryInstance* const country, PopMarketSettlement& settlement) {
+	settle_sums_t sums;
+	bool any = false;
 	for (market_purchase_t const& purchase : market_purchases) {
-		settle_market_purchase(purchase, country, settlement);
+		any |= purchase.quantity_bought != fixed_point_t::_0;
+		settle_market_purchase(purchase, country, settlement, sums);
 	}
 	market_purchases.clear();
+	if (!any) {
+		return;
+	}
+	yesterdays_import_value += sums.imports;
+	#define ADD_NEED_SUMS(need_category) \
+		if (sums.need_category##_acquired != fixed_point_t::_0) { \
+			need_category##_needs_acquired_quantity += sums.need_category##_acquired; \
+		} \
+		if (sums.need_category##_expense > fixed_point_t::_0) { \
+			add_##need_category##_needs_expense(sums.need_category##_expense); \
+		}
+	OV_DO_FOR_ALL_NEED_CATEGORIES(ADD_NEED_SUMS)
+	#undef ADD_NEED_SUMS
+	if (sums.artisan_inputs_expense > fixed_point_t::_0) {
+		add_artisan_inputs_expense(sums.artisan_inputs_expense);
+	}
 }
 
 void PopMarketSettlement::add_need_consumption(PopType const& pop_type, const good_index_t good_index, const fixed_point_t quantity) {
@@ -846,7 +865,9 @@ void PopMarketSettlement::send_to(CountryInstance* const country) {
 	tariff = fixed_point_t::_0;
 }
 
-void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInstance* const country, PopMarketSettlement& settlement) {
+void Pop::settle_market_purchase(
+	market_purchase_t const& purchase, CountryInstance* const country, PopMarketSettlement& settlement, settle_sums_t& sums
+) {
 	const fixed_point_t quantity_bought = purchase.quantity_bought;
 
 	if (quantity_bought == 0) {
@@ -857,7 +878,7 @@ void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInsta
 	CountryInstance* const country_to_report_economy_nullable = country;
 
 	fixed_point_t money_spent = purchase.money_spent_total;
-	pop.yesterdays_import_value += purchase.money_spent_on_imports;
+	sums.imports += purchase.money_spent_on_imports;
 	if (country_to_report_economy_nullable != nullptr) {
 		// added up by the province and sent to the country once (PopMarketSettlement)
 		const fixed_point_t tariff = country_to_report_economy_nullable->get_tariff_on(purchase.money_spent_on_imports);
@@ -884,7 +905,7 @@ void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInsta
 				} else { \
 					consumed_quantity = quantity_left_to_consume; \
 				} \
-				pop.need_category##_needs_acquired_quantity += consumed_quantity; \
+				sums.need_category##_acquired += consumed_quantity; \
 				quantity_left_to_consume -= consumed_quantity; \
 				if (get_country_to_report_economy_nullable != nullptr) { \
 					settlement.add_need_consumption(pop.type, good_index, consumed_quantity); \
@@ -896,7 +917,7 @@ void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInsta
 					quantity_bought \
 				); \
 				if (expense > 0) { \
-					pop.add_##need_category##_needs_expense(expense); \
+					sums.need_category##_expense += expense; \
 				} \
 			} \
 		}
@@ -926,7 +947,7 @@ void Pop::settle_market_purchase(market_purchase_t const& purchase, CountryInsta
 			);
 			// a share of a tiny purchase can round to nothing (it warned hundreds of times a game)
 			if (expense > fixed_point_t::_0) {
-				pop.add_artisan_inputs_expense(expense);
+				sums.artisan_inputs_expense += expense;
 			}
 		}
 	}

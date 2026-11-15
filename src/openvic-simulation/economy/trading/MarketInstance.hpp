@@ -8,6 +8,7 @@
 #include "openvic-simulation/types/TypedIndices.hpp"
 
 namespace OpenVic {
+	struct TickProfiler;
 	struct BuyUpToOrder;
 	struct CountryDefines;
 	struct GoodInstance;
@@ -56,7 +57,8 @@ namespace OpenVic {
 		}
 		void place_buy_up_to_order(BuyUpToOrder&& buy_up_to_order);
 		void place_market_sell_order(MarketSellOrder&& market_sell_order, memory::vector<fixed_point_t>& reusable_vector);
-		void execute_orders();
+		// (the profiler, when given, times its parts: the goods, the pops, the gold)
+		void execute_orders(TickProfiler* profiler = nullptr);
 		void record_price_history();
 	};
 }

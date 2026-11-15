@@ -1,4 +1,8 @@
 #include "openvic-simulation/misc/MoneyLedger.hpp"
+
+#include <optional>
+
+#include "openvic-simulation/diagnostics/TickProfiler.hpp"
 #include "MarketInstance.hpp"
 
 #include <mutex>
@@ -53,10 +57,22 @@ void MarketInstance::place_market_sell_order(MarketSellOrder&& market_sell_order
 	good_instance.add_market_sell_order(std::move(market_sell_order));
 }
 
-void MarketInstance::execute_orders() {
+void MarketInstance::execute_orders(TickProfiler* const profiler) {
+	std::optional<TickProfiler::Scope> part;
+	if (profiler != nullptr) {
+		part.emplace(profiler->scope("goods"));
+	}
 	thread_pool.process_good_execute_orders();
 	// the pops only got the results of their orders from the markets: they work them into their money and needs now
+	if (profiler != nullptr) {
+		part.reset();
+		part.emplace(profiler->scope("pops (settle)"));
+	}
 	thread_pool.process_province_settle_market();
+	if (profiler != nullptr) {
+		part.reset();
+		part.emplace(profiler->scope("gold"));
+	}
 	pay_gold_orders();
 }
 
