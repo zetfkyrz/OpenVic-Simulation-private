@@ -6771,6 +6771,25 @@ namespace {
 		helper->set_ai(helper_ai);
 	}
 
+	// Stage D3 (version 98): more infamy than BADBOY_LIMIT gives everybody a casus belli against the country
+	void test_diplomacy_d3(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryInstance* const portugal = countries.get_country_instance_by_identifier("POR");
+		CountryInstance* const spain = countries.get_country_instance_by_identifier("SPA");
+		if (portugal == nullptr || spain == nullptr || CountryInstance::infamy_casus_belli_limit <= fixed_point_t::_0) {
+			fmt::println("TEST INFO diplomacy D3: no Portugal and Spain or no BADBOY_LIMIT, not checked");
+			return;
+		}
+		const fixed_point_t infamy = portugal->get_infamy_untracked();
+		portugal->change_infamy(-infamy);
+		const bool before = spain->has_casus_belli_against(*portugal, im.get_today());
+		portugal->change_infamy(CountryInstance::infamy_casus_belli_limit + fixed_point_t::_1);
+		const bool after = spain->has_casus_belli_against(*portugal, im.get_today()) && portugal->is_infamous()
+			&& !portugal->has_casus_belli_against(*portugal, im.get_today());
+		portugal->change_infamy(-portugal->get_infamy_untracked() + infamy);
+		r.check(!before && after, "diplomacy D3: more infamy than BADBOY_LIMIT gives everybody a casus belli against the country");
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -8847,6 +8866,7 @@ namespace {
 		test_sphere_principles(r, *im);
 		test_diplomacy_d1(r, *im);
 		test_diplomacy_d2(r, *im);
+		test_diplomacy_d3(r, *im);
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

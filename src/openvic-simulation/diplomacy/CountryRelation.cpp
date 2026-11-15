@@ -4,6 +4,8 @@
 
 #include "openvic-simulation/country/CountryInstance.hpp"
 #include "openvic-simulation/InstanceManager.hpp"
+#include "openvic-simulation/DefinitionManager.hpp"
+#include "openvic-simulation/modifier/ModifierEffectCache.hpp"
 
 using namespace OpenVic;
 using CRM = CountryRelationManager;
@@ -607,6 +609,14 @@ void CRM::monthly_update(InstanceManager& instance_manager) {
 		}
 		const fixed_point_t gain = get_diplomatic_points_gain(country);
 		country.set_diplomatic_points(std::min(defines.diplomatic_points_max, country.get_diplomatic_points() + gain));
+		// the prestige of the month of the modifiers (the "prestige" of the techs and the national values, version 98)
+		if (ModifierEffect const* const effect = instance_manager.definition_manager.get_modifier_manager().get_modifier_effect_cache().get_prestige_monthly_gain();
+			effect != nullptr) {
+			const fixed_point_t prestige = country.get_modifier_effect_value(*effect);
+			if (prestige != fixed_point_t::_0) {
+				country.add_prestige(prestige);
+			}
+		}
 	}
 
 	// The processes of the buttons, in the order they were started

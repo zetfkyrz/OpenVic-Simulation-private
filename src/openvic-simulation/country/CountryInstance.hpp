@@ -729,7 +729,15 @@ namespace OpenVic {
 		CountryInstance* justify_target = nullptr;
 		std::int32_t justify_days_left = 0;
 		memory::vector<std::pair<CountryInstance*, Date>> casus_belli;
+		// More infamy than this (BADBOY_LIMIT of defines.lua, version 98): everybody has a casus belli against the country
+		static inline fixed_point_t infamy_casus_belli_limit = fixed_point_t::_0;
+		[[nodiscard]] bool is_infamous() const {
+			return infamy_casus_belli_limit > fixed_point_t::_0 && infamy.get_untracked() > infamy_casus_belli_limit;
+		}
 		[[nodiscard]] bool has_casus_belli_against(CountryInstance const& target, Date today) const {
+			if (&target != this && target.is_infamous()) {
+				return true;
+			}
 			return std::any_of(casus_belli.begin(), casus_belli.end(), [&target, today](auto const& entry) -> bool {
 				return entry.first == &target && entry.second >= today;
 			});

@@ -1189,7 +1189,10 @@ namespace OpenVic {
 	/* every day, defines.lua) to an ally at war while its treasury holds AI_SUBSIDY_START_CASH_DAYS days of its income; it stops below */ \
 	/* AI_SUBSIDY_STOP_CASH_DAYS */ \
 	INT(AI_SUBSIDY_START_CASH_DAYS, ai_subsidy_start_cash_days, 180, 0, 100000) \
-	INT(AI_SUBSIDY_STOP_CASH_DAYS, ai_subsidy_stop_cash_days, 60, 0, 100000)
+	INT(AI_SUBSIDY_STOP_CASH_DAYS, ai_subsidy_stop_cash_days, 60, 0, 100000) \
+	/* Stage D3 (version 98): a country with more infamy than BADBOY_LIMIT of defines.lua (25) can be attacked by anybody with a casus belli, */ \
+	/* and the AI fears it AI_INFAMOUS_THREAT_PCT percent more */ \
+	INT(AI_INFAMOUS_THREAT_PCT, ai_infamous_threat_pct, 50, 0, 1000)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

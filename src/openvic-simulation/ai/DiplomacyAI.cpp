@@ -159,6 +159,10 @@ namespace {
 		const std::int32_t relation = country.get_relations_with(other);
 		const fixed_point_t relation_factor = std::clamp(fixed_point_t(150 - relation) / 150, fixed_point_t::_1 / 3, fixed_point_t(2));
 		fixed_point_t value = power_of(other) / power_of(country) * relation_factor;
+		// an infamous country (more infamy than BADBOY_LIMIT, version 98) is feared more
+		if (other.is_infamous()) {
+			value = value * (100 + defines.ai_infamous_threat_pct) / 100;
+		}
 		if (!neighbour) {
 			// a great power that is not a neighbour threatens as much as the country interests it (Argentina does not fear Russia)
 			value = defines.ai_far_threat.of(value)

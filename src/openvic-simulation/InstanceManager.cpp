@@ -177,6 +177,7 @@ InstanceManager::InstanceManager(
 	CountryInstance::set_openvic_economy_defines(definition_manager.get_define_manager().get_openvic_defines().economy);
 	CountryInstance::set_openvic_research_defines(definition_manager.get_define_manager().get_openvic_defines().research);
 	CountryRelationManager::set_diplomacy_defines(definition_manager.get_define_manager().get_openvic_defines().diplomacy);
+	CountryInstance::infamy_casus_belli_limit = definition_manager.get_define_manager().get_country_defines().get_infamy_containment_limit();
 	CountryInstance::set_company_type_manager(definition_manager.get_military_manager().get_company_type_manager());
 	CountryInstance::set_law_manager(definition_manager.get_politics_manager().get_law_manager());
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
