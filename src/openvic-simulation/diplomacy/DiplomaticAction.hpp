@@ -127,8 +127,32 @@ namespace OpenVic {
 	struct DiplomaticActionManager {
 	private:
 		IdentifierRegistry<DiplomaticActionTypeStorage> IDENTIFIER_REGISTRY(diplomatic_action_type);
+		DiplomacyDefines const* defines = nullptr;
+
+		// The proposal is accepted (the action is done if it still can be) or declined: the relations and the news (version 96)
+		void finish_proposal(CountryRelationManager::proposal_t proposal, bool accept, InstanceManager& instance_manager) const;
 
 	public:
+		// What an action costs the sender in diplomatic points, what it changes in the relation of the two when it is accepted or declined, and
+		// whether it needs the consent of the receiver (a country of a player then answers it himself: a proposal); from defines.lua (version 96)
+		struct action_terms_t {
+			fixed_point_t cost = fixed_point_t::_0;
+			std::int32_t on_accept = 0;
+			std::int32_t on_decline = 0;
+			bool needs_consent = false;
+		};
+		action_terms_t get_terms(std::string_view identifier) const;
+		action_terms_t get_terms(std::size_t action_type_index) const;
+		// The index of an action (none if there is no such action)
+		std::optional<std::size_t> get_action_index(std::string_view identifier) const;
+		// A proposal of the AI to the country of a player (free for the AI, like its alliances between AI countries); false when the same
+		// proposal waits already or the receiver declined it not long ago
+		bool propose(std::size_t action_type_index, CountryInstance* sender, CountryInstance* receiver, InstanceManager& instance_manager) const;
+		// The answer of the receiver to a proposal (false if there is no such proposal to him)
+		bool answer_proposal(std::uint32_t id, CountryInstance const& receiver, bool accept, InstanceManager& instance_manager) const;
+		// Every day: the proposals older than DIPLOMATIC_PROPOSAL_DAYS are declined
+		void daily_update(InstanceManager& instance_manager) const;
+
 		constexpr DiplomaticActionManager() {};
 
 		bool add_diplomatic_action(std::string_view identifier, DiplomaticActionType::Initializer&& initializer);

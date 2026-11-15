@@ -190,7 +190,8 @@ X(leave_sphere, country_index_t) \
 X(set_sphere_look, country_index_t, std::uint32_t, std::uint32_t) \
 X(set_sphere_kind, country_index_t, std::uint32_t) \
 X(set_sphere_principle, country_index_t, std::uint32_t, std::uint32_t) \
-X(set_sphere_icon, country_index_t, std::uint32_t, std::uint32_t)
+X(set_sphere_icon, country_index_t, std::uint32_t, std::uint32_t) \
+X(answer_diplomatic_proposal, country_index_t, std::uint32_t, bool)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

@@ -1177,7 +1177,14 @@ namespace OpenVic {
 	INT(SPHERE_PRINCIPLE_LEVEL3_YEARS, sphere_principle_level3_years, 15, 0, 1000) \
 	INT(SPHERE_PRINCIPLE_LEVEL1_PCT, sphere_principle_level1_pct, 100, 0, 10000) \
 	INT(SPHERE_PRINCIPLE_LEVEL2_PCT, sphere_principle_level2_pct, 150, 0, 10000) \
-	INT(SPHERE_PRINCIPLE_LEVEL3_PCT, sphere_principle_level3_pct, 200, 0, 10000)
+	INT(SPHERE_PRINCIPLE_LEVEL3_PCT, sphere_principle_level3_pct, 200, 0, 10000) \
+	/* The answers (version 96, stage D1 of docs/PLAN_DIPLOMACY_VIC2.md): an action that needs the consent of the country of a player (an */ \
+	/* alliance, military access, war subsidies) waits DIPLOMATIC_PROPOSAL_DAYS days for his answer (then it is declined). The AI proposes again */ \
+	/* to a country that declined after DIPLOMATIC_PROPOSAL_COOLDOWN_MONTHS. The AI gives military access to a country with a relation of at */ \
+	/* least AI_MILITARY_ACCESS_MIN_RELATION (to an ally or a member of its sphere always, never to a country at war with one of its allies) */ \
+	INT(DIPLOMATIC_PROPOSAL_DAYS, diplomatic_proposal_days, 30, 1, 3650) \
+	INT(DIPLOMATIC_PROPOSAL_COOLDOWN_MONTHS, diplomatic_proposal_cooldown_months, 12, 0, 1200) \
+	INT(AI_MILITARY_ACCESS_MIN_RELATION, ai_military_access_min_relation, 0, -200, 200)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

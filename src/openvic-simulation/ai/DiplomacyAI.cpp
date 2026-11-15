@@ -450,6 +450,26 @@ fixed_point_t DiplomacyAI::war_target_score(InstanceManager const& instance_mana
 	return score;
 }
 
+std::int32_t DiplomacyAI::military_access_acceptance(
+	InstanceManager const& instance_manager, CountryInstance const& asker, CountryInstance const& giver
+) {
+	if (giver.is_at_war_with(asker)) {
+		return 0;
+	}
+	// never to a country at war with an ally
+	for (CountryInstance const& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&country != &asker && &country != &giver && giver.has_alliance_with(country) && asker.is_at_war_with(country)) {
+			return 0;
+		}
+	}
+	if (giver.has_alliance_with(asker) || giver.shares_sphere_with(asker)) {
+		return 1;
+	}
+	CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
+	const std::int32_t minimum = instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy.ai_military_access_min_relation;
+	return relations.get_effective_relation(&giver, &asker) >= minimum ? 1 : 0;
+}
+
 std::int32_t DiplomacyAI::alliance_acceptance(InstanceManager const& instance_manager, CountryInstance const& proposer, CountryInstance const& receiver) {
 	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
 	CountryRelationManager const& relations = instance_manager.get_country_relation_manager();
@@ -566,8 +586,15 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 				CountryInstance* const candidate = alliance_candidate(
 					instance_manager, defines, country, *threat_country, neighbours, defines.ai_alliance_min_relation
 				);
-				// the player answers his proposals himself (not yet: the AI does not propose to the player)
-				if (candidate != nullptr && candidate->is_ai() && alliance_acceptance(instance_manager, country, *candidate) > 0) {
+				// the country of a player answers a proposal itself (version 96: a proposal waits for its answer); the AI proposes only the
+				// alliances that it would accept in the place of the player
+				if (candidate != nullptr && !candidate->is_ai()) {
+					DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+					const std::optional<std::size_t> index = actions.get_action_index("form_alliance");
+					if (index.has_value() && alliance_acceptance(instance_manager, country, *candidate) > 0) {
+						actions.propose(*index, &country, candidate, instance_manager);
+					}
+				} else if (candidate != nullptr && alliance_acceptance(instance_manager, country, *candidate) > 0) {
 					country.set_alliance_with(*candidate, true);
 					alliance_counts[static_cast<std::size_t>(type_safe::get(country.index))] = relations.get_alliance_count(&country);
 					alliance_counts[static_cast<std::size_t>(type_safe::get(candidate->index))] = relations.get_alliance_count(candidate);

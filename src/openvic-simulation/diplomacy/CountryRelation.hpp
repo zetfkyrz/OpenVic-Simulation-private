@@ -279,6 +279,40 @@ private:
 		vector_ordered_map<CountryInstancePair, std::int8_t> relation_processes;
 
 	public:
+		// A diplomatic action that waits for the answer of its receiver, the country of a player (version 96, stage D1 of
+		// docs/PLAN_DIPLOMACY_VIC2.md): DiplomaticActionManager answers it (answer_proposal) or declines it when it is too old
+		struct proposal_t {
+			std::uint32_t id = 0;
+			std::size_t action_index = 0;
+			CountryInstance* sender = nullptr;
+			CountryInstance* receiver = nullptr;
+			Date date;
+		};
+
+	private:
+		memory::vector<proposal_t> proposals;
+		std::uint32_t next_proposal_id = 1;
+		// The AI does not propose the same again to a country before this date (after it declined)
+		vector_ordered_map<CountryInstancePair, Date> proposal_cooldowns;
+
+	public:
+		proposal_t const& add_proposal(std::size_t action_index, CountryInstance* sender, CountryInstance* receiver, Date date);
+		memory::vector<proposal_t> const& get_proposals() const {
+			return proposals;
+		}
+		proposal_t const* find_proposal(std::uint32_t id) const;
+		void remove_proposal(std::uint32_t id);
+		bool has_proposal(std::size_t action_index, CountryInstance const* sender, CountryInstance const* receiver) const;
+		// The date before which the AI does not propose to the receiver again (the date of the game start if none)
+		Date get_proposal_cooldown(CountryInstance const* sender, CountryInstance const* receiver) const;
+		void set_proposal_cooldown(CountryInstance const* sender, CountryInstance const* receiver, Date until);
+		decltype(proposal_cooldowns)::values_container_type const& get_proposal_cooldown_values() const {
+			return proposal_cooldowns.values_container();
+		}
+		// Changes the relation of the two by the amount, within RELATION_MIN and the limit of the two (get_relation_limit); a relation that is
+		// already beyond a limit is not pushed further
+		void change_relation(CountryInstance* country, CountryInstance* recipient, std::int32_t amount);
+
 		std::optional<Date> get_discredited_date(CountryInstance const* country, CountryInstance const* recipient) const;
 		Date& assign_or_get_discredited_date(CountryInstance* country, CountryInstance const* recipient, Date default_value);
 		bool set_discredited_date(CountryInstance* country, CountryInstance const* recipient, Date value);

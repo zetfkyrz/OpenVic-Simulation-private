@@ -427,6 +427,13 @@ bool GameActionManager::VariantVisitor::operator() (set_sphere_icon_argument_t c
 	return instance_manager.get_sphere_manager().set_icon(country, icon, icon_extra);
 }
 
+// The answer of the country of a player to a proposal (version 96, stage D1 of docs/PLAN_DIPLOMACY_VIC2.md)
+bool GameActionManager::VariantVisitor::operator() (answer_diplomatic_proposal_argument_t const& argument) const {
+	const auto [country_index, proposal_id, accept] = argument;
+	CountryInstance const& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);
+	return instance_manager.definition_manager.get_diplomatic_action_manager().answer_proposal(proposal_id, country, accept, instance_manager);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

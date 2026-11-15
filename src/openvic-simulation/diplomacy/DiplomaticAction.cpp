@@ -13,6 +13,7 @@
 #include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/military/War.hpp"
+#include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -96,13 +97,6 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 		return false;
 	}
 
-	// Receiver response policy: an action with an acceptance of its own (call_ally) is refused at 0 or below; the others are always accepted
-	// TODO: real AI/human decision making for the other actions (relations, opinions...)
-	const bool receiver_accepts = cache.acceptance > 0;
-	if (!receiver_accepts) {
-		return false;
-	}
-
 	// These actions read the third country from the context data, which std::any_cast would throw on if it is missing
 	// (exceptions are disabled in the simulation build)
 	if (!cache.argument.context_data.has_value()
@@ -111,11 +105,169 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 		return false;
 	}
 
+	// The price in diplomatic points (version 96, stage D1 of docs/PLAN_DIPLOMACY_VIC2.md): paid when the action is sent, accepted or not
+	const action_terms_t terms = get_terms(action_type_index);
+	if (sender->get_diplomatic_points() < terms.cost) {
+		return false;
+	}
+	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	const Date today = instance_manager.get_today();
+
+	// The country of a player answers itself: the action waits for its answer (a proposal)
+	if (terms.needs_consent && !receiver->is_ai()) {
+		if (relations.has_proposal(action_type_index, sender, receiver)) {
+			return false;
+		}
+		sender->set_diplomatic_points(sender->get_diplomatic_points() - terms.cost);
+		relations.add_proposal(action_type_index, sender, receiver, today);
+		instance_manager.get_notification_log().add(today, receiver, "diplomatic_proposal", type->get_identifier(), sender);
+		return true;
+	}
+
+	sender->set_diplomatic_points(sender->get_diplomatic_points() - terms.cost);
+	// An AI answers by its acceptance (the actions without one are always accepted)
+	if (cache.acceptance <= 0) {
+		relations.change_relation(sender, receiver, terms.on_decline);
+		instance_manager.get_notification_log().add(today, sender, "diplomatic_declined", type->get_identifier(), receiver);
+		return false;
+	}
+
 	type->visit([&cache](auto const& action_type) -> void {
 		action_type.commit_action(cache.argument);
 	});
+	relations.change_relation(sender, receiver, terms.on_accept);
 
 	return true;
+}
+
+DiplomaticActionManager::action_terms_t DiplomaticActionManager::get_terms(const std::string_view identifier) const {
+	if (defines == nullptr) {
+		return {};
+	}
+	DiplomacyDefines const& d = *defines;
+	const auto value = [](fixed_point_t const number) -> std::int32_t {
+		return number.round<std::int32_t>();
+	};
+	if (identifier == "form_alliance") {
+		return { d.get_alliance_diplomatic_cost(), value(d.get_alliance_relation_on_accept()), value(d.get_alliance_relation_on_decline()), true };
+	}
+	if (identifier == "end_alliance") {
+		return { d.get_cancelalliance_diplomatic_cost(), value(d.get_cancelalliance_relation_on_accept()), 0, false };
+	}
+	if (identifier == "call_ally") {
+		// (the consent of an ally is its acceptance of the war, version 93; the country of a player joins at once, D2 will ask him)
+		return { d.get_callally_diplomatic_cost(), value(d.get_callally_relation_on_accept()), value(d.get_callally_relation_on_decline()), false };
+	}
+	if (identifier == "request_military_access") {
+		return { d.get_askmilaccess_diplomatic_cost(), value(d.get_askmilaccess_relation_on_accept()),
+			value(d.get_askmilaccess_relation_on_decline()), true };
+	}
+	if (identifier == "give_military_access") {
+		return { d.get_givemilaccess_diplomatic_cost(), value(d.get_givemilaccess_relation_on_accept()),
+			value(d.get_givemilaccess_relation_on_decline()), true };
+	}
+	if (identifier == "war_subsidies") {
+		return { d.get_warsubsidy_diplomatic_cost(), value(d.get_warsubsidy_relation_on_accept()), 0, true };
+	}
+	if (identifier == "end_war_subsidies") {
+		return { d.get_cancelwarsubsidy_diplomatic_cost(), value(d.get_cancelwarsubsidy_relation_on_accept()), 0, false };
+	}
+	return {};
+}
+
+DiplomaticActionManager::action_terms_t DiplomaticActionManager::get_terms(const std::size_t action_type_index) const {
+	DiplomaticActionTypeStorage const* type = get_diplomatic_action_type_by_index(action_type_index);
+	return type != nullptr ? get_terms(type->get_identifier()) : action_terms_t {};
+}
+
+std::optional<std::size_t> DiplomaticActionManager::get_action_index(const std::string_view identifier) const {
+	std::size_t index = 0;
+	for (DiplomaticActionTypeStorage const& type : get_diplomatic_action_types()) {
+		if (type.get_identifier() == identifier) {
+			return index;
+		}
+		index++;
+	}
+	return std::nullopt;
+}
+
+bool DiplomaticActionManager::propose(
+	const std::size_t action_type_index, CountryInstance* const sender, CountryInstance* const receiver, InstanceManager& instance_manager
+) const {
+	DiplomaticActionTypeStorage const* type = get_diplomatic_action_type_by_index(action_type_index);
+	if (type == nullptr || sender == nullptr || receiver == nullptr || sender == receiver) {
+		return false;
+	}
+	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	const Date today = instance_manager.get_today();
+	if (relations.has_proposal(action_type_index, sender, receiver) || today < relations.get_proposal_cooldown(sender, receiver)) {
+		return false;
+	}
+	if (!create_diplomatic_action_tick(type->get_identifier(), sender, receiver, {}, instance_manager).allowed_to_commit) {
+		return false;
+	}
+	relations.add_proposal(action_type_index, sender, receiver, today);
+	instance_manager.get_notification_log().add(today, receiver, "diplomatic_proposal", type->get_identifier(), sender);
+	return true;
+}
+
+void DiplomaticActionManager::finish_proposal(
+	const CountryRelationManager::proposal_t proposal, const bool accept, InstanceManager& instance_manager
+) const {
+	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	relations.remove_proposal(proposal.id);
+	DiplomaticActionTypeStorage const* type = get_diplomatic_action_type_by_index(proposal.action_index);
+	if (type == nullptr) {
+		return;
+	}
+	const Date today = instance_manager.get_today();
+	const action_terms_t terms = get_terms(proposal.action_index);
+	// The action is done if it still can be (the countries may have gone to war in the meantime)
+	DiplomaticActionTickCache cache =
+		create_diplomatic_action_tick(type->get_identifier(), proposal.sender, proposal.receiver, {}, instance_manager);
+	if (accept && cache.allowed_to_commit) {
+		type->visit([&cache](auto const& action_type) -> void {
+			action_type.commit_action(cache.argument);
+		});
+		relations.change_relation(proposal.sender, proposal.receiver, terms.on_accept);
+		instance_manager.get_notification_log().add(today, proposal.sender, "diplomatic_accepted", type->get_identifier(), proposal.receiver);
+		return;
+	}
+	relations.change_relation(proposal.sender, proposal.receiver, terms.on_decline);
+	if (defines != nullptr && OpenVic::CountryRelationManager::diplomacy_defines != nullptr) {
+		relations.set_proposal_cooldown(
+			proposal.sender, proposal.receiver,
+			today + Timespan::from_months(CountryRelationManager::diplomacy_defines->diplomatic_proposal_cooldown_months)
+		);
+	}
+	instance_manager.get_notification_log().add(today, proposal.sender, "diplomatic_declined", type->get_identifier(), proposal.receiver);
+}
+
+bool DiplomaticActionManager::answer_proposal(
+	const std::uint32_t id, CountryInstance const& receiver, const bool accept, InstanceManager& instance_manager
+) const {
+	CountryRelationManager::proposal_t const* proposal = instance_manager.get_country_relation_manager().find_proposal(id);
+	if (proposal == nullptr || proposal->receiver != &receiver) {
+		return false;
+	}
+	finish_proposal(*proposal, accept, instance_manager);
+	return true;
+}
+
+void DiplomaticActionManager::daily_update(InstanceManager& instance_manager) const {
+	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	if (relations.get_proposals().empty() || CountryRelationManager::diplomacy_defines == nullptr) {
+		return;
+	}
+	const Date today = instance_manager.get_today();
+	const std::int32_t days = CountryRelationManager::diplomacy_defines->diplomatic_proposal_days;
+	// (a copy: declining removes the proposal; the oldest first, in the order they were made)
+	const memory::vector<CountryRelationManager::proposal_t> waiting = relations.get_proposals();
+	for (CountryRelationManager::proposal_t const& proposal : waiting) {
+		if ((today - proposal.date).to_int() >= days) {
+			finish_proposal(proposal, false, instance_manager);
+		}
+	}
 }
 
 bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& defines) {
@@ -126,8 +278,8 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 	};
 
 	bool result = true;
-
-	// TODO: implement  _RELATION_ON_ACCEPT & _RELATION_ON_DECLINE
+	this->defines = &defines;
+	// (the costs in diplomatic points and the changes of the relations when an action is accepted or declined: get_terms, version 96)
 
 	result &= add_diplomatic_action(
 		"form_alliance",
@@ -218,6 +370,11 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 						arg.sender, arg.receiver, true
 					);
 				},
+			// An AI gives the access by its relation (version 96, DiplomacyAI::military_access_acceptance)
+			.get_acceptance =
+				[](Argument const& arg) {
+					return DiplomacyAI::military_access_acceptance(arg.instance_manager, *arg.sender, *arg.receiver);
+				},
 		}
 	);
 	result &= add_diplomatic_action( //
@@ -228,6 +385,11 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 					arg.instance_manager.get_country_relation_manager().set_has_military_access_to( //
 						arg.receiver, arg.sender, true
 					);
+				},
+			// An AI takes the access that is offered unless it is at war with the sender
+			.get_acceptance =
+				[](Argument const& arg) {
+					return arg.receiver->is_at_war_with(*arg.sender) ? 0 : 1;
 				},
 		}
 	);

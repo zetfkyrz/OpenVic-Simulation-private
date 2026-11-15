@@ -496,6 +496,56 @@ void CRM::set_relation_process(CountryInstance* sender, CountryInstance const* r
 	}
 }
 
+CRM::proposal_t const& CRM::add_proposal(
+	const std::size_t action_index, CountryInstance* const sender, CountryInstance* const receiver, const Date date
+) {
+	proposals.push_back({ next_proposal_id++, action_index, sender, receiver, date });
+	return proposals.back();
+}
+
+CRM::proposal_t const* CRM::find_proposal(const std::uint32_t id) const {
+	for (proposal_t const& proposal : proposals) {
+		if (proposal.id == id) {
+			return &proposal;
+		}
+	}
+	return nullptr;
+}
+
+void CRM::remove_proposal(const std::uint32_t id) {
+	std::erase_if(proposals, [id](proposal_t const& proposal) -> bool { return proposal.id == id; });
+}
+
+bool CRM::has_proposal(const std::size_t action_index, CountryInstance const* const sender, CountryInstance const* const receiver) const {
+	for (proposal_t const& proposal : proposals) {
+		if (proposal.action_index == action_index && proposal.sender == sender && proposal.receiver == receiver) {
+			return true;
+		}
+	}
+	return false;
+}
+
+Date CRM::get_proposal_cooldown(CountryInstance const* const sender, CountryInstance const* const receiver) const {
+	decltype(proposal_cooldowns)::const_iterator it = proposal_cooldowns.find({ sender, receiver });
+	return it == proposal_cooldowns.end() ? Date {} : it->second;
+}
+
+void CRM::set_proposal_cooldown(CountryInstance const* const sender, CountryInstance const* const receiver, const Date until) {
+	proposal_cooldowns[{ sender, receiver }] = until;
+}
+
+void CRM::change_relation(CountryInstance* const country, CountryInstance* const recipient, const std::int32_t amount) {
+	if (amount == 0 || country == nullptr || recipient == nullptr || country == recipient) {
+		return;
+	}
+	relation_value_type& value = assign_or_get_country_relation(country, recipient);
+	const std::int32_t low = diplomacy_defines != nullptr ? diplomacy_defines->relation_min : -100;
+	const std::int32_t high = get_relation_limit(country, recipient);
+	const std::int32_t current = value;
+	const std::int32_t changed = current + amount;
+	value = static_cast<relation_value_type>(amount > 0 ? std::min(changed, std::max(current, high)) : std::max(changed, std::min(current, low)));
+}
+
 std::int32_t CRM::get_relation_limit(CountryInstance const* country, CountryInstance const* recipient) const {
 	if (diplomacy_defines == nullptr) {
 		return 200;

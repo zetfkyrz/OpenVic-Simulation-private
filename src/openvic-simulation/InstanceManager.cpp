@@ -333,6 +333,11 @@ void InstanceManager::tick() {
 			sphere_manager.daily_update(*this);
 		}
 		{
+			// the proposals that waited too long for the answer of a player are declined (version 96)
+			OV_PROFILE_SCOPE(tick_profiler, "diplomatic proposals");
+			definition_manager.get_diplomatic_action_manager().daily_update(*this);
+		}
+		{
 			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
 			colonisation_manager.tick(*this);
 		}

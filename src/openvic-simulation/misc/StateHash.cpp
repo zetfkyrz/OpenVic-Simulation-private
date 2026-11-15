@@ -40,6 +40,16 @@ namespace {
 std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	Hasher hasher;
 	hasher.add_signed((instance_manager.get_today() - Date {}).to_int());
+	// The proposals that wait for the answer of a player and the pauses of the AI after a refusal (version 96)
+	for (CountryRelationManager::proposal_t const& proposal : instance_manager.get_country_relation_manager().get_proposals()) {
+		hasher.add(static_cast<std::uint64_t>(proposal.id) + (static_cast<std::uint64_t>(proposal.action_index) << 32));
+		hasher.add(static_cast<std::uint64_t>(type_safe::get(proposal.sender->index)) + (static_cast<std::uint64_t>(type_safe::get(proposal.receiver->index)) << 32));
+		hasher.add_signed((proposal.date - Date {}).to_int());
+	}
+	for (auto const& [pair, until] : instance_manager.get_country_relation_manager().get_proposal_cooldown_values()) {
+		hasher.add(static_cast<std::uint64_t>(type_safe::get(pair.first->index)) + (static_cast<std::uint64_t>(type_safe::get(pair.second->index)) << 32));
+		hasher.add_signed((until - Date {}).to_int());
+	}
 
 	for (ProvinceInstance& province : instance_manager.get_map_instance().get_province_instances()) {
 		CountryInstance const* const owner = province.get_owner();

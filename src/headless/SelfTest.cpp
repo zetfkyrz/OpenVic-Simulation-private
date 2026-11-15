@@ -6584,6 +6584,88 @@ namespace {
 
 	// The principles of the spheres (version 94, docs/PLAN_SPHERES.md): the data, the slots by the countries, the bonus for the leader and the
 	// members, the level by the years, the output of the chosen goods only, the freight of the trading posts
+	// Stage D1 of docs/PLAN_DIPLOMACY_VIC2.md (version 96): the price in diplomatic points, the consent of an AI, the relations after an answer,
+	// the proposals to the country of a player and the pause of the AI after a refusal
+	void test_diplomacy_d1(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		DiplomaticActionManager const& actions = im.definition_manager.get_diplomatic_action_manager();
+		CountryInstance* const sweden = countries.get_country_instance_by_identifier("SWE");
+		CountryInstance* const denmark = countries.get_country_instance_by_identifier("DEN");
+		const std::optional<std::size_t> alliance = actions.get_action_index("form_alliance");
+		const std::optional<std::size_t> access = actions.get_action_index("request_military_access");
+		if (sweden == nullptr || denmark == nullptr || !alliance.has_value() || !access.has_value() || sweden->is_at_war_with(*denmark)) {
+			fmt::println("TEST INFO diplomacy D1: no Sweden and Denmark at peace, or no actions, not checked");
+			return;
+		}
+		relations.set_country_alliance(sweden, denmark, false);
+		relations.set_has_military_access_to(sweden, denmark, false);
+		const DiplomaticActionManager::action_terms_t access_terms = actions.get_terms(*access);
+		const DiplomaticActionManager::action_terms_t alliance_terms = actions.get_terms(*alliance);
+		r.check(access_terms.cost > fixed_point_t::_0 && access_terms.on_decline < 0 && access_terms.on_accept > 0 && alliance_terms.needs_consent,
+			"diplomacy D1: the prices and the changes of the relations come from defines.lua",
+			fmt::format("access: cost {} accept {} decline {}", access_terms.cost, access_terms.on_accept, access_terms.on_decline));
+
+		sweden->set_diplomatic_points(fixed_point_t::_0);
+		r.check(!actions.execute_diplomatic_action(*access, sweden, denmark, {}, im) && !relations.get_has_military_access_to(sweden, denmark),
+			"diplomacy D1: an action without the diplomatic points is not sent");
+
+		// an AI with a bad relation refuses the access: the point is spent, the relation falls
+		const fixed_point_t points = fixed_point_t(5);
+		sweden->set_diplomatic_points(points);
+		relations.set_country_relation(sweden, denmark, -50);
+		const bool refused = !actions.execute_diplomatic_action(*access, sweden, denmark, {}, im);
+		r.check(refused && !relations.get_has_military_access_to(sweden, denmark) && sweden->get_diplomatic_points() == points - access_terms.cost
+				&& relations.get_country_relation(sweden, denmark) == -50 + access_terms.on_decline,
+			"diplomacy D1: a refusal costs the points and changes the relation by the ON_DECLINE of defines.lua",
+			fmt::format("relation {}, points {}", relations.get_country_relation(sweden, denmark), sweden->get_diplomatic_points()));
+		relations.set_country_relation(sweden, denmark, 40);
+		const bool given = actions.execute_diplomatic_action(*access, sweden, denmark, {}, im);
+		r.check(given && relations.get_has_military_access_to(sweden, denmark) && relations.get_country_relation(sweden, denmark) == 40 + access_terms.on_accept,
+			"diplomacy D1: an AI with a good relation gives the access, the relation grows by the ON_ACCEPT of defines.lua",
+			fmt::format("relation {}", relations.get_country_relation(sweden, denmark)));
+
+		// Denmark is the country of a player: the alliance of the AI waits for its answer
+		const bool denmark_ai = denmark->is_ai();
+		denmark->set_ai(false);
+		relations.set_country_relation(sweden, denmark, 50);
+		const bool proposed = actions.propose(*alliance, sweden, denmark, im);
+		std::uint32_t id = 0;
+		for (CountryRelationManager::proposal_t const& proposal : relations.get_proposals()) {
+			if (proposal.sender == sweden && proposal.receiver == denmark) {
+				id = proposal.id;
+			}
+		}
+		r.check(proposed && id != 0 && !sweden->has_alliance_with(*denmark) && !actions.propose(*alliance, sweden, denmark, im),
+			"diplomacy D1: the AI proposes an alliance to the country of a player, it waits for the answer (and is not proposed twice)");
+		r.check(actions.answer_proposal(id, *denmark, true, im) && sweden->has_alliance_with(*denmark)
+				&& relations.get_country_relation(sweden, denmark) == std::min<std::int32_t>(50 + alliance_terms.on_accept, relations.get_relation_limit(sweden, denmark))
+				&& relations.find_proposal(id) == nullptr,
+			"diplomacy D1: the player accepts, the alliance is made and the relation grows",
+			fmt::format("relation {}", relations.get_country_relation(sweden, denmark)));
+
+		// a refusal: the relation falls and the AI waits DIPLOMATIC_PROPOSAL_COOLDOWN_MONTHS before it proposes again
+		relations.set_country_alliance(sweden, denmark, false);
+		relations.set_country_relation(sweden, denmark, 50);
+		const bool proposed_again = actions.propose(*alliance, sweden, denmark, im);
+		id = relations.get_proposals().empty() ? 0 : relations.get_proposals().back().id;
+		r.check(proposed_again && actions.answer_proposal(id, *denmark, false, im) && !sweden->has_alliance_with(*denmark)
+				&& relations.get_country_relation(sweden, denmark) == 50 + alliance_terms.on_decline && !actions.propose(*alliance, sweden, denmark, im)
+				&& relations.get_proposal_cooldown(sweden, denmark) > im.get_today(),
+			"diplomacy D1: the player declines, the relation falls and the AI does not propose again for a while",
+			fmt::format("relation {}", relations.get_country_relation(sweden, denmark)));
+
+		// the country of a player is asked by the player of another country: a proposal too (the actions with consent)
+		sweden->set_diplomatic_points(points);
+		const bool sent = actions.execute_diplomatic_action(*alliance, sweden, denmark, {}, im);
+		r.check(sent && !sweden->has_alliance_with(*denmark) && relations.has_proposal(*alliance, sweden, denmark)
+				&& !actions.answer_proposal(relations.get_proposals().back().id, *sweden, true, im),
+			"diplomacy D1: an alliance sent to the country of a player waits for its answer, only the receiver answers it");
+		id = relations.get_proposals().back().id;
+		actions.answer_proposal(id, *denmark, false, im);
+		denmark->set_ai(denmark_ai);
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -8658,6 +8740,7 @@ namespace {
 		test_spheres(r, *im); // after it: it founds a sphere and changes the members
 		test_sphere_kinds(r, *im); // a war of its own
 		test_sphere_principles(r, *im);
+		test_diplomacy_d1(r, *im);
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

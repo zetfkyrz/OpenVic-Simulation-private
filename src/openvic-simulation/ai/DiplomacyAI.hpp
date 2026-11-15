@@ -17,6 +17,8 @@ namespace OpenVic {
 
 		// Whether the receiver (an AI country) accepts an alliance with the proposer: > 0 yes
 		std::int32_t alliance_acceptance(InstanceManager const& instance_manager, CountryInstance const& proposer, CountryInstance const& receiver);
+		// Whether the AI country giver lets the armies of asker through (version 96): 1 yes, 0 no
+		std::int32_t military_access_acceptance(InstanceManager const& instance_manager, CountryInstance const& asker, CountryInstance const& giver);
 
 		// The interest of a country in another (0..1): 1 for a land neighbour, else the closeness by the sea x the share of its navy
 		fixed_point_t interest(InstanceManager const& instance_manager, CountryInstance const& country, CountryInstance const& other);
