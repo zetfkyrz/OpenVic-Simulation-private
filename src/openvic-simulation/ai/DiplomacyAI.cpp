@@ -454,6 +454,142 @@ fixed_point_t DiplomacyAI::war_target_score(InstanceManager const& instance_mana
 	return score;
 }
 
+namespace {
+	// The countries fight on the same side of a war
+	bool same_side(WarManager const& war_manager, CountryInstance const& country, CountryInstance const& other) {
+		for (War const& war : war_manager.get_wars()) {
+			if (war.has_participant(country) && war.has_participant(other) && war.is_attacker(country) == war.is_attacker(other)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// The biggest size of subsidies to the receiver (50..150) that costs at most the budget a day, 0 if none
+	std::int32_t subsidy_level_within(
+		InstanceManager const& instance_manager, CountryInstance const& receiver, const fixed_point_t budget
+	) {
+		const fixed_point_t base = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_warsubsidies_percent()
+			* receiver.get_actual_military_spending().load();
+		if (base <= fixed_point_t::_0 || budget <= fixed_point_t::_0) {
+			return 0;
+		}
+		for (auto it = CountryRelationManager::WAR_SUBSIDY_LEVELS.rbegin(); it != CountryRelationManager::WAR_SUBSIDY_LEVELS.rend(); ++it) {
+			if (base * *it / 100 <= budget) {
+				return *it;
+			}
+		}
+		return 0;
+	}
+}
+
+void DiplomacyAI::ai_war_subsidies(
+	InstanceManager& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance& country, const Date today
+) {
+	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	WarManager const& war_manager = instance_manager.get_war_manager();
+	const fixed_point_t balance = country.get_balance_before_investment_average();
+	const fixed_point_t income = std::max(country.get_income_yesterday(), fixed_point_t::_0);
+	const fixed_point_t cash = country.get_cash_stockpile().load();
+	// what it can give a day: a share of its surplus (never with a deficit)
+	fixed_point_t budget = balance > fixed_point_t::_0 ? balance * defines.ai_subsidy_surplus_pct / 100 : fixed_point_t::_0;
+	const bool can_pay = balance > fixed_point_t::_0 && cash >= income * defines.ai_subsidy_stop_cash_days;
+	// what it pays: stopped with a deficit, the size follows the surplus
+	for (CountryInstance& receiver : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&receiver == &country || !country.is_sending_war_subsidy_to(receiver)) {
+			continue;
+		}
+		// (the size stays, it only goes down when the surplus no longer pays it)
+		const std::int32_t affordable = can_pay ? subsidy_level_within(instance_manager, receiver, budget) : 0;
+		if (affordable == 0) {
+			country.set_sending_war_subsidy_to(receiver, false);
+			continue;
+		}
+		const std::int32_t level = std::min(affordable, relations.get_war_subsidy_level(&country, &receiver));
+		relations.set_war_subsidy_level(&country, &receiver, level);
+		budget -= instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_warsubsidies_percent()
+			* receiver.get_actual_military_spending().load() * level / 100;
+	}
+	// a new one, sometimes: to a poor country at war, its ally while it is at peace or a smaller country of its side of a war
+	if (!can_pay || cash < income * defines.ai_subsidy_start_cash_days || dice(country, today, 0x5b5) >= defines.ai_subsidy_chance_pct) {
+		return;
+	}
+	for (CountryInstance& receiver : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&receiver == &country || !receiver.exists() || !receiver.is_at_war() || country.is_at_war_with(receiver)
+			|| country.is_sending_war_subsidy_to(receiver)) {
+			continue;
+		}
+		const bool ally_at_war = country.has_alliance_with(receiver) && !country.is_at_war();
+		const bool smaller_partner = power_of(country) > power_of(receiver) && same_side(war_manager, country, receiver);
+		if (!ally_at_war && !smaller_partner) {
+			continue;
+		}
+		const fixed_point_t receiver_income = std::max(receiver.get_income_yesterday(), fixed_point_t::_0);
+		const bool poor = receiver.get_cash_stockpile().load() < receiver_income * defines.ai_subsidy_poor_days
+			|| receiver.get_balance_before_investment_average() < fixed_point_t::_0;
+		if (!poor) {
+			continue;
+		}
+		// a size it can pay, chosen by the dice: an AI gives much or little
+		const std::int32_t affordable = subsidy_level_within(instance_manager, receiver, budget);
+		if (affordable == 0) {
+			continue;
+		}
+		const std::int32_t choices = static_cast<std::int32_t>(std::count_if(
+			CountryRelationManager::WAR_SUBSIDY_LEVELS.begin(), CountryRelationManager::WAR_SUBSIDY_LEVELS.end(),
+			[affordable](const std::int32_t candidate) -> bool { return candidate <= affordable; }
+		));
+		const std::int32_t level = CountryRelationManager::WAR_SUBSIDY_LEVELS[static_cast<std::size_t>(dice(country, today, 0x5b6) % choices)];
+		relations.set_war_subsidy_level(&country, &receiver, level);
+		SPDLOG_INFO("AI: {} pays war subsidies of {} % to {}", country.get_identifier(), level, receiver.get_identifier());
+		if (receiver.is_ai()) {
+			country.set_sending_war_subsidy_to(receiver, true);
+		} else {
+			// the country of a player answers it (the proposals, version 96)
+			DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+			if (const std::optional<std::size_t> index = actions.get_action_index("war_subsidies"); index.has_value()) {
+				actions.propose(*index, &country, &receiver, instance_manager);
+			}
+		}
+		return;
+	}
+}
+
+void DiplomacyAI::ai_military_access(
+	InstanceManager& instance_manager, OpenVicDiplomacyDefines const& defines, CountryInstance& country,
+	std::vector<CountryInstance*> const& own_neighbours, std::vector<std::vector<CountryInstance*>> const& neighbours
+) {
+	if (!country.is_at_war()) {
+		return;
+	}
+	// a neighbour (not an enemy, not a partner whose land is open anyway) that borders an enemy: one request a month
+	for (CountryInstance* const neighbour : own_neighbours) {
+		if (neighbour == nullptr || country.is_at_war_with(*neighbour) || country.has_military_access_to(*neighbour)
+			|| country.is_military_partner(*neighbour)) {
+			continue;
+		}
+		std::vector<CountryInstance*> const& theirs = neighbours[type_safe::get(neighbour->index)];
+		const bool borders_enemy = std::any_of(theirs.begin(), theirs.end(), [&country](CountryInstance const* other) -> bool {
+			return other != nullptr && country.is_at_war_with(*other);
+		});
+		if (!borders_enemy) {
+			continue;
+		}
+		if (neighbour->is_ai()) {
+			if (military_access_acceptance(instance_manager, country, *neighbour) > 0) {
+				instance_manager.get_country_relation_manager().set_has_military_access_to(&country, neighbour, true);
+				SPDLOG_INFO("AI: {} gets military access through {}", country.get_identifier(), neighbour->get_identifier());
+			}
+		} else {
+			DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+			if (const std::optional<std::size_t> index = actions.get_action_index("request_military_access"); index.has_value()) {
+				actions.propose(*index, &country, neighbour, instance_manager);
+			}
+		}
+		return;
+	}
+}
+
 std::int32_t DiplomacyAI::military_access_acceptance(
 	InstanceManager const& instance_manager, CountryInstance const& asker, CountryInstance const& giver
 ) {
@@ -610,34 +746,11 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 			}
 		}
 
-		// The war subsidies (version 97): a rich AI at peace pays them to an ally at war (one at a time), a poor one stops paying
-		{
-			const fixed_point_t daily_income = std::max(country.get_income_yesterday(), fixed_point_t::_0);
-			const fixed_point_t cash = country.get_cash_stockpile().load();
-			OpenVicDiplomacyDefines const& diplomacy_defines =
-				instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
-			bool paying = false;
-			for (CountryInstance& ally : instance_manager.get_country_instance_manager().get_country_instances()) {
-				if (&ally == &country || !country.is_sending_war_subsidy_to(ally)) {
-					continue;
-				}
-				if (cash < daily_income * diplomacy_defines.ai_subsidy_stop_cash_days) {
-					country.set_sending_war_subsidy_to(ally, false);
-				} else {
-					paying = true;
-				}
-			}
-			if (!paying && !country.is_at_war() && daily_income > fixed_point_t::_0
-				&& cash >= daily_income * diplomacy_defines.ai_subsidy_start_cash_days) {
-				for (CountryInstance& ally : instance_manager.get_country_instance_manager().get_country_instances()) {
-					if (&ally != &country && ally.exists() && ally.is_at_war() && country.has_alliance_with(ally)
-						&& !country.is_at_war_with(ally)) {
-						country.set_sending_war_subsidy_to(ally, true);
-						break;
-					}
-				}
-			}
-		}
+		// The war subsidies (version 99, the owner 2026-11-15) and the military access (version 99)
+		section.reset();
+		section.emplace(profiler.scope("subsidies and access"));
+		ai_war_subsidies(instance_manager, defines, country, today);
+		ai_military_access(instance_manager, defines, country, own_neighbours, neighbours);
 
 		// The processes of the relations: the wanted ones, at most AI_MAX_RELATION_PROCESSES; the others stop
 		std::vector<std::pair<CountryInstance*, std::int8_t>> wanted;

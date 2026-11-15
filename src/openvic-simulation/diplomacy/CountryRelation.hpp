@@ -292,6 +292,9 @@ private:
 	private:
 		memory::vector<proposal_t> proposals;
 		std::uint32_t next_proposal_id = 1;
+		// The size of the war subsidies of a sender to a receiver, percent of WARSUBSIDIES_PERCENT of the military spending of the receiver
+		// (version 99: 50, 75, 100, 125 or 150; 100 when none is set)
+		vector_ordered_map<CountryInstancePair, std::int32_t> war_subsidy_levels;
 		// The AI does not propose the same again to a country before this date (after it declined)
 		vector_ordered_map<CountryInstancePair, Date> proposal_cooldowns;
 
@@ -308,6 +311,15 @@ private:
 		void set_proposal_cooldown(CountryInstance const* sender, CountryInstance const* receiver, Date until);
 		decltype(proposal_cooldowns)::values_container_type const& get_proposal_cooldown_values() const {
 			return proposal_cooldowns.values_container();
+		}
+		static constexpr std::array<std::int32_t, 5> WAR_SUBSIDY_LEVELS { 50, 75, 100, 125, 150 };
+		static constexpr bool is_war_subsidy_level(const std::int32_t level) {
+			return std::find(WAR_SUBSIDY_LEVELS.begin(), WAR_SUBSIDY_LEVELS.end(), level) != WAR_SUBSIDY_LEVELS.end();
+		}
+		std::int32_t get_war_subsidy_level(CountryInstance const* sender, CountryInstance const* receiver) const;
+		void set_war_subsidy_level(CountryInstance const* sender, CountryInstance const* receiver, std::int32_t level);
+		decltype(war_subsidy_levels)::values_container_type const& get_war_subsidy_level_values() const {
+			return war_subsidy_levels.values_container();
 		}
 		// Changes the relation of the two by the amount, within RELATION_MIN and the limit of the two (get_relation_limit); a relation that is
 		// already beyond a limit is not pushed further

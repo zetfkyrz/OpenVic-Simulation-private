@@ -6747,6 +6747,16 @@ namespace {
 			"diplomacy D2: the subsidies pay WARSUBSIDIES_PERCENT of the military spending of the receiver a day, the money goes from one treasury to the other",
 			fmt::format("spending {}, paid {}", spending, paid));
 
+		// the size of the subsidies (version 99): 150 % pays one and a half of the subsidy of Vic2
+		relations.set_war_subsidy_level(helper, defender, 150);
+		const fixed_point_t helper_cash_150 = helper->get_cash_stockpile().load();
+		actions.daily_update(im);
+		const fixed_point_t paid_150 = helper_cash_150 - helper->get_cash_stockpile().load();
+		r.check(paid_150 == im.definition_manager.get_define_manager().get_diplomacy_defines().get_warsubsidies_percent() * spending * 150 / 100
+				&& paid_150 > paid,
+			"diplomacy: the war subsidies of 150 % pay one and a half of the subsidy of Vic2",
+			fmt::format("100 %: {}, 150 %: {}", paid, paid_150));
+
 		// the access taken back: an army of the attacker in the land of the helper goes to its own land
 		ArmyInstance& army = attacker->get_armies().front().get();
 		ProvinceInstance* const foreign = helper->get_capital();

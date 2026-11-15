@@ -254,7 +254,7 @@ void DiplomaticActionManager::finish_proposal(
 	if (terms.dishonour && defines != nullptr) {
 		proposal.receiver->add_prestige(defines->get_dishonored_callally_prestige_penalty());
 	}
-	if (type->get_identifier() == "form_alliance" && OpenVic::CountryRelationManager::diplomacy_defines != nullptr) {
+	if (type->get_identifier() != "call_ally" && OpenVic::CountryRelationManager::diplomacy_defines != nullptr) {
 		relations.set_proposal_cooldown(
 			proposal.sender, proposal.receiver,
 			today + Timespan::from_months(CountryRelationManager::diplomacy_defines->diplomatic_proposal_cooldown_months)
@@ -306,8 +306,10 @@ void DiplomaticActionManager::daily_update(InstanceManager& instance_manager) co
 				instance_manager.get_notification_log().add(instance_manager.get_today(), sender, "war_subsidies_ended", "", receiver);
 				continue;
 			}
+			// (the size the sender chose: 50 to 150 % of the subsidy of Vic2, version 99)
 			const fixed_point_t amount = std::min(
-				defines->get_warsubsidies_percent() * receiver->get_actual_military_spending().load(), sender->get_cash_stockpile().load()
+				defines->get_warsubsidies_percent() * receiver->get_actual_military_spending().load() * relations.get_war_subsidy_level(sender, receiver) / 100,
+				sender->get_cash_stockpile().load()
 			);
 			if (amount > fixed_point_t::_0) {
 				sender->spend_cash(amount);

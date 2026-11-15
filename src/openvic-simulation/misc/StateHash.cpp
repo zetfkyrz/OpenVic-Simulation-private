@@ -46,6 +46,10 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add(static_cast<std::uint64_t>(type_safe::get(proposal.sender->index)) + (static_cast<std::uint64_t>(type_safe::get(proposal.receiver->index)) << 32));
 		hasher.add_signed((proposal.date - Date {}).to_int());
 	}
+	for (auto const& [pair, level] : instance_manager.get_country_relation_manager().get_war_subsidy_level_values()) {
+		hasher.add(static_cast<std::uint64_t>(type_safe::get(pair.first->index)) + (static_cast<std::uint64_t>(type_safe::get(pair.second->index)) << 32));
+		hasher.add_signed(level);
+	}
 	for (auto const& [pair, until] : instance_manager.get_country_relation_manager().get_proposal_cooldown_values()) {
 		hasher.add(static_cast<std::uint64_t>(type_safe::get(pair.first->index)) + (static_cast<std::uint64_t>(type_safe::get(pair.second->index)) << 32));
 		hasher.add_signed((until - Date {}).to_int());

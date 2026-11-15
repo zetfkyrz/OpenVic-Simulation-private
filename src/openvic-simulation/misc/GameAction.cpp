@@ -434,6 +434,27 @@ bool GameActionManager::VariantVisitor::operator() (answer_diplomatic_proposal_a
 	return instance_manager.definition_manager.get_diplomatic_action_manager().answer_proposal(proposal_id, country, accept, instance_manager);
 }
 
+// The war subsidies of a size (version 99): 50, 75, 100, 125 or 150 % of the subsidy of Vic2; the size of subsidies already paid changes
+bool GameActionManager::VariantVisitor::operator() (give_war_subsidies_argument_t const& argument) const {
+	const auto [sender_index, receiver_index, level] = argument;
+	if (!CountryRelationManager::is_war_subsidy_level(level)) {
+		return false;
+	}
+	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
+	CountryInstance& sender = countries.get_country_instance_by_index(sender_index);
+	CountryInstance& receiver = countries.get_country_instance_by_index(receiver_index);
+	if (&sender == &receiver) {
+		return false;
+	}
+	instance_manager.get_country_relation_manager().set_war_subsidy_level(&sender, &receiver, level);
+	if (sender.is_sending_war_subsidy_to(receiver)) {
+		return true;
+	}
+	DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+	const std::optional<std::size_t> index = actions.get_action_index("war_subsidies");
+	return index.has_value() && actions.execute_diplomatic_action(*index, &sender, &receiver, {}, instance_manager);
+}
+
 bool GameActionManager::VariantVisitor::operator() (set_mobilise_argument_t const& argument) const {
 	const auto [country_index, new_is_mobilised] = argument;
 	CountryInstance& country = instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index);

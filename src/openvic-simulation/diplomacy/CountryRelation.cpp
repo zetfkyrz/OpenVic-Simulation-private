@@ -536,6 +536,15 @@ void CRM::set_proposal_cooldown(CountryInstance const* const sender, CountryInst
 	proposal_cooldowns[{ sender, receiver }] = until;
 }
 
+std::int32_t CRM::get_war_subsidy_level(CountryInstance const* const sender, CountryInstance const* const receiver) const {
+	decltype(war_subsidy_levels)::const_iterator it = war_subsidy_levels.find({ sender, receiver });
+	return it == war_subsidy_levels.end() ? 100 : it->second;
+}
+
+void CRM::set_war_subsidy_level(CountryInstance const* const sender, CountryInstance const* const receiver, const std::int32_t level) {
+	war_subsidy_levels[{ sender, receiver }] = is_war_subsidy_level(level) ? level : 100;
+}
+
 void CRM::change_relation(CountryInstance* const country, CountryInstance* const recipient, const std::int32_t amount) {
 	if (amount == 0 || country == nullptr || recipient == nullptr || country == recipient) {
 		return;

@@ -1185,11 +1185,18 @@ namespace OpenVic {
 	INT(DIPLOMATIC_PROPOSAL_DAYS, diplomatic_proposal_days, 30, 1, 3650) \
 	INT(DIPLOMATIC_PROPOSAL_COOLDOWN_MONTHS, diplomatic_proposal_cooldown_months, 12, 0, 1200) \
 	INT(AI_MILITARY_ACCESS_MIN_RELATION, ai_military_access_min_relation, 0, -200, 200) \
-	/* Stage D2 (version 97): an AI country that is not at war pays war subsidies (WARSUBSIDIES_PERCENT of the military spending of the ally */ \
-	/* every day, defines.lua) to an ally at war while its treasury holds AI_SUBSIDY_START_CASH_DAYS days of its income; it stops below */ \
-	/* AI_SUBSIDY_STOP_CASH_DAYS */ \
-	INT(AI_SUBSIDY_START_CASH_DAYS, ai_subsidy_start_cash_days, 180, 0, 100000) \
-	INT(AI_SUBSIDY_STOP_CASH_DAYS, ai_subsidy_stop_cash_days, 60, 0, 100000) \
+	/* The war subsidies of the AI (version 99, the owner 2026-11-15): never with a deficit of the budget (the average daily balance below 0). */ \
+	/* With AI_SUBSIDY_CHANCE_PCT a month, an AI with a surplus and AI_SUBSIDY_START_CASH_DAYS days of income in the treasury pays a poor */ \
+	/* country at war (less than AI_SUBSIDY_POOR_DAYS days of income in the treasury, or a deficit): its ally while it is at peace itself, */ \
+	/* or a smaller country on its side of a war. The size (50, 75, 100, 125 or 150 % of WARSUBSIDIES_PERCENT of the military spending of */ \
+	/* the receiver) is the biggest one that costs at most AI_SUBSIDY_SURPLUS_PCT percent of its surplus; it is checked every month, a */ \
+	/* deficit or less than AI_SUBSIDY_STOP_CASH_DAYS days of income in the treasury stops it */ \
+	INT(AI_SUBSIDY_START_CASH_DAYS, ai_subsidy_start_cash_days, 60, 0, 100000) \
+	INT(AI_SUBSIDY_STOP_CASH_DAYS, ai_subsidy_stop_cash_days, 15, 0, 100000) \
+	INT(AI_SUBSIDY_CHANCE_PCT, ai_subsidy_chance_pct, 50, 0, 100) \
+	INT(AI_SUBSIDY_POOR_DAYS, ai_subsidy_poor_days, 30, 0, 100000) \
+	INT(AI_SUBSIDY_SURPLUS_PCT, ai_subsidy_surplus_pct, 25, 0, 100) \
+	/* The military access of the AI (version 99): an AI at war asks a neighbour that borders an enemy of it for access, one a month */ \
 	/* Stage D3 (version 98): a country with more infamy than BADBOY_LIMIT of defines.lua (25) can be attacked by anybody with a casus belli, */ \
 	/* and the AI fears it AI_INFAMOUS_THREAT_PCT percent more */ \
 	INT(AI_INFAMOUS_THREAT_PCT, ai_infamous_threat_pct, 50, 0, 1000)
