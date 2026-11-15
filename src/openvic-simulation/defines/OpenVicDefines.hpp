@@ -1184,7 +1184,12 @@ namespace OpenVic {
 	/* least AI_MILITARY_ACCESS_MIN_RELATION (to an ally or a member of its sphere always, never to a country at war with one of its allies) */ \
 	INT(DIPLOMATIC_PROPOSAL_DAYS, diplomatic_proposal_days, 30, 1, 3650) \
 	INT(DIPLOMATIC_PROPOSAL_COOLDOWN_MONTHS, diplomatic_proposal_cooldown_months, 12, 0, 1200) \
-	INT(AI_MILITARY_ACCESS_MIN_RELATION, ai_military_access_min_relation, 0, -200, 200)
+	INT(AI_MILITARY_ACCESS_MIN_RELATION, ai_military_access_min_relation, 0, -200, 200) \
+	/* Stage D2 (version 97): an AI country that is not at war pays war subsidies (WARSUBSIDIES_PERCENT of the military spending of the ally */ \
+	/* every day, defines.lua) to an ally at war while its treasury holds AI_SUBSIDY_START_CASH_DAYS days of its income; it stops below */ \
+	/* AI_SUBSIDY_STOP_CASH_DAYS */ \
+	INT(AI_SUBSIDY_START_CASH_DAYS, ai_subsidy_start_cash_days, 180, 0, 100000) \
+	INT(AI_SUBSIDY_STOP_CASH_DAYS, ai_subsidy_stop_cash_days, 60, 0, 100000)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
 	OV_DEFINE_GROUP(OpenVicPopulationDefines, "ov_population", OV_POPULATION_DEFINES)

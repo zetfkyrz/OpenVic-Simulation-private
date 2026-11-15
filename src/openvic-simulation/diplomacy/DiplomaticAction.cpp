@@ -14,6 +14,9 @@
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
+#include "openvic-simulation/map/MapInstance.hpp"
+#include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/types/IdentifierRegistry.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
@@ -128,6 +131,9 @@ bool DiplomaticActionManager::execute_diplomatic_action(
 	// An AI answers by its acceptance (the actions without one are always accepted)
 	if (cache.acceptance <= 0) {
 		relations.change_relation(sender, receiver, terms.on_decline);
+		if (terms.dishonour && defines != nullptr) {
+			receiver->add_prestige(defines->get_dishonored_callally_prestige_penalty());
+		}
 		instance_manager.get_notification_log().add(today, sender, "diplomatic_declined", type->get_identifier(), receiver);
 		return false;
 	}
@@ -155,8 +161,14 @@ DiplomaticActionManager::action_terms_t DiplomaticActionManager::get_terms(const
 		return { d.get_cancelalliance_diplomatic_cost(), value(d.get_cancelalliance_relation_on_accept()), 0, false };
 	}
 	if (identifier == "call_ally") {
-		// (the consent of an ally is its acceptance of the war, version 93; the country of a player joins at once, D2 will ask him)
-		return { d.get_callally_diplomatic_cost(), value(d.get_callally_relation_on_accept()), value(d.get_callally_relation_on_decline()), false };
+		// the call to arms (version 97): the country of a player answers it, a refusal is a dishonour
+		return { d.get_callally_diplomatic_cost(), value(d.get_callally_relation_on_accept()), value(d.get_callally_relation_on_decline()), true, true };
+	}
+	if (identifier == "cancel_military_access") {
+		return { d.get_cancelaskmilaccess_diplomatic_cost(), value(d.get_cancelaskmilaccess_relation_on_accept()), 0, false };
+	}
+	if (identifier == "revoke_military_access") {
+		return { d.get_cancelgivemilaccess_diplomatic_cost(), value(d.get_cancelgivemilaccess_relation_on_accept()), 0, false };
 	}
 	if (identifier == "request_military_access") {
 		return { d.get_askmilaccess_diplomatic_cost(), value(d.get_askmilaccess_relation_on_accept()),
@@ -192,7 +204,8 @@ std::optional<std::size_t> DiplomaticActionManager::get_action_index(const std::
 }
 
 bool DiplomaticActionManager::propose(
-	const std::size_t action_type_index, CountryInstance* const sender, CountryInstance* const receiver, InstanceManager& instance_manager
+	const std::size_t action_type_index, CountryInstance* const sender, CountryInstance* const receiver, InstanceManager& instance_manager,
+	const bool respect_cooldown
 ) const {
 	DiplomaticActionTypeStorage const* type = get_diplomatic_action_type_by_index(action_type_index);
 	if (type == nullptr || sender == nullptr || receiver == nullptr || sender == receiver) {
@@ -200,7 +213,7 @@ bool DiplomaticActionManager::propose(
 	}
 	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
 	const Date today = instance_manager.get_today();
-	if (relations.has_proposal(action_type_index, sender, receiver) || today < relations.get_proposal_cooldown(sender, receiver)) {
+	if (relations.has_proposal(action_type_index, sender, receiver) || (respect_cooldown && today < relations.get_proposal_cooldown(sender, receiver))) {
 		return false;
 	}
 	if (!create_diplomatic_action_tick(type->get_identifier(), sender, receiver, {}, instance_manager).allowed_to_commit) {
@@ -225,7 +238,11 @@ void DiplomaticActionManager::finish_proposal(
 	// The action is done if it still can be (the countries may have gone to war in the meantime)
 	DiplomaticActionTickCache cache =
 		create_diplomatic_action_tick(type->get_identifier(), proposal.sender, proposal.receiver, {}, instance_manager);
-	if (accept && cache.allowed_to_commit) {
+	// (a proposal that cannot be done any more, the war of a call to arms is over: it just goes, nobody is dishonoured)
+	if (!cache.allowed_to_commit) {
+		return;
+	}
+	if (accept) {
 		type->visit([&cache](auto const& action_type) -> void {
 			action_type.commit_action(cache.argument);
 		});
@@ -234,7 +251,10 @@ void DiplomaticActionManager::finish_proposal(
 		return;
 	}
 	relations.change_relation(proposal.sender, proposal.receiver, terms.on_decline);
-	if (defines != nullptr && OpenVic::CountryRelationManager::diplomacy_defines != nullptr) {
+	if (terms.dishonour && defines != nullptr) {
+		proposal.receiver->add_prestige(defines->get_dishonored_callally_prestige_penalty());
+	}
+	if (type->get_identifier() == "form_alliance" && OpenVic::CountryRelationManager::diplomacy_defines != nullptr) {
 		relations.set_proposal_cooldown(
 			proposal.sender, proposal.receiver,
 			today + Timespan::from_months(CountryRelationManager::diplomacy_defines->diplomatic_proposal_cooldown_months)
@@ -254,8 +274,47 @@ bool DiplomaticActionManager::answer_proposal(
 	return true;
 }
 
+void DiplomaticActionManager::call_player_allies(InstanceManager& instance_manager, CountryInstance& leader) const {
+	const std::optional<std::size_t> index = get_action_index("call_ally");
+	if (!index.has_value()) {
+		return;
+	}
+	for (CountryInstance& country : instance_manager.get_country_instance_manager().get_country_instances()) {
+		if (&country != &leader && !country.is_ai() && country.exists() && leader.has_alliance_with(country)) {
+			propose(*index, &leader, &country, instance_manager, false);
+		}
+	}
+}
+
 void DiplomaticActionManager::daily_update(InstanceManager& instance_manager) const {
 	CountryRelationManager& relations = instance_manager.get_country_relation_manager();
+	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
+	// The war subsidies (version 97): WARSUBSIDIES_PERCENT of the military spending of the receiver of the day, as much as the sender has;
+	// they end when the receiver is at peace. (a copy: ending changes the map; in the order of the map)
+	if (defines != nullptr && !relations.get_war_subsidies_to_values().empty()) {
+		memory::vector<std::pair<CountryInstance*, CountryInstance*>> paying;
+		for (auto const& [pair, active] : relations.get_war_subsidies_to_values()) {
+			if (active) {
+				paying.emplace_back(
+					&countries.get_country_instance_by_index(pair.first->index), &countries.get_country_instance_by_index(pair.second->index)
+				);
+			}
+		}
+		for (auto const& [sender, receiver] : paying) {
+			if (!receiver->is_at_war() || sender->is_at_war_with(*receiver)) {
+				relations.set_war_subsidies_to(sender, receiver, false);
+				instance_manager.get_notification_log().add(instance_manager.get_today(), sender, "war_subsidies_ended", "", receiver);
+				continue;
+			}
+			const fixed_point_t amount = std::min(
+				defines->get_warsubsidies_percent() * receiver->get_actual_military_spending().load(), sender->get_cash_stockpile().load()
+			);
+			if (amount > fixed_point_t::_0) {
+				sender->spend_cash(amount);
+				receiver->add_cash(amount);
+			}
+		}
+	}
 	if (relations.get_proposals().empty() || CountryRelationManager::diplomacy_defines == nullptr) {
 		return;
 	}
@@ -431,6 +490,12 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 					arg.instance_manager.get_country_relation_manager().set_war_subsidies_to( //
 						arg.sender, arg.receiver, true
 					);
+				},
+			// (only to a country at war that we do not fight, version 97: the money goes every day, DiplomaticActionManager::daily_update)
+			.allowed =
+				[](Argument const& arg) {
+					return arg.receiver->is_at_war() && !arg.sender->is_at_war_with(*arg.receiver)
+						&& !arg.sender->is_sending_war_subsidy_to(*arg.receiver);
 				},
 		}
 	);
@@ -652,7 +717,71 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 				},
 		}
 	);
+	// Version 97 (stage D2): give up our access through the receiver; take back the access of the receiver through our land, its armies
+	// there go to its nearest province where they may stand
+	result &= add_diplomatic_action(
+		"cancel_military_access",
+		{
+			.commit =
+				[](Argument& arg) {
+					arg.instance_manager.get_country_relation_manager().set_has_military_access_to(arg.sender, arg.receiver, false);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return arg.sender->has_military_access_to(*arg.receiver);
+				},
+		}
+	);
+	result &= add_diplomatic_action(
+		"revoke_military_access",
+		{
+			.commit =
+				[](Argument& arg) {
+					arg.instance_manager.get_country_relation_manager().set_has_military_access_to(arg.receiver, arg.sender, false);
+					expel_armies(arg.instance_manager, *arg.receiver, *arg.sender);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return arg.receiver->has_military_access_to(*arg.sender);
+				},
+		}
+	);
 	diplomatic_action_types.lock();
 
 	return result;
+}
+
+void DiplomaticActionManager::expel_armies(InstanceManager& instance_manager, CountryInstance& country, CountryInstance const& from) {
+	MapInstance& map = instance_manager.get_map_instance();
+	for (ArmyInstance& army : country.get_armies()) {
+		ProvinceInstance& location = army.get_location();
+		if (location.get_owner() != &from || army.is_in_combat() || UnitInstanceGroup::can_country_enter(country, location)) {
+			continue;
+		}
+		// the nearest province (by steps over the land) where the army may stand
+		memory::vector<ProvinceInstance*> frontier { &location };
+		memory::vector<ProvinceInstance*> seen { &location };
+		ProvinceInstance* destination = nullptr;
+		for (std::size_t i = 0; i < frontier.size() && destination == nullptr && i < 4096; ++i) {
+			for (ProvinceDefinition::adjacency_t const& adjacency : frontier[i]->province_definition.get_adjacencies()) {
+				if (adjacency.get_type() == ProvinceDefinition::adjacency_t::type_t::IMPASSABLE || static_cast<ProvinceDefinition const&>(adjacency.get_to()).is_water()) {
+					continue;
+				}
+				ProvinceInstance& next = map.get_province_instance_by_definition(adjacency.get_to());
+				if (std::find(seen.begin(), seen.end(), &next) != seen.end()) {
+					continue;
+				}
+				seen.push_back(&next);
+				if (UnitInstanceGroup::can_country_enter(country, next)) {
+					destination = &next;
+					break;
+				}
+				frontier.push_back(&next);
+			}
+		}
+		if (destination != nullptr) {
+			army.clear_path();
+			army.set_location(*destination);
+		}
+	}
 }

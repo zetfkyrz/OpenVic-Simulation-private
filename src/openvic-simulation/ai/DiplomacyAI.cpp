@@ -606,6 +606,35 @@ void DiplomacyAI::monthly_update(InstanceManager& instance_manager) {
 			}
 		}
 
+		// The war subsidies (version 97): a rich AI at peace pays them to an ally at war (one at a time), a poor one stops paying
+		{
+			const fixed_point_t daily_income = std::max(country.get_income_yesterday(), fixed_point_t::_0);
+			const fixed_point_t cash = country.get_cash_stockpile().load();
+			OpenVicDiplomacyDefines const& diplomacy_defines =
+				instance_manager.definition_manager.get_define_manager().get_openvic_defines().diplomacy;
+			bool paying = false;
+			for (CountryInstance& ally : instance_manager.get_country_instance_manager().get_country_instances()) {
+				if (&ally == &country || !country.is_sending_war_subsidy_to(ally)) {
+					continue;
+				}
+				if (cash < daily_income * diplomacy_defines.ai_subsidy_stop_cash_days) {
+					country.set_sending_war_subsidy_to(ally, false);
+				} else {
+					paying = true;
+				}
+			}
+			if (!paying && !country.is_at_war() && daily_income > fixed_point_t::_0
+				&& cash >= daily_income * diplomacy_defines.ai_subsidy_start_cash_days) {
+				for (CountryInstance& ally : instance_manager.get_country_instance_manager().get_country_instances()) {
+					if (&ally != &country && ally.exists() && ally.is_at_war() && country.has_alliance_with(ally)
+						&& !country.is_at_war_with(ally)) {
+						country.set_sending_war_subsidy_to(ally, true);
+						break;
+					}
+				}
+			}
+		}
+
 		// The processes of the relations: the wanted ones, at most AI_MAX_RELATION_PROCESSES; the others stop
 		std::vector<std::pair<CountryInstance*, std::int8_t>> wanted;
 		section.reset();

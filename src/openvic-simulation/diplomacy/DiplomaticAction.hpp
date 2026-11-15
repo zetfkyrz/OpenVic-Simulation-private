@@ -129,6 +129,8 @@ namespace OpenVic {
 		IdentifierRegistry<DiplomaticActionTypeStorage> IDENTIFIER_REGISTRY(diplomatic_action_type);
 		DiplomacyDefines const* defines = nullptr;
 
+		// The armies of the country in the land of from that may not stand there go to the nearest province where they may (version 97)
+		static void expel_armies(InstanceManager& instance_manager, CountryInstance& country, CountryInstance const& from);
 		// The proposal is accepted (the action is done if it still can be) or declined: the relations and the news (version 96)
 		void finish_proposal(CountryRelationManager::proposal_t proposal, bool accept, InstanceManager& instance_manager) const;
 
@@ -140,6 +142,8 @@ namespace OpenVic {
 			std::int32_t on_accept = 0;
 			std::int32_t on_decline = 0;
 			bool needs_consent = false;
+			// a refusal costs the receiver DISHONORED_CALLALLY_PRESTIGE_PENALTY of prestige (the call to arms, version 97)
+			bool dishonour = false;
 		};
 		action_terms_t get_terms(std::string_view identifier) const;
 		action_terms_t get_terms(std::size_t action_type_index) const;
@@ -147,10 +151,16 @@ namespace OpenVic {
 		std::optional<std::size_t> get_action_index(std::string_view identifier) const;
 		// A proposal of the AI to the country of a player (free for the AI, like its alliances between AI countries); false when the same
 		// proposal waits already or the receiver declined it not long ago
-		bool propose(std::size_t action_type_index, CountryInstance* sender, CountryInstance* receiver, InstanceManager& instance_manager) const;
+		bool propose(
+			std::size_t action_type_index, CountryInstance* sender, CountryInstance* receiver, InstanceManager& instance_manager,
+			bool respect_cooldown = true
+		) const;
+		// The calls to arms of a new war to the allies that are countries of players (version 97: they answer, the AI allies join at once)
+		void call_player_allies(InstanceManager& instance_manager, CountryInstance& leader) const;
 		// The answer of the receiver to a proposal (false if there is no such proposal to him)
 		bool answer_proposal(std::uint32_t id, CountryInstance const& receiver, bool accept, InstanceManager& instance_manager) const;
-		// Every day: the proposals older than DIPLOMATIC_PROPOSAL_DAYS are declined
+		// Every day: the proposals older than DIPLOMATIC_PROPOSAL_DAYS are declined; the war subsidies are paid (WARSUBSIDIES_PERCENT of the
+		// military spending of the receiver of the day) and end when the receiver is at peace (version 97)
 		void daily_update(InstanceManager& instance_manager) const;
 
 		constexpr DiplomaticActionManager() {};

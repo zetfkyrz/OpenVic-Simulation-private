@@ -257,6 +257,10 @@ bool WarManager::declare_war(
 			continue;
 		}
 
+		// (the country of a player is called to arms and answers itself, version 97: DiplomaticActionManager::call_player_allies below)
+		if (!country.is_ai()) {
+			continue;
+		}
 		if (allied_to_attacker) {
 			if (!country.is_at_war_with(attacker)) {
 				war.attackers.push_back(&country);
@@ -283,6 +287,10 @@ bool WarManager::declare_war(
 	);
 
 	wars.push_back(std::move(war));
+	// the allies that are countries of players are called to arms by the leaders of the two sides (version 97)
+	DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
+	actions.call_player_allies(instance_manager, attacker);
+	actions.call_player_allies(instance_manager, defender);
 	return true;
 }
 

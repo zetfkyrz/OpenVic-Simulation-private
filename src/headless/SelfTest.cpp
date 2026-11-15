@@ -6666,6 +6666,111 @@ namespace {
 		denmark->set_ai(denmark_ai);
 	}
 
+	// Stage D2 of docs/PLAN_DIPLOMACY_VIC2.md (version 97): the call to arms of a player and the dishonour of a refusal, the money of the war
+	// subsidies, the access taken back (the armies go home)
+	void test_diplomacy_d2(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		CountryRelationManager& relations = im.get_country_relation_manager();
+		DiplomaticActionManager const& actions = im.definition_manager.get_diplomatic_action_manager();
+		WarManager& war_manager = im.get_war_manager();
+		const auto free_country = [&](CountryInstance const& country) -> bool {
+			return country.exists() && !country.is_rebel_country() && !country.is_at_war() && !country.get_owned_provinces().empty()
+				&& relations.get_alliance_count(&country) == 0 && country.get_sphere_owner_untracked() == nullptr && !country.get_leads_sphere();
+		};
+		CountryInstance* attacker = nullptr;
+		CountryInstance* defender = nullptr;
+		CountryInstance* helper = nullptr;
+		for (CountryInstance& a : countries.get_country_instances()) {
+			if (attacker != nullptr) {
+				break;
+			}
+			if (!free_country(a) || a.get_armies().empty()) {
+				continue;
+			}
+			for (CountryInstance& d : countries.get_country_instances()) {
+				if (&d != &a && free_country(d) && war_manager.can_declare_war(a, d, im.get_today())) {
+					attacker = &a;
+					defender = &d;
+					break;
+				}
+			}
+		}
+		if (attacker != nullptr) {
+			for (CountryInstance& h : countries.get_country_instances()) {
+				if (&h != attacker && &h != defender && free_country(h) && !h.get_owned_provinces().empty()) {
+					helper = &h;
+					break;
+				}
+			}
+		}
+		const std::optional<std::size_t> call = actions.get_action_index("call_ally");
+		const std::optional<std::size_t> subsidies = actions.get_action_index("war_subsidies");
+		const std::optional<std::size_t> revoke = actions.get_action_index("revoke_military_access");
+		if (attacker == nullptr || helper == nullptr || !call.has_value() || !subsidies.has_value() || !revoke.has_value()) {
+			fmt::println("TEST INFO diplomacy D2: no three free countries or no actions, not checked");
+			return;
+		}
+
+		// the ally of the defender is a player: called to arms, not drawn in; he declines: dishonour
+		const bool helper_ai = helper->is_ai();
+		helper->set_ai(false);
+		relations.set_country_alliance(defender, helper, true);
+		const bool declared = war_manager.declare_war(im, *attacker, *defender);
+		r.check(declared && !helper->is_at_war() && relations.has_proposal(*call, defender, helper),
+			"diplomacy D2: the ally that is a country of a player is called to arms, it is not drawn into the war");
+		std::uint32_t id = 0;
+		for (CountryRelationManager::proposal_t const& proposal : relations.get_proposals()) {
+			if (proposal.receiver == helper && proposal.action_index == *call) {
+				id = proposal.id;
+			}
+		}
+		const fixed_point_t prestige = helper->get_prestige_untracked();
+		const std::int32_t relation = relations.get_country_relation(defender, helper);
+		const DiplomaticActionManager::action_terms_t call_terms = actions.get_terms(*call);
+		r.check(actions.answer_proposal(id, *helper, false, im) && !helper->is_at_war()
+				&& helper->get_prestige_untracked() == prestige + im.definition_manager.get_define_manager().get_diplomacy_defines().get_dishonored_callally_prestige_penalty()
+				&& relations.get_country_relation(defender, helper) == relation + call_terms.on_decline,
+			"diplomacy D2: a refused call to arms costs the prestige of DISHONORED_CALLALLY_PRESTIGE_PENALTY and the relation",
+			fmt::format("prestige {} -> {}", prestige, helper->get_prestige_untracked()));
+
+		// the war subsidies: WARSUBSIDIES_PERCENT of the military spending of the receiver every day, from the treasury of the sender
+		helper->set_diplomatic_points(fixed_point_t(5));
+		helper->add_cash(fixed_point_t(100000));
+		const bool paying = actions.execute_diplomatic_action(*subsidies, helper, defender, {}, im) && helper->is_sending_war_subsidy_to(*defender);
+		const fixed_point_t spending = defender->get_actual_military_spending().load();
+		const fixed_point_t helper_cash = helper->get_cash_stockpile().load();
+		const fixed_point_t defender_cash = defender->get_cash_stockpile().load();
+		actions.daily_update(im);
+		const fixed_point_t paid = helper_cash - helper->get_cash_stockpile().load();
+		r.check(paying && spending > fixed_point_t::_0 && paid > fixed_point_t::_0 && paid == defender->get_cash_stockpile().load() - defender_cash
+				&& paid == im.definition_manager.get_define_manager().get_diplomacy_defines().get_warsubsidies_percent() * spending,
+			"diplomacy D2: the subsidies pay WARSUBSIDIES_PERCENT of the military spending of the receiver a day, the money goes from one treasury to the other",
+			fmt::format("spending {}, paid {}", spending, paid));
+
+		// the access taken back: an army of the attacker in the land of the helper goes to its own land
+		ArmyInstance& army = attacker->get_armies().front().get();
+		ProvinceInstance* const foreign = helper->get_capital();
+		if (foreign != nullptr && !army.is_in_combat()) {
+			relations.set_has_military_access_to(attacker, helper, true);
+			army.set_location(*foreign);
+			helper->set_diplomatic_points(fixed_point_t(5));
+			const bool revoked = actions.execute_diplomatic_action(*revoke, helper, attacker, {}, im);
+			r.check(revoked && !attacker->has_military_access_to(*helper) && army.get_location().get_owner() != helper
+					&& UnitInstanceGroup::can_country_enter(*attacker, army.get_location()),
+				"diplomacy D2: the access taken back sends the armies home (to the nearest province where they may stand)",
+				fmt::format("army in {}", army.get_location().get_identifier()));
+		}
+
+		// the war ends: the subsidies end
+		if (War const* const war = war_manager.find_war_between(*attacker, *defender); war != nullptr) {
+			war_manager.end_war(im, war->id);
+		}
+		actions.daily_update(im);
+		r.check(!helper->is_sending_war_subsidy_to(*defender), "diplomacy D2: the subsidies end with the war");
+		relations.set_country_alliance(defender, helper, false);
+		helper->set_ai(helper_ai);
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -8741,6 +8846,7 @@ namespace {
 		test_sphere_kinds(r, *im); // a war of its own
 		test_sphere_principles(r, *im);
 		test_diplomacy_d1(r, *im);
+		test_diplomacy_d2(r, *im);
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)
