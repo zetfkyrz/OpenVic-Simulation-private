@@ -747,6 +747,8 @@ namespace OpenVic {
 		fixed_point_t subject_rgo_multiplier = fixed_point_t::_1;
 		fixed_point_t subject_factory_multiplier = fixed_point_t::_1;
 		fixed_point_t subject_tribute_yesterday;
+		// a colonial subject: the share of the output of its RGOs put aside for the overlord, by the index of the good (empty: none, version 102)
+		memory::vector<fixed_point_t> subject_goods_share;
 		// a colonial subject and a crown land research what the overlord knows this percent cheaper (SUBJECT_RESEARCH_DISCOUNT_PCT)
 		static inline std::int32_t subject_research_discount_pct = 0;
 		[[nodiscard]] bool is_subject() const {

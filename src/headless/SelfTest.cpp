@@ -7023,6 +7023,58 @@ namespace {
 			std::string { reason.c_str() });
 	}
 
+	// Version 102: the release of nations, the raw goods of a colonial subject
+	void test_release_nations(Results& r, InstanceManager& im) {
+		using subject_type_t = CountryInstance::subject_type_t;
+		CountryInstance* country = nullptr;
+		Subjects::releasable_t chosen;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			if (!candidate.exists() || candidate.is_at_war() || candidate.overlord != nullptr) {
+				continue;
+			}
+			for (Subjects::releasable_t const& entry : Subjects::get_releasable_nations(candidate)) {
+				if (!entry.states.empty()) {
+					country = &candidate;
+					chosen = entry;
+					break;
+				}
+			}
+			if (country != nullptr) {
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO release nations: no country can release a nation, not checked");
+			return;
+		}
+		CountryInstance& nation = *chosen.nation;
+		const std::size_t provinces = country->get_owned_provinces().size();
+		const fixed_point_t cash = country->get_cash_stockpile().load() + nation.get_cash_stockpile().load();
+		const bool colonial_blocked = chosen.colonial || !Subjects::get_release_block_reason(*country, chosen, subject_type_t::COLONIAL).empty();
+		const bool released = Subjects::release_nation(im, *country, nation, subject_type_t::PUPPET);
+		r.check(released && nation.exists() && nation.overlord == country && nation.is_puppet() && nation.get_owned_provinces().size() == chosen.provinces
+				&& country->get_owned_provinces().size() == provinces - chosen.provinces && nation.get_capital() != nullptr
+				&& nation.get_capital()->get_owner() == &nation
+				&& country->get_cash_stockpile().load() + nation.get_cash_stockpile().load() == cash && colonial_blocked,
+			"release nations: a nation of the cores gets the states, its share of the treasury, and stays a puppet",
+			fmt::format("{} releases {}: {} states", country->get_identifier(), nation.get_identifier(), chosen.states.size()));
+
+		// a colonial subject puts a share of its raw goods aside for its overlord
+		Subjects::set_type(im, nation, subject_type_t::COLONIAL);
+		im.force_tick_and_update();
+		im.force_tick_and_update();
+		fixed_point_t aside = fixed_point_t::_0;
+		bool share = false;
+		for (fixed_point_t const value : nation.subject_goods_share) {
+			share = share || value > fixed_point_t::_0;
+		}
+		for (ProvinceInstance* province : nation.get_owned_provinces()) {
+			aside += province->get_rgo().to_overlord_today;
+		}
+		r.check(!share || aside > fixed_point_t::_0, "release nations: a colonial subject gives its overlord a share of its surplus of raw goods",
+			fmt::format("share {} aside {}", share, aside));
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -9101,7 +9153,8 @@ namespace {
 		test_diplomacy_d2(r, *im);
 		test_diplomacy_d3(r, *im);
 		test_diplomacy_d5(r, *im);
-		test_diplomacy_d6(r, *im); // last: it annexes a country
+		test_diplomacy_d6(r, *im); // it annexes a country
+		test_release_nations(r, *im); // last: it releases a nation and ticks days
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

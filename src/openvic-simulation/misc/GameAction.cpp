@@ -1,4 +1,5 @@
 #include "GameAction.hpp"
+#include "openvic-simulation/diplomacy/Subjects.hpp"
 
 #include "openvic-simulation/military/Unlocks.hpp"
 #include <algorithm>
@@ -453,6 +454,19 @@ bool GameActionManager::VariantVisitor::operator() (give_war_subsidies_argument_
 	DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
 	const std::optional<std::size_t> index = actions.get_action_index("war_subsidies");
 	return index.has_value() && actions.execute_diplomatic_action(*index, &sender, &receiver, {}, instance_manager);
+}
+
+// The release of a nation (version 102): the kind 0 free, 1 puppet, 2 protectorate, 3 colonial subject, 4 crown land, 5 dominion
+bool GameActionManager::VariantVisitor::operator() (release_nation_argument_t const& argument) const {
+	const auto [country_index, nation_index, type] = argument;
+	if (type > static_cast<std::uint32_t>(CountryInstance::subject_type_t::DOMINION)) {
+		return false;
+	}
+	CountryInstanceManager& countries = instance_manager.get_country_instance_manager();
+	return Subjects::release_nation(
+		instance_manager, countries.get_country_instance_by_index(country_index), countries.get_country_instance_by_index(nation_index),
+		static_cast<CountryInstance::subject_type_t>(type)
+	);
 }
 
 // A goal added to a war that goes on (version 100, stage D5): 1 a state (the province), 2 humiliation, 3 reparations

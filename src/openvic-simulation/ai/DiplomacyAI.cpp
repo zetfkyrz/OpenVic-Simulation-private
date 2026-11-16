@@ -629,6 +629,19 @@ void DiplomacyAI::ai_subjects(InstanceManager& instance_manager, OpenVicDiplomac
 		}
 		return;
 	}
+	// Its colonies become colonial subjects (version 102): a nation of its colonial land with AI_RELEASE_COLONY_MIN_STATES states
+	if (!country.is_at_war() && dice(country, today, 0x6f0) < defines.ai_release_colony_chance) {
+		for (Subjects::releasable_t const& entry : Subjects::get_releasable_nations(country)) {
+			if (entry.colonial && entry.states.size() >= static_cast<std::size_t>(defines.ai_release_colony_min_states)
+				&& static_cast<std::int64_t>(entry.states.size()) * 100
+					<= static_cast<std::int64_t>(country.get_states().size()) * defines.ai_release_colony_max_states_pct
+				&& Subjects::get_release_block_reason(country, entry, CountryInstance::subject_type_t::COLONIAL).empty()
+				&& Subjects::release_nation(instance_manager, country, *entry.nation, CountryInstance::subject_type_t::COLONIAL)) {
+				SPDLOG_INFO("AI: {} releases {} as its colonial subject", country.get_identifier(), entry.nation->get_identifier());
+				break;
+			}
+		}
+	}
 	// An overlord: its subjects (in the order of the countries)
 	const auto act = [&actions, &instance_manager, &country](std::string_view identifier, CountryInstance& subject) -> bool {
 		const std::optional<std::size_t> index = actions.get_action_index(identifier);

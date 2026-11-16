@@ -9,6 +9,7 @@
 namespace OpenVic {
 	struct InstanceManager;
 	struct OpenVicDiplomacyDefines;
+	struct State;
 
 	// The subjects (version 101, stage D6 of docs/PLAN_DIPLOMACY_VIC2.md, the table "Субъекты"): a country under an overlord. The kinds:
 	// - puppet: no foreign policy of its own (no alliances, no wars but the war of independence), pays a share of its income;
@@ -52,9 +53,29 @@ namespace OpenVic {
 		// The land of the subject goes to the overlord, its armies and fleets are disbanded; false if it cannot be annexed
 		bool annex(InstanceManager& instance_manager, CountryInstance& overlord, CountryInstance& subject);
 
+		// The release of nations (version 102, the tab "release nations" of the politics window): a nation that does not exist, whose core is the
+		// capital of a state of the country (not the state of its capital), gets these states, whole; it may stay a subject of the country (a
+		// colonial subject only out of colonial land; a subject releases only free nations). RELEASE_NATION_PRESTIGE and RELEASE_NATION_INFAMY
+		// of defines.lua, the relation of the two RELEASE_NATION_RELATION, the share of the treasury of the population that leaves
+		struct releasable_t {
+			CountryInstance* nation = nullptr;
+			memory::vector<State*> states;
+			std::size_t provinces = 0;
+			std::int64_t population = 0;
+			bool colonial = false; // some of its land is a colony or a protectorate
+		};
+		// In the order of the countries
+		memory::vector<releasable_t> get_releasable_nations(CountryInstance const& country);
+		// Why the country cannot release the nation as this kind (NONE: free) now (empty: it can)
+		std::string_view get_release_block_reason(CountryInstance const& country, releasable_t const& entry, subject_type_t type);
+		bool release_nation(InstanceManager& instance_manager, CountryInstance& country, CountryInstance& nation, subject_type_t type);
+
 		// The subjects and the overlords of the history (Vic2 vassal and union: puppets, substate: crown lands) at the start of the game
 		void setup_history(InstanceManager& instance_manager);
-		// Every day: the payments to the overlords; a subject or an overlord that does not exist any more ends the bond
+		// Every day: the payments to the overlords; a subject or an overlord that does not exist any more ends the bond. A colonial subject also
+		// gives its overlord SUBJECT_COLONIAL_RAW_SURPLUS_PCT of its surplus of raw goods (version 102): its RGOs put that share of their output
+		// aside instead of selling it (the share of every good from the production and the demand of the country of the day before), and it
+		// goes to the national stockpile of the overlord
 		void daily_update(InstanceManager& instance_manager);
 		// Every month: the discontent of the subjects (their relation with the overlord goes down, SUBJECT_DISCONTENT_PER_MONTH)
 		void monthly_update(InstanceManager& instance_manager);

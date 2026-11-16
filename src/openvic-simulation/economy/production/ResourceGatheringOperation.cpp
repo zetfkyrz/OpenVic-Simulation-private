@@ -193,6 +193,7 @@ fixed_point_t ResourceGatheringOperation::calculate_subsistence(const fixed_poin
 
 void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusable_vector) {
 	ProvinceInstance& location = *location_ptr;
+	to_overlord_today = fixed_point_t::_0;
 	if (building_days_left > 0 && --building_days_left == 0) {
 		building_level++;
 		recalculate_max_employees();
@@ -231,7 +232,16 @@ void ResourceGatheringOperation::rgo_tick(memory::vector<fixed_point_t>& reusabl
 	subsistence_eaten_today = fixed_point_t::_0;
 	subsistence_pool = calculate_subsistence(output_quantity_yesterday);
 	// What the workers did not eat of the pool is sold now, with the rest of the output
-	const fixed_point_t quantity_to_sell = output_quantity_yesterday - subsistence_pool + subsistence_left_over;
+	fixed_point_t quantity_to_sell = output_quantity_yesterday - subsistence_pool + subsistence_left_over;
+	// a colonial subject puts its share of the surplus aside for its overlord instead of selling it (version 102)
+	if (quantity_to_sell > fixed_point_t::_0) {
+		CountryInstance const* const owner = location.get_owner();
+		const std::size_t good = static_cast<std::size_t>(type_safe::get(production_type.output_good.index));
+		if (owner->overlord != nullptr && good < owner->subject_goods_share.size() && owner->subject_goods_share[good] > fixed_point_t::_0) {
+			to_overlord_today = quantity_to_sell * owner->subject_goods_share[good];
+			quantity_to_sell -= to_overlord_today;
+		}
+	}
 	if (quantity_to_sell <= 0) {
 		revenue_yesterday = 0;
 	}

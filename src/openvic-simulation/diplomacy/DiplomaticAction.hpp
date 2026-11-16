@@ -129,12 +129,12 @@ namespace OpenVic {
 		IdentifierRegistry<DiplomaticActionTypeStorage> IDENTIFIER_REGISTRY(diplomatic_action_type);
 		DiplomacyDefines const* defines = nullptr;
 
-		// The armies of the country in the land of from that may not stand there go to the nearest province where they may (version 97)
-		static void expel_armies(InstanceManager& instance_manager, CountryInstance& country, CountryInstance const& from);
 		// The proposal is accepted (the action is done if it still can be) or declined: the relations and the news (version 96)
 		void finish_proposal(CountryRelationManager::proposal_t proposal, bool accept, InstanceManager& instance_manager) const;
 
 	public:
+		// The armies of the country in the land of from that may not stand there go to the nearest province where they may (version 97)
+		static void expel_armies(InstanceManager& instance_manager, CountryInstance& country, CountryInstance const& from);
 		// What an action costs the sender in diplomatic points, what it changes in the relation of the two when it is accepted or declined, and
 		// whether it needs the consent of the receiver (a country of a player then answers it himself: a proposal); from defines.lua (version 96)
 		struct action_terms_t {

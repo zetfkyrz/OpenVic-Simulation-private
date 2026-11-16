@@ -10,6 +10,10 @@
 #include "openvic-simulation/history/DiplomaticHistory.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
+#include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/economy/GoodInstance.hpp"
+#include "openvic-simulation/defines/DiplomacyDefines.hpp"
+#include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
@@ -111,6 +115,7 @@ void Subjects::set_type(InstanceManager& instance_manager, CountryInstance& subj
 	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
 	subject.subject_type = type;
 	subject.subject_tribute_pct = get_default_tribute_pct(defines, type);
+	subject.subject_goods_share.clear();
 	// a colonial subject: more raw goods, fewer factory goods
 	if (type == subject_type_t::COLONIAL) {
 		subject.subject_rgo_multiplier = fixed_point_t::_1 + fixed_point_t(defines.subject_colonial_rgo_pct) / 100;
@@ -168,6 +173,7 @@ void Subjects::release(InstanceManager& instance_manager, CountryInstance& subje
 	subject.subject_rgo_multiplier = fixed_point_t::_1;
 	subject.subject_factory_multiplier = fixed_point_t::_1;
 	subject.subject_tribute_yesterday = fixed_point_t::_0;
+	subject.subject_goods_share.clear();
 	if (notify && subject.exists() && overlord->exists()) {
 		instance_manager.get_notification_log().add(instance_manager.get_today(), &subject, "subject_released", "", overlord);
 	}
@@ -285,7 +291,38 @@ void Subjects::daily_update(InstanceManager& instance_manager) {
 			continue;
 		}
 		// no payments in the war of independence
-		if (subject.is_at_war_with(*overlord) || subject.subject_tribute_pct <= 0) {
+		if (subject.is_at_war_with(*overlord)) {
+			subject.subject_goods_share.clear();
+			continue;
+		}
+		// the raw goods of a colonial subject (version 102): what its RGOs put aside today goes to the national stockpile of the overlord, and
+		// the shares of tomorrow are its surplus of every good today
+		if (subject.subject_type == subject_type_t::COLONIAL) {
+			for (ProvinceInstance* province : subject.get_owned_provinces()) {
+				ResourceGatheringOperation const& rgo = province->get_rgo();
+				if (rgo.to_overlord_today > fixed_point_t::_0 && rgo.get_production_type_nullable() != nullptr) {
+					overlord->get_good_data(rgo.get_production_type_nullable()->output_good).stockpile_amount += rgo.to_overlord_today;
+				}
+			}
+			const std::int32_t pct = defines_of(instance_manager).subject_colonial_raw_surplus_pct;
+			auto goods = instance_manager.get_good_instance_manager().get_good_instances();
+			subject.subject_goods_share.assign(goods.size(), fixed_point_t::_0);
+			for (GoodInstance const& good : goods) {
+				if (good.good_definition.is_money || pct <= 0) {
+					continue;
+				}
+				CountryInstance::good_data_t const& data = subject.get_good_data(good);
+				fixed_point_t produced = fixed_point_t::_0;
+				for (auto const& [production_type, quantity] : data.production_per_production_type) {
+					produced += quantity;
+				}
+				const fixed_point_t demand = data.pop_demand + data.factory_demand + data.army_needs + data.navy_needs;
+				if (produced > demand && produced > fixed_point_t::_0) {
+					subject.subject_goods_share[static_cast<std::size_t>(type_safe::get(good.index))] = (produced - demand) / produced * pct / 100;
+				}
+			}
+		}
+		if (subject.subject_tribute_pct <= 0) {
 			continue;
 		}
 		// a share of the income of yesterday; a colonial subject: a share of the growth of its treasury (the average balance, when it is positive)
@@ -319,4 +356,114 @@ void Subjects::monthly_update(InstanceManager& instance_manager) {
 			relations.change_relation(&subject, subject.overlord, -std::min(defines.subject_discontent_per_month, relation - defines.subject_discontent_floor));
 		}
 	}
+}
+
+memory::vector<Subjects::releasable_t> Subjects::get_releasable_nations(CountryInstance const& country) {
+	memory::vector<releasable_t> result;
+	if (!country.exists()) {
+		return result;
+	}
+	State const* const capital_state = country.get_capital() != nullptr ? country.get_capital()->get_state() : nullptr;
+	for (State* state : country.get_states()) {
+		if (state == nullptr || state == capital_state || state->get_capital() == nullptr) {
+			continue;
+		}
+		ProvinceInstance const& state_capital = *state->get_capital();
+		bool colonial = false;
+		std::size_t provinces = 0;
+		for (ProvinceInstance const& province : state->get_provinces()) {
+			colonial = colonial || province.get_colony_status() != colony_status_t::STATE;
+			provinces++;
+		}
+		// the nations whose core is the capital of the state (in the order of the cores)
+		for (CountryInstance* nation : state_capital.get_cores()) {
+			if (nation == nullptr || nation == &country || nation->exists() || nation->is_rebel_country() || !nation->is_releasable_vassal()
+				|| nation->country_definition.is_dynamic_tag) {
+				continue;
+			}
+			auto it = std::find_if(result.begin(), result.end(), [nation](releasable_t const& entry) -> bool { return entry.nation == nation; });
+			if (it == result.end()) {
+				result.push_back({ nation });
+				it = result.end() - 1;
+			}
+			it->states.push_back(state);
+			it->provinces += provinces;
+			it->population += static_cast<std::int64_t>(type_safe::get(state->get_total_population()));
+			it->colonial = it->colonial || colonial;
+		}
+	}
+	std::sort(result.begin(), result.end(), [](releasable_t const& a, releasable_t const& b) -> bool {
+		return type_safe::get(a.nation->index) < type_safe::get(b.nation->index);
+	});
+	return result;
+}
+
+std::string_view Subjects::get_release_block_reason(CountryInstance const& country, releasable_t const& entry, const subject_type_t type) {
+	if (entry.nation == nullptr || entry.states.empty()) {
+		return "Нечего освобождать";
+	}
+	if (country.is_at_war()) {
+		return "Нельзя во время войны";
+	}
+	if (type != subject_type_t::NONE && country.overlord != nullptr) {
+		return "Субъект освобождает нации только независимыми";
+	}
+	if (type == subject_type_t::COLONIAL && !entry.colonial) {
+		return "Колониальный субъект — только из колониальных земель";
+	}
+	return {};
+}
+
+bool Subjects::release_nation(InstanceManager& instance_manager, CountryInstance& country, CountryInstance& nation, const subject_type_t type) {
+	memory::vector<releasable_t> const releasable = get_releasable_nations(country);
+	const auto it = std::find_if(releasable.begin(), releasable.end(), [&nation](releasable_t const& entry) -> bool { return entry.nation == &nation; });
+	if (it == releasable.end() || !get_release_block_reason(country, *it, type).empty()) {
+		return false;
+	}
+	OpenVicDiplomacyDefines const& defines = defines_of(instance_manager);
+	// the share of the treasury of the population that leaves
+	std::int64_t total_population = 0;
+	for (State const* state : country.get_states()) {
+		if (state != nullptr) {
+			total_population += static_cast<std::int64_t>(type_safe::get(state->get_total_population()));
+		}
+	}
+	fixed_point_t cash = fixed_point_t::_0;
+	if (total_population > 0 && it->population > 0) {
+		const std::int32_t permille = static_cast<std::int32_t>(std::min<std::int64_t>(1000, it->population * 1000 / total_population));
+		cash = std::max(country.get_cash_stockpile().load(), fixed_point_t::_0) * permille / 1000;
+	}
+	SPDLOG_INFO("Subjects: {} releases {} ({} states){}", country.get_identifier(), nation.get_identifier(), it->states.size(),
+		type != subject_type_t::NONE ? " as a subject" : "");
+	// the land, whole states
+	for (State* state : it->states) {
+		for (ProvinceInstance& province : state->get_provinces()) {
+			province.set_owner(&nation);
+			province.set_controller(&nation);
+		}
+	}
+	ProvinceInstance* const capital = nation.get_capital();
+	if (capital == nullptr || capital->get_owner() != &nation) {
+		nation.set_capital(nation.get_owned_provinces().empty() ? nullptr : *nation.get_owned_provinces().begin());
+	}
+	if (cash > fixed_point_t::_0) {
+		country.spend_cash(cash);
+		nation.add_cash(cash);
+	}
+	nation.set_diplomatic_points(defines.diplomatic_points_start);
+	nation.casus_belli.clear();
+	nation.justify_target = nullptr;
+	nation.justify_days_left = 0;
+	DiplomacyDefines const& vic2 = instance_manager.definition_manager.get_define_manager().get_diplomacy_defines();
+	country.add_prestige(vic2.get_release_nation_prestige());
+	country.change_infamy(vic2.get_release_nation_infamy());
+	instance_manager.get_country_relation_manager().set_country_relation(&country, &nation, defines.release_nation_relation);
+	if (type != subject_type_t::NONE) {
+		make_subject(instance_manager, nation, country, type, false);
+	} else {
+		// the armies of the country leave the land of a free nation
+		DiplomaticActionManager::expel_armies(instance_manager, country, nation);
+	}
+	instance_manager.get_notification_log().add(instance_manager.get_today(), &country, "nation_released", get_type_key(type), &nation);
+	return true;
 }

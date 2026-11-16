@@ -38,6 +38,10 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(subsistence_pool);
 		// How much of the pool the pops of the province ate today (what was not eaten is sold with the output of the next day)
 		mutable fixed_point_t subsistence_eaten_today;
+	public:
+		// The output put aside today for the overlord of a colonial subject (version 102, Subjects::daily_update takes it to his stockpile)
+		fixed_point_t to_overlord_today;
+	private:
 		fixed_point_t PROPERTY(revenue_yesterday);
 		fixed_point_t PROPERTY(output_quantity_yesterday);
 		fixed_point_t PROPERTY(unsold_quantity_yesterday);

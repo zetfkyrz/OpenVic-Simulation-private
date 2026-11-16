@@ -1269,6 +1269,16 @@ namespace OpenVic {
 	INT(AI_SUBJECT_INDEPENDENCE_POWER_PCT, ai_subject_independence_power_pct, 75, 0, 100000) \
 	INT(AI_OVERLORD_KEEP_RELATION, ai_overlord_keep_relation, 50, -200, 200) \
 	INT(AI_OVERLORD_ANNEX_CHANCE, ai_overlord_annex_chance, 25, 0, 100) \
+	/* Version 102: a colonial subject gives its overlord SUBJECT_COLONIAL_RAW_SURPLUS_PCT percent of its surplus of raw goods (its RGOs put */ \
+	/* it aside, it goes to the national stockpile of the overlord); a released nation likes its liberator (RELEASE_NATION_RELATION); an AI */ \
+	/* country releases a nation of its colonial land (AI_RELEASE_COLONY_MIN_STATES states at least) as its colonial subject, a dice of */ \
+	/* AI_RELEASE_COLONY_CHANCE percent a month */ \
+	INT(SUBJECT_COLONIAL_RAW_SURPLUS_PCT, subject_colonial_raw_surplus_pct, 50, 0, 100) \
+	INT(RELEASE_NATION_RELATION, release_nation_relation, 100, -200, 200) \
+	INT(AI_RELEASE_COLONY_CHANCE, ai_release_colony_chance, 5, 0, 100) \
+	INT(AI_RELEASE_COLONY_MIN_STATES, ai_release_colony_min_states, 2, 1, 1000) \
+	/* and not more than AI_RELEASE_COLONY_MAX_STATES_PCT percent of its states (a great colony like India stays) */ \
+	INT(AI_RELEASE_COLONY_MAX_STATES_PCT, ai_release_colony_max_states_pct, 20, 0, 100) \
 	INT(AI_OVERLORD_COERCE_CHANCE, ai_overlord_coerce_chance, 50, 0, 100)
 
 	OV_DEFINE_GROUP(OpenVicAIDefines, "ov_ai", OV_AI_DEFINES)
