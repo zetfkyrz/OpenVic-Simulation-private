@@ -115,6 +115,80 @@ static constexpr colour_argb_t DEFAULT_COLOUR_WHITE = (0xFFFFFF_argb).with_alpha
  * national focus, RGO, population density, sphere of influence, ranking and migration. */
 static constexpr colour_argb_t DEFAULT_COLOUR_GREY = (0x7F7F7F_argb).with_alpha(ALPHA_VALUE);
 
+
+// The map modes of the diplomacy (version 104, stage D9 of docs/PLAN_DIPLOMACY_VIC2.md): the country they show is the owner of the selected
+// province, else the country of the player
+static CountryInstance const* get_focus_country(CountryInstance const* player_country, ProvinceInstance const* selected_province) {
+	if (selected_province != nullptr && selected_province->get_owner() != nullptr) {
+		return selected_province->get_owner();
+	}
+	return player_country;
+}
+
+static constexpr colour_argb_t DIPLOMATIC_FOCUS = (0x1E9E3A_argb).with_alpha(ALPHA_VALUE); // the country itself
+static constexpr colour_argb_t DIPLOMATIC_SUBJECT = (0x8ED081_argb).with_alpha(ALPHA_VALUE); // its subjects
+static constexpr colour_argb_t DIPLOMATIC_OVERLORD = (0x2E8C8C_argb).with_alpha(ALPHA_VALUE); // its overlord
+static constexpr colour_argb_t DIPLOMATIC_ENEMY = (0xC8302C_argb).with_alpha(ALPHA_VALUE); // at war with it
+static constexpr colour_argb_t DIPLOMATIC_ALLY = (0x2F6FD0_argb).with_alpha(ALPHA_VALUE); // allies and its military union
+static constexpr colour_argb_t DIPLOMATIC_SPHERE = (0x9A6FC8_argb).with_alpha(ALPHA_VALUE); // its sphere
+static constexpr colour_argb_t DIPLOMATIC_ACCESS = (0x8FD3F0_argb).with_alpha(ALPHA_VALUE); // it has the military access through them
+static constexpr colour_argb_t DIPLOMATIC_OTHER = (0x9A9A9A_argb).with_alpha(ALPHA_VALUE);
+static constexpr colour_argb_t MAP_NOBODY = (0x5E5E5E_argb).with_alpha(ALPHA_VALUE); // the land of nobody
+
+static colour_argb_t get_diplomatic_colour(CountryInstance const& focus, CountryInstance const& country) {
+	if (&country == &focus) {
+		return DIPLOMATIC_FOCUS;
+	}
+	if (country.overlord == &focus) {
+		return DIPLOMATIC_SUBJECT;
+	}
+	if (focus.overlord == &country) {
+		return DIPLOMATIC_OVERLORD;
+	}
+	if (focus.is_at_war_with(country)) {
+		return DIPLOMATIC_ENEMY;
+	}
+	if (focus.is_military_partner(country)) {
+		return DIPLOMATIC_ALLY;
+	}
+	if (focus.shares_sphere_with(country)) {
+		return DIPLOMATIC_SPHERE;
+	}
+	if (focus.has_military_access_to(country)) {
+		return DIPLOMATIC_ACCESS;
+	}
+	return DIPLOMATIC_OTHER;
+}
+
+// The relation (-200 .. 200, with the scar of a war) from dark red over a pale neutral colour to dark green
+static colour_argb_t get_relation_colour(const std::int32_t relation) {
+	struct stop_t {
+		std::int32_t at;
+		std::int32_t red, green, blue;
+	};
+	static constexpr stop_t STOPS[] = {
+		{ -200, 0x5A, 0x0E, 0x0E }, { -100, 0xC0, 0x30, 0x2C }, { 0, 0xD9, 0xD2, 0xA6 }, { 100, 0x3A, 0xA8, 0x4E }, { 200, 0x14, 0x6B, 0x2A }
+	};
+	const std::int32_t value = std::clamp(relation, -200, 200);
+	for (std::size_t i = 1; i < std::size(STOPS); ++i) {
+		if (value <= STOPS[i].at) {
+			stop_t const& a = STOPS[i - 1];
+			stop_t const& b = STOPS[i];
+			const std::int32_t span = b.at - a.at;
+			const std::int32_t t = value - a.at;
+			const auto mix = [span, t](const std::int32_t from, const std::int32_t to) -> colour_argb_t::value_type {
+				return static_cast<colour_argb_t::value_type>(from + (to - from) * t / span);
+			};
+			return colour_argb_t { mix(a.red, b.red), mix(a.green, b.green), mix(a.blue, b.blue), ALPHA_VALUE };
+		}
+	}
+	return colour_argb_t { 0x14, 0x6B, 0x2A, ALPHA_VALUE };
+}
+
+static constexpr colour_argb_t CRISIS_CALM = (0xBDBDB0_argb).with_alpha(ALPHA_VALUE); // nobody else claims the land
+static constexpr colour_argb_t CRISIS_NATION = (0xE6C84A_argb).with_alpha(ALPHA_VALUE); // a core of a nation without a country
+static constexpr colour_argb_t CRISIS_CLAIM = (0xE0702A_argb).with_alpha(ALPHA_VALUE); // a core of another country
+
 template<has_get_colour T, typename P>
 requires(std::same_as<P, ProvinceDefinition> || std::same_as<P, ProvinceInstance>)
 static constexpr auto get_colour_mapmode(T const*(P::*get_item)() const) {
@@ -233,7 +307,38 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 		&ProvinceInstance::get_owner, &ProvinceInstance::get_controller
 	), "MAPMODE_2");
 	ret &= add_mapmode("mapmode_militancy", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_3");
-	ret &= add_mapmode("mapmode_diplomatic", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_4");
+	// The diplomacy (version 104): the country of the selected province (else the player) green, its subjects light green, its overlord
+	// teal, its enemies red, its allies blue, its sphere violet, the land it may cross light blue; the land it holds of another or another
+	// holds of it is striped with the colour of the holder, its cores on the land of the others are striped green
+	ret &= add_mapmode(
+		"mapmode_diplomatic",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return MAP_NOBODY;
+			}
+			CountryInstance const* const focus = get_focus_country(player_country, selected_province);
+			if (focus == nullptr) {
+				return DIPLOMATIC_OTHER;
+			}
+			const colour_argb_t base = get_diplomatic_colour(*focus, *owner);
+			CountryInstance const* const controller = province.get_controller();
+			if (controller != nullptr && controller != owner) {
+				return { base, get_diplomatic_colour(*focus, *controller) };
+			}
+			if (owner != focus && province.get_cores().contains(const_cast<CountryInstance*>(focus))) {
+				return { base, DIPLOMATIC_FOCUS };
+			}
+			return base;
+		},
+		"MAPMODE_4"
+	);
 	ret &= add_mapmode("mapmode_region", get_colour_mapmode(&ProvinceDefinition::get_region), "MAPMODE_5");
 	BuildingType const* const infrastructure_building_type_ptr = building_type_manager.get_infrastructure_building_type();
 	if (infrastructure_building_type_ptr == nullptr) {
@@ -431,8 +536,71 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 		},
 		"MAPMODE_LITERACY"
 	);
-	ret &= add_mapmode("mapmode_relations", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_20");
-	ret &= add_mapmode("mapmode_crisis", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_21");
+	// The relations (version 104): the relation of the country of the selected province (else the player) with every country, from dark red
+	// (-200) over pale (0) to dark green (200); the country itself blue
+	ret &= add_mapmode(
+		"mapmode_relations",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return MAP_NOBODY;
+			}
+			CountryInstance const* const focus = get_focus_country(player_country, selected_province);
+			if (focus == nullptr) {
+				return DIPLOMATIC_OTHER;
+			}
+			if (owner == focus) {
+				return DIPLOMATIC_ALLY;
+			}
+			return get_relation_colour(focus->get_relations_with(*owner));
+		},
+		"MAPMODE_20"
+	);
+	// The crisis (version 104; the crises themselves are stage D7): the places a crisis may start in, the land with the core of a nation
+	// without a country (yellow: a national movement) or of another country (orange: a claim); both: orange striped yellow. A formed union
+	// counts as its country
+	ret &= add_mapmode(
+		"mapmode_crisis",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return MAP_NOBODY;
+			}
+			bool claim = false;
+			bool nation = false;
+			for (CountryInstance const* core : province.get_cores()) {
+				if (core == nullptr || core == owner || core->is_rebel_country()) {
+					continue;
+				}
+				CountryInstance const* const holder = core->union_holder != nullptr ? core->union_holder : core;
+				if (holder == owner) {
+					continue;
+				}
+				if (holder->exists()) {
+					claim = true;
+				} else {
+					nation = true;
+				}
+			}
+			if (claim && nation) {
+				return { CRISIS_CLAIM, CRISIS_NATION };
+			}
+			return claim ? CRISIS_CLAIM : nation ? CRISIS_NATION : CRISIS_CALM;
+		},
+		"MAPMODE_21"
+	);
 	ret &= add_mapmode(
 		"mapmode_naval",
 		[](
