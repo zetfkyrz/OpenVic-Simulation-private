@@ -61,6 +61,7 @@
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/diplomacy/Subjects.hpp>
 #include <openvic-simulation/diplomacy/Unions.hpp>
+#include <openvic-simulation/diplomacy/Crisis.hpp>
 #include <openvic-simulation/misc/MoneyLedger.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/misc/StateHash.hpp>
@@ -7166,6 +7167,107 @@ namespace {
 		}
 	}
 
+	// Stage D7 (version 104): the crises
+	void test_crises(Results& r, InstanceManager& im) {
+		CrisisManager& crises = im.get_crisis_manager();
+		// a flashpoint in the land of a country that is no great power (the AI chooses its sides)
+		State* chosen = nullptr;
+		for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+			State* const state = province.get_state();
+			if (state == nullptr || state->get_owner() == nullptr || state->get_owner()->is_great_power() || state->get_owner()->is_at_war()) {
+				continue;
+			}
+			std::optional<CrisisManager::flashpoint_t> const flashpoint = CrisisManager::get_flashpoint(*state);
+			if (flashpoint.has_value() && !flashpoint->liberation && !flashpoint->claimant->is_at_war()) {
+				chosen = state;
+				break;
+			}
+		}
+		if (chosen == nullptr) {
+			fmt::println("TEST INFO crises: no flashpoint of a claim, not checked");
+			return;
+		}
+		const bool started = crises.force_start(im, *chosen);
+		CrisisManager::crisis_t const& crisis = crises.get_crisis();
+		CountryInstance* const owner = crisis.owner;
+		CountryInstance* const claimant = crisis.claimant;
+		const bool interested = !crisis.interested.empty() || !crisis.attackers.empty() || !crisis.defenders.empty();
+		r.check(started && crisis.active && chosen->get_crisis_here() && interested,
+			"crises: a crisis starts at a flashpoint, the great powers are interested",
+			fmt::format("{} claims the land of {}", claimant != nullptr ? claimant->get_identifier() : "-", owner != nullptr ? owner->get_identifier() : "-"));
+		if (!started) {
+			return;
+		}
+		// two great powers take the sides by hand (the interested that are left), the temperature grows, the defender gives in
+		CountryInstance* attacker = crisis.attacker_leader;
+		CountryInstance* defender = crisis.defender_leader;
+		for (CountryInstance* power : memory::vector<CountryInstance*> { crisis.interested }) {
+			if (attacker == nullptr) {
+				crises.back(im, *power, true);
+				attacker = crisis.attacker_leader;
+			} else if (defender == nullptr) {
+				crises.back(im, *power, false);
+				defender = crisis.defender_leader;
+			}
+		}
+		if (attacker == nullptr || defender == nullptr) {
+			fmt::println("TEST INFO crises: not two great powers for the sides");
+			return;
+		}
+		const fixed_point_t before = crisis.temperature;
+		crises.daily_update(im);
+		const bool heats = !crisis.active || crisis.temperature > before;
+		const std::size_t claimant_provinces = claimant->get_owned_provinces().size();
+		const fixed_point_t prestige = attacker->get_prestige_untracked();
+		const bool conceded = crisis.active && crises.concede(im, *crisis.defender_leader);
+		r.check(heats && conceded && !crisis.active && chosen->get_owner() == claimant && claimant->get_owned_provinces().size() > claimant_provinces
+				&& attacker->get_prestige_untracked() > prestige && !chosen->get_crisis_here(),
+			"crises: the temperature grows, the defender gives in: the state goes to the claimant, the winners get prestige");
+		// the next crisis waits CRISIS_COOLDOWN_MONTHS
+		r.check(crises.get_last_end() == im.get_today() && crises.had_crisis(), "crises: the end of a crisis is remembered (the cooldown)");
+
+		// another crisis that is not given up: at 100 of temperature the great war
+		State* second = nullptr;
+		for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+			State* const state = province.get_state();
+			if (state == nullptr || state == chosen || state->get_owner() == nullptr || state->get_owner()->is_great_power()
+				|| state->get_owner()->is_at_war()) {
+				continue;
+			}
+			std::optional<CrisisManager::flashpoint_t> const flashpoint = CrisisManager::get_flashpoint(*state);
+			if (flashpoint.has_value() && !flashpoint->liberation && !flashpoint->claimant->is_at_war()) {
+				second = state;
+				break;
+			}
+		}
+		if (second == nullptr || !crises.force_start(im, *second)) {
+			fmt::println("TEST INFO crises: no second flashpoint, the great war is not checked");
+			return;
+		}
+		for (CountryInstance* power : memory::vector<CountryInstance*> { crisis.interested }) {
+			if (crisis.attacker_leader == nullptr) {
+				crises.back(im, *power, true);
+			} else if (crisis.defender_leader == nullptr) {
+				crises.back(im, *power, false);
+			}
+		}
+		CountryInstance* const war_attacker = crisis.attacker_leader;
+		CountryInstance* const war_owner = crisis.owner;
+		if (war_attacker == nullptr || crisis.defender_leader == nullptr) {
+			fmt::println("TEST INFO crises: not two great powers for the great war");
+			return;
+		}
+		crises.set_temperature_for_tests(fixed_point_t(100));
+		crises.daily_update(im);
+		War* const great = im.get_war_manager().find_war_between(*war_attacker, *war_owner);
+		r.check(!crisis.active && great != nullptr && great->great_war && !great->defenders.empty(),
+			"crises: at 100 of temperature the great war starts between the sides",
+			fmt::format("{} against {}", war_attacker->get_identifier(), war_owner->get_identifier()));
+		if (great != nullptr) {
+			im.get_war_manager().end_war(im, great->id);
+		}
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -9246,7 +9348,8 @@ namespace {
 		test_diplomacy_d5(r, *im);
 		test_diplomacy_d6(r, *im); // it annexes a country
 		test_release_nations(r, *im); // it releases a nation and ticks days
-		test_unions(r, *im); // last: Prussia forms Germany
+		test_unions(r, *im); // Prussia forms Germany
+		test_crises(r, *im); // last: a crisis gives a state away
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

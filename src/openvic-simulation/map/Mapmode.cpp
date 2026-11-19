@@ -188,6 +188,8 @@ static colour_argb_t get_relation_colour(const std::int32_t relation) {
 static constexpr colour_argb_t CRISIS_CALM = (0xBDBDB0_argb).with_alpha(ALPHA_VALUE); // nobody else claims the land
 static constexpr colour_argb_t CRISIS_NATION = (0xE6C84A_argb).with_alpha(ALPHA_VALUE); // a core of a nation without a country
 static constexpr colour_argb_t CRISIS_CLAIM = (0xE0702A_argb).with_alpha(ALPHA_VALUE); // a core of another country
+static constexpr colour_argb_t CRISIS_NOW = (0xC81414_argb).with_alpha(ALPHA_VALUE); // the crisis of the world, a hot flashpoint (stripe)
+static constexpr std::int32_t CRISIS_HOT_TENSION = 75;
 
 template<has_get_colour T, typename P>
 requires(std::same_as<P, ProvinceDefinition> || std::same_as<P, ProvinceInstance>)
@@ -594,10 +596,19 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 					nation = true;
 				}
 			}
+			const colour_argb_t base = claim ? CRISIS_CLAIM : nation ? CRISIS_NATION : CRISIS_CALM;
+			// the crisis of the world (red) and the flashpoints close to a crisis (a red stripe, version 104)
+			State const* const state = province.get_state();
+			if (state != nullptr && state->get_crisis_here()) {
+				return { CRISIS_NOW, base };
+			}
+			if (state != nullptr && (claim || nation) && state->get_crisis_tension() >= fixed_point_t(CRISIS_HOT_TENSION)) {
+				return { base, CRISIS_NOW };
+			}
 			if (claim && nation) {
 				return { CRISIS_CLAIM, CRISIS_NATION };
 			}
-			return claim ? CRISIS_CLAIM : nation ? CRISIS_NATION : CRISIS_CALM;
+			return base;
 		},
 		"MAPMODE_21"
 	);

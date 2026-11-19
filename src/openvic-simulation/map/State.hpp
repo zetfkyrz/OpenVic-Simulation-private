@@ -61,6 +61,9 @@ namespace OpenVic {
 		fixed_point_t PROPERTY_RW(admin_needed_share, fixed_point_t::_0);
 		fixed_point_t PROPERTY_RW(bureaucrat_share, fixed_point_t::_0);
 		fixed_point_t PROPERTY_RW(admin_collection, fixed_point_t::_1);
+		// The tension of the flashpoint (0..100, version 104, diplomacy/Crisis.hpp) and whether the crisis of the world is here
+		fixed_point_t PROPERTY_RW(crisis_tension, fixed_point_t::_0);
+		bool PROPERTY_RW(crisis_here, false);
 		CreditManager* credit_manager = nullptr;
 
 		void _update_country();

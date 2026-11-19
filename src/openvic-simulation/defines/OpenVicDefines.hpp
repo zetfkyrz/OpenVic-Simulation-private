@@ -1272,6 +1272,28 @@ namespace OpenVic {
 	INT(AI_SUBJECT_INDEPENDENCE_POWER_PCT, ai_subject_independence_power_pct, 75, 0, 100000) \
 	INT(AI_OVERLORD_KEEP_RELATION, ai_overlord_keep_relation, 50, -200, 200) \
 	INT(AI_OVERLORD_ANNEX_CHANCE, ai_overlord_annex_chance, 25, 0, 100) \
+	/* Stage D7 (version 104, diplomacy/Crisis.hpp): the crises. The tension of a flashpoint a month, in tenths: CRISIS_TENSION_BASE, */ \
+	/* CRISIS_TENSION_CULTURE when all the people of the state are of the claimant, CRISIS_TENSION_CASUS_BELLI when the claimant has a */ \
+	/* casus belli against the owner; the tension of the land that is no flashpoint goes down CRISIS_TENSION_CALM_DECAY a month, of the */ \
+	/* other flashpoints during a crisis CRISIS_TENSION_WHILE_CRISIS */ \
+	INT(CRISIS_TENSION_BASE, crisis_tension_base, 20, 0, 10000) \
+	INT(CRISIS_TENSION_CULTURE, crisis_tension_culture, 30, 0, 10000) \
+	INT(CRISIS_TENSION_CASUS_BELLI, crisis_tension_casus_belli, 12, 0, 10000) \
+	FIXED(CRISIS_TENSION_CALM_DECAY, crisis_tension_calm_decay, 5, 0, 100) \
+	FIXED(CRISIS_TENSION_WHILE_CRISIS, crisis_tension_while_crisis, 1, 0, 100) \
+	/* the great powers back the sides for CRISIS_BACKER_DAYS days; the temperature grows CRISIS_TEMPERATURE_PCT percent of */ \
+	/* CRISIS_TEMPERATURE_INCREASE of defines.lua a day; the AI backs a country it likes (CRISIS_AI_BACK_RELATION) and opposes one it */ \
+	/* hates (CRISIS_AI_OPPOSE_RELATION); an AI leader whose side has less than CRISIS_AI_CONCEDE_POWER_PCT percent of the power of the */ \
+	/* other gives in with CRISIS_AI_CONCEDE_CHANCE a week (twice that from CRISIS_AI_HOT_TEMPERATURE of the temperature) */ \
+	INT(CRISIS_BACKER_DAYS, crisis_backer_days, 30, 1, 3650) \
+	INT(CRISIS_TEMPERATURE_PCT, crisis_temperature_pct, 300, 0, 100000) \
+	INT(CRISIS_AI_BACK_RELATION, crisis_ai_back_relation, 50, -200, 200) \
+	INT(CRISIS_AI_OPPOSE_RELATION, crisis_ai_oppose_relation, -50, -200, 200) \
+	/* an AI great power interested in the land (DiplomacyAI::interest) takes the side it likes CRISIS_AI_PREFER_RELATION more */ \
+	INT(CRISIS_AI_PREFER_RELATION, crisis_ai_prefer_relation, 30, 0, 400) \
+	INT(CRISIS_AI_CONCEDE_POWER_PCT, crisis_ai_concede_power_pct, 60, 0, 100000) \
+	INT(CRISIS_AI_CONCEDE_CHANCE, crisis_ai_concede_chance, 20, 0, 100) \
+	INT(CRISIS_AI_HOT_TEMPERATURE, crisis_ai_hot_temperature, 80, 0, 100) \
 	/* Stage D8 (version 103, diplomacy/Unions.hpp): the unions of the nations. The decision: UNION_FORM_PRESTIGE prestige, +UNION_FORM_PRESTIGE_GAIN; */ \
 	/* the small countries of the group asked to join agree UNION_JOIN_CHANCE percent of the time (Vic2: 25), later invited (UNION_INVITE_COST */ \
 	/* points, a refusal UNION_INVITE_DECLINE_RELATION) they agree with a relation of UNION_JOIN_RELATION; the AI fights a war of unification */ \

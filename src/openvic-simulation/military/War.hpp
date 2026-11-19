@@ -94,6 +94,7 @@ namespace OpenVic {
 		WarGoal goal; // of the attacker
 		memory::vector<WarGoalEntry> extra_goals; // the goals added while the war goes on (version 100)
 		CountryInstance const* union_country = nullptr; // the war of unification: the country of the union (its cores, version 103)
+		bool great_war = false; // the war of a crisis (version 104): its peace costs GW_WARSCORE_COST_MOD of the war score
 
 		bool is_attacker(CountryInstance const& country) const;
 		bool is_defender(CountryInstance const& country) const;
@@ -252,6 +253,8 @@ namespace OpenVic {
 		void set_defines(OpenVicDefines const& new_defines) {
 			defines = &new_defines;
 		}
+		// GW_WARSCORE_COST_MOD of defines.lua (version 104)
+		fixed_point_t great_war_cost_mod = fixed_point_t::_0;
 		OpenVicWarDefines const& get_war_defines() const {
 			return defines->war;
 		}

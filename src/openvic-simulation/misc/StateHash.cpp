@@ -333,6 +333,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	for (War const& war : instance_manager.get_war_manager().get_wars()) {
 		hasher.add(static_cast<std::uint64_t>(war.id) * 1000 + war.attackers.size() * 31 + war.defenders.size());
 		hasher.add(war.union_country != nullptr ? static_cast<std::uint64_t>(type_safe::get(war.union_country->index)) + 1 : 0);
+		hasher.add(war.great_war ? 1ULL : 0ULL);
 		// the goals added in the war (version 100)
 		for (WarGoalEntry const& entry : war.extra_goals) {
 			hasher.add(static_cast<std::uint64_t>(entry.goal.type) + (entry.attackers ? 16 : 0)
@@ -343,6 +344,26 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	for (WarManager::reparation_t const& entry : instance_manager.get_war_manager().reparations) {
 		hasher.add(static_cast<std::uint64_t>(type_safe::get(entry.payer->index)) + (static_cast<std::uint64_t>(type_safe::get(entry.receiver->index)) << 32));
 		hasher.add_signed((entry.until - Date {}).to_int());
+	}
+	// the crisis and the tension of the flashpoints (version 104)
+	{
+		CrisisManager::crisis_t const& crisis = instance_manager.get_crisis_manager().get_crisis();
+		const auto index_of = [](CountryInstance const* country) -> std::uint64_t {
+			return country != nullptr ? static_cast<std::uint64_t>(type_safe::get(country->index)) + 1 : 0;
+		};
+		hasher.add((crisis.active ? 1ULL : 0ULL) + (crisis.liberation ? 2ULL : 0ULL));
+		hasher.add(index_of(crisis.owner) + (index_of(crisis.claimant) << 16) + (index_of(crisis.attacker_leader) << 32) + (index_of(crisis.defender_leader) << 48));
+		hasher.add(crisis.temperature);
+		hasher.add(static_cast<std::uint64_t>(crisis.attackers.size() * 64 + crisis.defenders.size() * 8 + crisis.interested.size()));
+		hasher.add(static_cast<std::uint64_t>((instance_manager.get_crisis_manager().get_last_end() - Date {}).to_int()));
+		for (ProvinceInstance const& province : instance_manager.get_map_instance().get_province_instances()) {
+			State const* const state = province.get_state();
+			if (state != nullptr && !state->get_provinces().empty() && &state->get_provinces().front().get() == &province
+				&& state->get_crisis_tension() > fixed_point_t::_0) {
+				hasher.add(static_cast<std::uint64_t>(type_safe::get(province.index)));
+				hasher.add(state->get_crisis_tension());
+			}
+		}
 	}
 	for (Front const& front : instance_manager.get_war_manager().get_fronts()) {
 		hasher.add(static_cast<std::uint64_t>(front.id));

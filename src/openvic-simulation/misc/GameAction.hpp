@@ -195,7 +195,9 @@ X(answer_diplomatic_proposal, country_index_t, std::uint32_t, bool) \
 X(give_war_subsidies, country_index_t, country_index_t, std::int32_t) \
 X(add_war_goal, country_index_t, std::uint32_t, std::uint32_t, province_index_t) \
 X(release_nation, country_index_t, country_index_t, std::uint32_t) \
-X(form_union, country_index_t)
+X(form_union, country_index_t) \
+X(crisis_back, country_index_t, bool) \
+X(crisis_concede, country_index_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action

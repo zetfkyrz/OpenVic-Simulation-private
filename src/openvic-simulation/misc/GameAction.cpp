@@ -457,6 +457,20 @@ bool GameActionManager::VariantVisitor::operator() (give_war_subsidies_argument_
 	return index.has_value() && actions.execute_diplomatic_action(*index, &sender, &receiver, {}, instance_manager);
 }
 
+// The crisis (version 104): a great power backs the attackers (true) or the defenders; the leader of a side gives in
+bool GameActionManager::VariantVisitor::operator() (crisis_back_argument_t const& argument) const {
+	const auto [country_index, attackers_side] = argument;
+	return instance_manager.get_crisis_manager().back(
+		instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), attackers_side
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (crisis_concede_argument_t const& argument) const {
+	return instance_manager.get_crisis_manager().concede(
+		instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument))
+	);
+}
+
 // The decision to form the union of the nations (version 103)
 bool GameActionManager::VariantVisitor::operator() (form_union_argument_t const& argument) const {
 	return Unions::form_union(

@@ -181,6 +181,7 @@ InstanceManager::InstanceManager(
 	CountryRelationManager::set_diplomacy_defines(definition_manager.get_define_manager().get_openvic_defines().diplomacy);
 	CountryInstance::infamy_casus_belli_limit = definition_manager.get_define_manager().get_country_defines().get_infamy_containment_limit();
 	CountryInstance::subject_research_discount_pct = definition_manager.get_define_manager().get_openvic_defines().diplomacy.subject_research_discount_pct;
+	war_manager.great_war_cost_mod = definition_manager.get_define_manager().get_diplomacy_defines().get_gw_warscore_cost_mod();
 	CountryInstance::set_company_type_manager(definition_manager.get_military_manager().get_company_type_manager());
 	CountryInstance::set_law_manager(definition_manager.get_politics_manager().get_law_manager());
 	CountryInstance::set_openvic_trade_defines(definition_manager.get_define_manager().get_openvic_defines().trade);
@@ -342,6 +343,8 @@ void InstanceManager::tick() {
 			definition_manager.get_diplomatic_action_manager().daily_update(*this);
 			// the payments of the subjects (version 101)
 			Subjects::daily_update(*this);
+			// the crisis (version 104)
+			crisis_manager.daily_update(*this);
 		}
 		{
 			OV_PROFILE_SCOPE(tick_profiler, "colonisation");
@@ -386,6 +389,8 @@ void InstanceManager::tick() {
 				Subjects::monthly_update(*this);
 				// the unions of the nations of the AI (version 103)
 				Unions::ai_monthly(*this);
+				// the tension of the flashpoints, a new crisis (version 104)
+				crisis_manager.monthly_update(*this);
 				// the spheres of influence (version 92, docs/PLAN_SPHERES.md)
 				sphere_manager.monthly_update(*this);
 			}

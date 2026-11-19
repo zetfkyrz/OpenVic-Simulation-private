@@ -196,6 +196,10 @@ fixed_point_t WarManager::get_state_cost(
 	if (cost < fixed_point_t::_1) {
 		cost = fixed_point_t::_1;
 	}
+	// a great war (version 104): everything is cheaper
+	if (war.great_war && great_war_cost_mod > fixed_point_t::_0) {
+		cost *= great_war_cost_mod;
+	}
 
 	// A war goal of the winners costs half (the goal of the declaration and the goals added in the war, version 100; the states of the
 	// union in a war of unification, version 103)
@@ -289,6 +293,14 @@ fixed_point_t WarManager::get_terms_cost(War const& war, CountryInstance const& 
 	// version 103 (stage D8)
 	if (terms.hegemony) {
 		cost += get_peace_defines().hegemony_cost;
+	}
+	// a great war (version 104): the terms besides the states are cheaper too (the states are in get_state_cost)
+	if (war.great_war && great_war_cost_mod > fixed_point_t::_0) {
+		fixed_point_t states = fixed_point_t::_0;
+		for (ProvinceInstance const* state_province : terms.states) {
+			states += get_state_cost(war, winners_are_attackers, *state_province);
+		}
+		cost = states + (cost - states) * great_war_cost_mod;
 	}
 	return cost;
 }
