@@ -25,6 +25,7 @@
 #include "openvic-simulation/military/UnitType.hpp"
 #include "openvic-simulation/military/UnitInstanceGroup.hpp"
 #include "openvic-simulation/diplomacy/Subjects.hpp"
+#include "openvic-simulation/diplomacy/Unions.hpp"
 #include "openvic-simulation/utility/Logger.hpp"
 
 using namespace OpenVic;
@@ -249,6 +250,12 @@ bool WarManager::declare_war(
 
 	War war;
 	war.goal = goal;
+	// the war of unification: the country of the union whose cores are the goals (version 103)
+	if (goal.type == WarGoal::type_t::UNIFICATION) {
+		if (CountryDefinition const* const union_definition = Unions::get_union_definition(attacker); union_definition != nullptr) {
+			war.union_country = &Unions::get_union_instance(instance_manager, *union_definition);
+		}
+	}
 	war.id = next_war_id++;
 	war.start_date = instance_manager.get_today();
 	war.attackers.push_back(&attacker);
@@ -2404,6 +2411,15 @@ bool WarManager::declare_war_as_country(
 	// the war of a subject against its overlord is the war of independence (version 101): no casus belli, no infamy
 	if (attacker.overlord == &defender) {
 		return declare_war(instance_manager, attacker, defender, WarGoal { WarGoal::type_t::INDEPENDENCE, nullptr });
+	}
+	// the war of unification (version 103): no casus belli, no infamy; a war without a casus belli is one when it can be
+	const bool unification = Unions::get_unification_block_reason(instance_manager, attacker, defender).empty();
+	if (goal.type == WarGoal::type_t::UNIFICATION && !unification) {
+		return false;
+	}
+	if (goal.type == WarGoal::type_t::UNIFICATION || (unification && !attacker.has_casus_belli_against(defender, today)
+		&& (goal.type == WarGoal::type_t::NONE || goal.type == WarGoal::type_t::CONQUER_STATE))) {
+		return declare_war(instance_manager, attacker, defender, WarGoal { WarGoal::type_t::UNIFICATION, nullptr });
 	}
 	const bool justified = attacker.has_casus_belli_against(defender, today);
 	if (!declare_war(instance_manager, attacker, defender, goal)) {

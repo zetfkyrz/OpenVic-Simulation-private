@@ -26,7 +26,8 @@ namespace OpenVic {
 			CONQUER_STATE = 1, // take the state (state_province is any province of it)
 			HUMILIATE = 2, // prestige: the winner gains and the loser loses it
 			REPARATIONS = 3, // the loser pays a part of its treasury
-		INDEPENDENCE = 4 // a subject fights its overlord (version 101): no casus belli needed
+		INDEPENDENCE = 4, // a subject fights its overlord (version 101): no casus belli needed
+		UNIFICATION = 5 // the war of unification (version 103): the states with the cores of the union of the attacker
 		};
 		type_t type = type_t::NONE;
 		ProvinceInstance const* state_province = nullptr;
@@ -55,6 +56,8 @@ namespace OpenVic {
 		// of the leader of the losers, is free
 		bool make_puppet = false;
 		bool independence = false;
+		// version 103 (stage D8): the countries of the culture group of the winner leave the sphere of the loser
+		bool hegemony = false;
 	};
 
 	// The answer to the last offer of a country, shown in the peace window
@@ -90,6 +93,7 @@ namespace OpenVic {
 		fixed_point_t defender_score;
 		WarGoal goal; // of the attacker
 		memory::vector<WarGoalEntry> extra_goals; // the goals added while the war goes on (version 100)
+		CountryInstance const* union_country = nullptr; // the war of unification: the country of the union (its cores, version 103)
 
 		bool is_attacker(CountryInstance const& country) const;
 		bool is_defender(CountryInstance const& country) const;
@@ -422,6 +426,10 @@ namespace OpenVic {
 		void update_reparations(InstanceManager& instance_manager);
 		// Why the subject terms (the puppet, the independence) cannot be in the terms (empty: they can, version 101)
 		std::string_view get_subject_terms_block_reason(War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const;
+		// Why the hegemony cannot be in the terms (empty: it can, version 103)
+		std::string_view get_hegemony_block_reason(InstanceManager& instance_manager, War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const;
+		// The state is a goal of the war of unification of the winners (version 103)
+		static bool is_union_goal_state(War const& war, bool winners_are_attackers, ProvinceInstance const& state_province);
 		// The terms applied as if the peace was signed (for the self-tests)
 		void apply_peace_terms_now(InstanceManager& instance_manager, War const& war, bool proposer_is_attacker, PeaceTerms const& terms) {
 			apply_peace_terms(instance_manager, war, proposer_is_attacker, terms);

@@ -751,6 +751,15 @@ namespace OpenVic {
 		memory::vector<fixed_point_t> subject_goods_share;
 		// a colonial subject and a crown land research what the overlord knows this percent cheaper (SUBJECT_RESEARCH_DISCOUNT_PCT)
 		static inline std::int32_t subject_research_discount_pct = 0;
+		// The unions of the nations (version 103, diplomacy/Unions.hpp): the union the country formed (its name, flag and colour; nullptr:
+		// its own), and, for the country of a union, the country that formed it
+		CountryDefinition const* union_identity = nullptr;
+		CountryInstance* union_holder = nullptr;
+		[[nodiscard]] CountryDefinition const& get_display_definition() const {
+			return union_identity != nullptr ? *union_identity : country_definition;
+		}
+		// The tag the interface shows (the name, the flag): the union the country formed, else its own
+		[[nodiscard]] std::string_view get_display_identifier() const;
 		[[nodiscard]] bool is_subject() const {
 			return overlord != nullptr;
 		}

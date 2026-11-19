@@ -13,6 +13,7 @@
 #include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/CountryRelation.hpp"
 #include "openvic-simulation/diplomacy/Subjects.hpp"
+#include "openvic-simulation/diplomacy/Unions.hpp"
 #include "openvic-simulation/military/War.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/map/MapInstance.hpp"
@@ -204,6 +205,10 @@ DiplomaticActionManager::action_terms_t DiplomaticActionManager::get_terms(const
 		}
 		if (identifier == "subject_join_war") {
 			return { o->subject_coerce_cost, o->subject_coerce_relation, 0, false };
+		}
+		// the invitation into a union (version 103): the country answers it
+		if (identifier == "join_union") {
+			return { o->union_invite_cost, 0, o->union_invite_decline_relation, true };
 		}
 	}
 	return {};
@@ -869,6 +874,26 @@ bool DiplomaticActionManager::setup_diplomatic_actions(DiplomacyDefines const& d
 					WarManager const& war_manager = arg.instance_manager.get_war_manager();
 					War const* const war = war_manager.get_war_to_call_into(*arg.sender);
 					return war != nullptr && war_manager.can_join_war(*war, war->is_attacker(*arg.sender), *arg.receiver);
+				},
+		}
+	);
+	// Version 103 (stage D8, diplomacy/Unions.hpp): the union invites a small country of its culture group in its sphere or a subject
+	result &= add_diplomatic_action(
+		"join_union",
+		{
+			.commit =
+				[](Argument& arg) {
+					Unions::join_union(arg.instance_manager, *arg.sender, *arg.receiver);
+				},
+			.allowed =
+				[](Argument const& arg) {
+					return Unions::may_join(arg.instance_manager, *arg.sender, *arg.receiver);
+				},
+			.get_acceptance =
+				[](Argument const& arg) {
+					OpenVicDiplomacyDefines const* const o = CountryRelationManager::diplomacy_defines;
+					return o != nullptr && arg.instance_manager.get_country_relation_manager().get_effective_relation(arg.receiver, arg.sender)
+						>= o->union_join_relation ? 1 : 0;
 				},
 		}
 	);

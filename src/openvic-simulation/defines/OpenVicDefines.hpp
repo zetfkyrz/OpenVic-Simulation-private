@@ -721,6 +721,9 @@ namespace OpenVic {
 	INT(INDEPENDENCE_COST, independence_cost, 20, 0, 10000) \
 	INT(AI_PUPPET_SIZE_PCT, ai_puppet_size_pct, 25, 0, 10000) \
 	INT(AI_PUPPET_CHANCE_PCT, ai_puppet_chance_pct, 50, 0, 100) \
+	/* Stage D8 (version 103): the hegemony (clear_union_sphere of Vic2): the countries of the culture group of the winner leave the sphere */ \
+	/* of the loser, the winner gets PRESTIGE_CLEAR_UNION_SPHERE_BASE of defines.lua */ \
+	INT(HEGEMONY_COST, hegemony_cost, 10, 0, 10000) \
 	INT(WAR_GOAL_COST_DIVISOR, war_goal_cost_divisor, 2, 1, 1000) \
 	INT(WHITE_PEACE_SCORE_GAP, white_peace_score_gap, 15, 0, 10000) \
 	INT(WHITE_PEACE_WAR_DAYS, white_peace_war_days, 1095, 0, 36500) \
@@ -1269,6 +1272,18 @@ namespace OpenVic {
 	INT(AI_SUBJECT_INDEPENDENCE_POWER_PCT, ai_subject_independence_power_pct, 75, 0, 100000) \
 	INT(AI_OVERLORD_KEEP_RELATION, ai_overlord_keep_relation, 50, -200, 200) \
 	INT(AI_OVERLORD_ANNEX_CHANCE, ai_overlord_annex_chance, 25, 0, 100) \
+	/* Stage D8 (version 103, diplomacy/Unions.hpp): the unions of the nations. The decision: UNION_FORM_PRESTIGE prestige, +UNION_FORM_PRESTIGE_GAIN; */ \
+	/* the small countries of the group asked to join agree UNION_JOIN_CHANCE percent of the time (Vic2: 25), later invited (UNION_INVITE_COST */ \
+	/* points, a refusal UNION_INVITE_DECLINE_RELATION) they agree with a relation of UNION_JOIN_RELATION; the AI fights a war of unification */ \
+	/* (a dice of AI_UNIFICATION_WAR_CHANCE a month) against a country with at most AI_UNIFICATION_MAX_POWER_PCT percent of its power */ \
+	INT(UNION_FORM_PRESTIGE, union_form_prestige, 45, 0, 100000) \
+	INT(UNION_FORM_PRESTIGE_GAIN, union_form_prestige_gain, 20, 0, 100000) \
+	INT(UNION_JOIN_CHANCE, union_join_chance, 25, 0, 100) \
+	INT(UNION_JOIN_RELATION, union_join_relation, 100, -200, 200) \
+	FIXED(UNION_INVITE_COST, union_invite_cost, 2, 0, 1000) \
+	INT(UNION_INVITE_DECLINE_RELATION, union_invite_decline_relation, -20, -200, 200) \
+	INT(AI_UNIFICATION_WAR_CHANCE, ai_unification_war_chance, 10, 0, 100) \
+	INT(AI_UNIFICATION_MAX_POWER_PCT, ai_unification_max_power_pct, 80, 0, 100000) \
 	/* Version 102: a colonial subject gives its overlord SUBJECT_COLONIAL_RAW_SURPLUS_PCT percent of its surplus of raw goods (its RGOs put */ \
 	/* it aside, it goes to the national stockpile of the overlord); a released nation likes its liberator (RELEASE_NATION_RELATION); an AI */ \
 	/* country releases a nation of its colonial land (AI_RELEASE_COLONY_MIN_STATES states at least) as its colonial subject, a dice of */ \

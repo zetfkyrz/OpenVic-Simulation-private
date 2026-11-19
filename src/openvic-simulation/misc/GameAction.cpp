@@ -1,5 +1,6 @@
 #include "GameAction.hpp"
 #include "openvic-simulation/diplomacy/Subjects.hpp"
+#include "openvic-simulation/diplomacy/Unions.hpp"
 
 #include "openvic-simulation/military/Unlocks.hpp"
 #include <algorithm>
@@ -454,6 +455,13 @@ bool GameActionManager::VariantVisitor::operator() (give_war_subsidies_argument_
 	DiplomaticActionManager const& actions = instance_manager.definition_manager.get_diplomatic_action_manager();
 	const std::optional<std::size_t> index = actions.get_action_index("war_subsidies");
 	return index.has_value() && actions.execute_diplomatic_action(*index, &sender, &receiver, {}, instance_manager);
+}
+
+// The decision to form the union of the nations (version 103)
+bool GameActionManager::VariantVisitor::operator() (form_union_argument_t const& argument) const {
+	return Unions::form_union(
+		instance_manager, instance_manager.get_country_instance_manager().get_country_instance_by_index(type_safe::get(argument))
+	);
 }
 
 // The release of a nation (version 102): the kind 0 free, 1 puppet, 2 protectorate, 3 colonial subject, 4 crown land, 5 dominion
@@ -1422,7 +1430,8 @@ bool GameActionManager::VariantVisitor::operator() (declare_war_goal_argument_t 
 	CountryInstance& defender = war_action_country(instance_manager, defender_index);
 
 	WarGoal goal;
-	if (goal_type > static_cast<std::uint32_t>(WarGoal::type_t::REPARATIONS)) {
+	// (the war of unification too, version 103)
+	if (goal_type > static_cast<std::uint32_t>(WarGoal::type_t::REPARATIONS) && goal_type != static_cast<std::uint32_t>(WarGoal::type_t::UNIFICATION)) {
 		return false;
 	}
 	goal.type = static_cast<WarGoal::type_t>(goal_type);
@@ -1493,6 +1502,10 @@ bool GameActionManager::VariantVisitor::operator() (set_peace_demand_argument_t 
 		return true;
 	case 10:
 		draft.independence = enabled;
+		return true;
+	// version 103 (stage D8)
+	case 11:
+		draft.hegemony = enabled;
 		return true;
 	}
 	return false;

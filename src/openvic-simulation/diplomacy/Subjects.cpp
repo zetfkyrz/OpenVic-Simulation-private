@@ -11,6 +11,7 @@
 #include "openvic-simulation/map/MapInstance.hpp"
 #include "openvic-simulation/map/ProvinceInstance.hpp"
 #include "openvic-simulation/map/State.hpp"
+#include "openvic-simulation/country/Sphere.hpp"
 #include "openvic-simulation/economy/GoodInstance.hpp"
 #include "openvic-simulation/defines/DiplomacyDefines.hpp"
 #include "openvic-simulation/diplomacy/DiplomaticAction.hpp"
@@ -206,6 +207,16 @@ bool Subjects::annex(InstanceManager& instance_manager, CountryInstance& overlor
 		return false;
 	}
 	SPDLOG_INFO("Subjects: {} annexes {}", overlord.get_identifier(), subject.get_identifier());
+	instance_manager.get_notification_log().add(instance_manager.get_today(), &overlord, "subject_annexed", "", &subject);
+	absorb(instance_manager, overlord, subject);
+	return true;
+}
+
+void Subjects::absorb(InstanceManager& instance_manager, CountryInstance& overlord, CountryInstance& subject) {
+	// (it leaves its sphere first, version 103)
+	if (subject.get_sphere_owner_untracked() != nullptr) {
+		instance_manager.get_sphere_manager().leave(instance_manager, subject);
+	}
 	// the land (a copy: the owner changes)
 	const memory::vector<ProvinceInstance*> provinces { subject.get_owned_provinces().begin(), subject.get_owned_provinces().end() };
 	for (ProvinceInstance* province : provinces) {
@@ -253,9 +264,7 @@ bool Subjects::annex(InstanceManager& instance_manager, CountryInstance& overlor
 	subject.justify_target = nullptr;
 	subject.justify_days_left = 0;
 	subject.casus_belli.clear();
-	instance_manager.get_notification_log().add(instance_manager.get_today(), &overlord, "subject_annexed", "", &subject);
 	release(instance_manager, subject, false);
-	return true;
 }
 
 void Subjects::setup_history(InstanceManager& instance_manager) {
@@ -377,7 +386,9 @@ memory::vector<Subjects::releasable_t> Subjects::get_releasable_nations(CountryI
 		}
 		// the nations whose core is the capital of the state (in the order of the cores)
 		for (CountryInstance* nation : state_capital.get_cores()) {
-			if (nation == nullptr || nation == &country || nation->exists() || nation->is_rebel_country() || !nation->is_releasable_vassal()
+			// (not a union that was formed, version 103)
+			if (nation == nullptr || nation == &country || nation->exists() || nation->union_holder != nullptr
+				|| &nation->country_definition == country.union_identity || nation->is_rebel_country() || !nation->is_releasable_vassal()
 				|| nation->country_definition.is_dynamic_tag) {
 				continue;
 			}

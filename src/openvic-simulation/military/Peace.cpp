@@ -4,6 +4,8 @@
 #include "openvic-simulation/economy/BuildingInstance.hpp"
 #include "openvic-simulation/misc/NotificationLog.hpp"
 #include "openvic-simulation/diplomacy/Subjects.hpp"
+#include "openvic-simulation/diplomacy/Unions.hpp"
+#include "openvic-simulation/country/Sphere.hpp"
 #include "War.hpp"
 
 #include <algorithm>
@@ -195,8 +197,10 @@ fixed_point_t WarManager::get_state_cost(
 		cost = fixed_point_t::_1;
 	}
 
-	// A war goal of the winners costs half (the goal of the declaration and the goals added in the war, version 100)
-	if (is_war_goal(war, winners_are_attackers, WarGoal::type_t::CONQUER_STATE, &state_province)) {
+	// A war goal of the winners costs half (the goal of the declaration and the goals added in the war, version 100; the states of the
+	// union in a war of unification, version 103)
+	if (is_war_goal(war, winners_are_attackers, WarGoal::type_t::CONQUER_STATE, &state_province)
+		|| is_union_goal_state(war, winners_are_attackers, state_province)) {
 		cost /= get_peace_defines().war_goal_cost_divisor;
 	}
 	return cost;
@@ -232,8 +236,9 @@ memory::vector<ProvinceInstance const*> WarManager::get_peace_candidates(
 				held_by_winners = province->get_controller() != loser && side_contains(winners, province->get_controller());
 			}
 
-			const bool is_goal = winners_are_attackers && war.goal.type == WarGoal::type_t::CONQUER_STATE
-				&& war.goal.state_province != nullptr && same_state(*war.goal.state_province, *province);
+			const bool is_goal = (winners_are_attackers && war.goal.type == WarGoal::type_t::CONQUER_STATE
+				&& war.goal.state_province != nullptr && same_state(*war.goal.state_province, *province))
+				|| is_union_goal_state(war, winners_are_attackers, *province);
 
 			if (held_by_winners || is_goal) {
 				result.push_back(get_state_key(*province));
@@ -281,7 +286,45 @@ fixed_point_t WarManager::get_terms_cost(War const& war, CountryInstance const& 
 		const fixed_point_t independence = get_peace_defines().independence_cost;
 		cost += is_war_goal(war, winners_are_attackers, WarGoal::type_t::INDEPENDENCE) ? independence / divisor : independence;
 	}
+	// version 103 (stage D8)
+	if (terms.hegemony) {
+		cost += get_peace_defines().hegemony_cost;
+	}
 	return cost;
+}
+
+bool WarManager::is_union_goal_state(War const& war, const bool winners_are_attackers, ProvinceInstance const& state_province) {
+	if (war.union_country == nullptr || !winners_are_attackers || war.goal.type != WarGoal::type_t::UNIFICATION
+		|| state_province.get_state() == nullptr) {
+		return false;
+	}
+	// (not the state of the capital of its owner)
+	CountryInstance const* const owner = state_province.get_owner();
+	if (owner != nullptr && owner->get_capital() != nullptr && owner->get_capital()->get_state() == state_province.get_state()) {
+		return false;
+	}
+	return Unions::is_union_state(*state_province.get_state(), *war.union_country);
+}
+
+std::string_view WarManager::get_hegemony_block_reason(
+	InstanceManager& instance_manager, War const& war, CountryInstance const& proposer, PeaceTerms const& terms
+) const {
+	if (!terms.hegemony) {
+		return {};
+	}
+	const bool proposer_is_attacker = war.is_attacker(proposer);
+	const bool winners_are_attackers = terms.concede ? !proposer_is_attacker : proposer_is_attacker;
+	if (war.get_side(winners_are_attackers).empty() || war.get_side(!winners_are_attackers).empty()) {
+		return "Война без сторон";
+	}
+	CountryInstance const& winner = *war.get_side(winners_are_attackers).front();
+	if (Unions::get_union_definition(winner) == nullptr) {
+		return "У культурной группы победителя нет союза наций";
+	}
+	if (Unions::get_hegemony_members(instance_manager, winner, *war.get_side(!winners_are_attackers).front()).empty()) {
+		return "В сфере побеждённого нет стран культурной группы победителя";
+	}
+	return {};
 }
 
 std::string_view WarManager::get_subject_terms_block_reason(War const& war, CountryInstance const& proposer, PeaceTerms const& terms) const {
@@ -340,7 +383,7 @@ bool WarManager::evaluate_offer(
 	}
 
 	const bool empty_terms = terms.states.empty() && !terms.reparations && !terms.humiliate && !terms.disarm && !terms.destroy_forts
-		&& !terms.destroy_naval_bases && !terms.remove_cores && !terms.make_puppet && !terms.independence;
+		&& !terms.destroy_naval_bases && !terms.remove_cores && !terms.make_puppet && !terms.independence && !terms.hegemony;
 	if (std::string_view const subject_reason = get_subject_terms_block_reason(war, *proposer, terms); !subject_reason.empty()) {
 		say(subject_reason);
 		return false;
@@ -499,6 +542,14 @@ void WarManager::apply_peace_terms(
 		loser_leader.add_prestige(-get_peace_defines().humiliate_prestige);
 	}
 	// version 101 (stage D6): the subjects
+	// version 103 (stage D8): the hegemony
+	if (terms.hegemony && get_hegemony_block_reason(instance_manager, war, *(terms.concede ? losers.front() : winners.front()), terms).empty()) {
+		for (CountryInstance* member : Unions::get_hegemony_members(instance_manager, winner_leader, loser_leader)) {
+			instance_manager.get_sphere_manager().leave(instance_manager, *member);
+		}
+		winner_leader.add_prestige(instance_manager.definition_manager.get_define_manager().get_diplomacy_defines().get_prestige_clear_union_sphere_base());
+		instance_manager.get_notification_log().add(today, &winner_leader, "hegemony_asserted", "", &loser_leader);
+	}
 	if ((terms.make_puppet || terms.independence) && get_subject_terms_block_reason(war, *(terms.concede ? losers.front() : winners.front()),
 		terms).empty()) {
 		if (terms.independence) {
@@ -556,6 +607,9 @@ bool WarManager::send_peace_offer(InstanceManager& instance_manager, CountryInst
 
 	if (std::string_view const subject_reason = get_subject_terms_block_reason(*war, proposer, terms); !subject_reason.empty()) {
 		return respond(false, subject_reason);
+	}
+	if (std::string_view const hegemony_reason = get_hegemony_block_reason(instance_manager, *war, proposer, terms); !hegemony_reason.empty()) {
+		return respond(false, hegemony_reason);
 	}
 	const fixed_point_t cost = get_terms_cost(*war, proposer, terms);
 	const fixed_point_t available = terms.concede ? war->get_score(!proposer_is_attacker) : war->get_score(proposer_is_attacker);
@@ -619,7 +673,7 @@ namespace {
 	// Fills terms with the states that fit in the war score (cheap ones first), at most the share of it
 	PeaceTerms make_greedy_terms(
 		WarManager const& manager, War const& war, CountryInstance const& proposer, const bool concede, const fixed_point_t budget,
-		const bool puppet_wanted = false
+		const bool puppet_wanted = false, const bool hegemony_possible = false
 	) {
 		PeaceTerms terms;
 		terms.war_id = war.id;
@@ -647,6 +701,13 @@ namespace {
 					remaining -= cost;
 					terms.independence = true;
 				}
+			}
+			// the hegemony over the countries of the culture of the winner (version 103)
+			if (!concede && hegemony_possible && fixed_point_t(pd.hegemony_cost) <= remaining) {
+				remaining -= pd.hegemony_cost;
+				terms.hegemony = true;
+			}
+			if (terms.independence) {
 			} else if (!concede && puppet_wanted && winner->is_great_power() && !loser->is_great_power() && loser->overlord == nullptr
 				&& winner->overlord == nullptr
 				&& static_cast<std::int64_t>(loser->get_owned_provinces().size()) * 100
@@ -767,8 +828,14 @@ void WarManager::update_ai_peace(InstanceManager& instance_manager) {
 			if (winning) {
 				// (a puppet in AI_PUPPET_CHANCE_PCT percent of the wars, by the id of the war)
 				const bool puppet_wanted = static_cast<std::int32_t>((war_id * 2654435761u) % 100u) < pd.ai_puppet_chance_pct;
-				terms = make_greedy_terms(*this, *war, leader, false, pd.ai_terms_score_share.of(war->get_score(attacker_side)), puppet_wanted);
-				make_offer = !terms.states.empty() || terms.make_puppet || terms.independence;
+				PeaceTerms probe;
+				probe.war_id = war_id;
+				probe.hegemony = true;
+				const bool hegemony_possible = get_hegemony_block_reason(instance_manager, *war, leader, probe).empty();
+				terms = make_greedy_terms(
+					*this, *war, leader, false, pd.ai_terms_score_share.of(war->get_score(attacker_side)), puppet_wanted, hegemony_possible
+				);
+				make_offer = !terms.states.empty() || terms.make_puppet || terms.independence || terms.hegemony;
 			} else if (losing) {
 				terms = make_greedy_terms(*this, *war, leader, true, pd.ai_terms_score_share.of(war->get_score(!attacker_side)));
 				make_offer = true; // even an empty list is a request for a white peace

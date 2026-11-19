@@ -60,6 +60,7 @@
 #include <openvic-simulation/map/State.hpp>
 #include <openvic-simulation/misc/GameAction.hpp>
 #include <openvic-simulation/diplomacy/Subjects.hpp>
+#include <openvic-simulation/diplomacy/Unions.hpp>
 #include <openvic-simulation/misc/MoneyLedger.hpp>
 #include <openvic-simulation/misc/Replay.hpp>
 #include <openvic-simulation/misc/StateHash.hpp>
@@ -7075,6 +7076,96 @@ namespace {
 			fmt::format("share {} aside {}", share, aside));
 	}
 
+	// Stage D8 (version 103): the unions of the nations
+	void test_unions(Results& r, InstanceManager& im) {
+		CountryInstanceManager& countries = im.get_country_instance_manager();
+		// a country of a culture group with a union (Prussia: Germany)
+		CountryInstance* country = countries.get_country_instance_by_identifier("PRU");
+		if (country == nullptr || Unions::get_union_definition(*country) == nullptr) {
+			fmt::println("TEST INFO unions: no Prussia with a union, not checked");
+			return;
+		}
+		CountryDefinition const& definition = *Unions::get_union_definition(*country);
+		CountryInstance& union_instance = Unions::get_union_instance(im, definition);
+		const memory::vector<Unions::requirement_t> requirements = Unions::get_form_requirements(im, *country);
+		r.check(requirements.size() == 6 && Unions::get_union_holder(im, definition) == nullptr,
+			"unions: the requirements of the decision of Prussia (6), Germany not formed yet");
+		// (the technology of the war of unification of Vic2)
+		if (Technology const* const technology = im.definition_manager.get_research_manager().get_technology_manager()
+			.get_technology_by_identifier("nationalism_n_imperialism"); technology != nullptr) {
+			country->unlock_technology(*technology);
+		}
+		// the war of unification: a country of another group with the union land
+		CountryInstance* target = nullptr;
+		for (CountryInstance& candidate : countries.get_country_instances()) {
+			if (&candidate != country && candidate.exists() && im.get_war_manager().can_declare_war(*country, candidate, im.get_today())
+				&& Unions::get_unification_block_reason(im, *country, candidate).empty()) {
+				target = &candidate;
+				break;
+			}
+		}
+		if (target == nullptr) {
+			fmt::println("TEST INFO unions: no target of a war of unification");
+		} else {
+		const fixed_point_t infamy = country->get_infamy_untracked();
+		country->casus_belli.clear();
+		const bool declared = im.get_war_manager().declare_war_as_country(im, *country, *target, WarGoal {});
+		War* war = im.get_war_manager().find_war_between(*country, *target);
+		bool union_goal = false;
+		if (war != nullptr) {
+			for (ProvinceInstance const* candidate : im.get_war_manager().get_peace_candidates(*war, *country, false)) {
+				union_goal = union_goal || WarManager::is_union_goal_state(*war, true, *candidate);
+			}
+		}
+		r.check(declared && war != nullptr && war->goal.type == WarGoal::type_t::UNIFICATION && war->union_country == &union_instance
+				&& country->get_infamy_untracked() == infamy && union_goal,
+			"unions: a war of unification without a casus belli and infamy, the union states are goals of the peace",
+			fmt::format("{} against {}: declared {} war {} goal {} union {} infamy {} -> {} goal states {} truce {}", country->get_identifier(), target->get_identifier(), declared, war != nullptr, war != nullptr ? static_cast<int>(war->goal.type) : -1, war != nullptr && war->union_country == &union_instance, infamy, country->get_infamy_untracked(), union_goal, im.get_war_manager().has_truce(*country, *target, im.get_today())));
+		if (war != nullptr) {
+			im.get_war_manager().end_war(im, war->id);
+		}
+		}
+		// the land of the union cores becomes Prussian, the requirements are met
+		std::size_t moved = 0;
+		for (ProvinceInstance& province : im.get_map_instance().get_province_instances()) {
+			if (province.get_cores().contains(&union_instance) && province.get_owner() != nullptr && province.get_owner() != country) {
+				CountryInstance* const owner = province.get_owner();
+				if (owner->get_sphere_owner_untracked() == country || owner->overlord == country) {
+					continue;
+				}
+				province.set_owner(country);
+				province.set_controller(country);
+				moved++;
+			}
+		}
+		memory::vector<std::uint32_t> war_ids;
+		for (War const* war : im.get_war_manager().get_wars_of(*country)) {
+			war_ids.push_back(war->id);
+		}
+		for (const std::uint32_t war_id : war_ids) {
+			im.get_war_manager().end_war(im, war_id);
+		}
+		country->add_prestige(fixed_point_t(100));
+		Subjects::release(im, *country, false);
+		const memory::string reason = Unions::get_form_block_reason(im, *country);
+		const bool great_power = country->is_great_power();
+		const bool formed = Unions::form_union(im, *country);
+		std::size_t cores = 0;
+		for (ProvinceInstance const& province : im.get_map_instance().get_province_instances()) {
+			if (province.get_cores().contains(&union_instance) && !province.get_cores().contains(country)) {
+				cores++;
+			}
+		}
+		if (!great_power) {
+			fmt::println("TEST INFO unions: Prussia is no great power now, the decision is not checked ({})", reason);
+		} else {
+			r.check(formed && country->union_identity == &definition && union_instance.union_holder == country
+					&& country->get_display_identifier() == definition.get_identifier() && country->get_identifier() == "PRU" && cores == 0
+					&& Unions::get_union_holder(im, definition) == country && !Unions::get_form_block_reason(im, *country).empty(),
+				"unions: Prussia forms Germany (the name, the cores; the tag stays)", fmt::format("{} provinces moved, {}", moved, reason));
+		}
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -9154,7 +9245,8 @@ namespace {
 		test_diplomacy_d3(r, *im);
 		test_diplomacy_d5(r, *im);
 		test_diplomacy_d6(r, *im); // it annexes a country
-		test_release_nations(r, *im); // last: it releases a nation and ticks days
+		test_release_nations(r, *im); // it releases a nation and ticks days
+		test_unions(r, *im); // last: Prussia forms Germany
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

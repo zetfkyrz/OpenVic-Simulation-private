@@ -178,6 +178,9 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		hasher.add((country.overlord != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.overlord->index)) + 1 : 0)
 			+ (static_cast<std::uint64_t>(country.subject_type) << 32) + (static_cast<std::uint64_t>(static_cast<std::uint32_t>(country.subject_tribute_pct)) << 40));
 		hasher.add(static_cast<std::uint64_t>((country.subject_since - Date {}).to_int()));
+		// the union (version 103)
+		hasher.add((country.union_identity != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.union_identity->index)) + 1 : 0)
+			+ (country.union_holder != nullptr ? (static_cast<std::uint64_t>(type_safe::get(country.union_holder->index)) + 1) << 32 : 0));
 		// the sphere (version 92)
 		hasher.add((country.get_sphere_owner_untracked() != nullptr ? static_cast<std::uint64_t>(type_safe::get(country.get_sphere_owner_untracked()->index)) + 1 : 0)
 			+ (country.get_leads_sphere() ? 1ULL << 32 : 0));
@@ -329,6 +332,7 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	hasher.add(instance_manager.get_war_manager().get_wars().size());
 	for (War const& war : instance_manager.get_war_manager().get_wars()) {
 		hasher.add(static_cast<std::uint64_t>(war.id) * 1000 + war.attackers.size() * 31 + war.defenders.size());
+		hasher.add(war.union_country != nullptr ? static_cast<std::uint64_t>(type_safe::get(war.union_country->index)) + 1 : 0);
 		// the goals added in the war (version 100)
 		for (WarGoalEntry const& entry : war.extra_goals) {
 			hasher.add(static_cast<std::uint64_t>(entry.goal.type) + (entry.attackers ? 16 : 0)

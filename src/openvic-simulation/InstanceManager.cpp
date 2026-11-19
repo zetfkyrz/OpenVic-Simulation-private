@@ -10,6 +10,7 @@
 #include "openvic-simulation/ai/DiplomacyAI.hpp"
 #include "openvic-simulation/politics/LawDynamics.hpp"
 #include "openvic-simulation/diplomacy/Subjects.hpp"
+#include "openvic-simulation/diplomacy/Unions.hpp"
 
 #include "openvic-simulation/DefinitionManager.hpp"
 #include "openvic-simulation/console/ConsoleInstance.hpp"
@@ -383,6 +384,8 @@ void InstanceManager::tick() {
 				country_relation_manager.monthly_update(*this);
 				// the discontent of the subjects (version 101)
 				Subjects::monthly_update(*this);
+				// the unions of the nations of the AI (version 103)
+				Unions::ai_monthly(*this);
 				// the spheres of influence (version 92, docs/PLAN_SPHERES.md)
 				sphere_manager.monthly_update(*this);
 			}

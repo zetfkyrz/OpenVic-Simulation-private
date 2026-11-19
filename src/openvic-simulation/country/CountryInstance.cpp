@@ -319,6 +319,10 @@ std::string_view CountryInstance::get_identifier() const {
 	return country_definition.get_identifier();
 }
 
+std::string_view CountryInstance::get_display_identifier() const {
+	return get_display_definition().get_identifier();
+}
+
 bool CountryInstance::exists() const {
 	return !owned_provinces.empty();
 }
@@ -2419,13 +2423,15 @@ void CountryInstance::update_gamestate(const Date today, MapInstance& map_instan
 	_update_politics();
 	_update_diplomacy();
 
+	// (the colour of the union the country formed, version 103)
+	CountryDefinition const& display_definition = get_display_definition();
 	const CountryDefinition::government_colour_map_t::const_iterator it =
-		country_definition.get_alternative_colours().find(government_type.get_untracked());
+		display_definition.get_alternative_colours().find(government_type.get_untracked());
 
-	if (it != country_definition.get_alternative_colours().end()) {
+	if (it != display_definition.get_alternative_colours().end()) {
 		colour = it.value();
 	} else {
-		colour = country_definition.get_colour();
+		colour = display_definition.get_colour();
 	}
 }
 

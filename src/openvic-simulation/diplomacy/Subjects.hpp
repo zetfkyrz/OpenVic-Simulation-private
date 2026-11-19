@@ -52,6 +52,8 @@ namespace OpenVic {
 		memory::string get_annex_block_reason(InstanceManager const& instance_manager, CountryInstance const& overlord, CountryInstance const& subject);
 		// The land of the subject goes to the overlord, its armies and fleets are disbanded; false if it cannot be annexed
 		bool annex(InstanceManager& instance_manager, CountryInstance& overlord, CountryInstance& subject);
+		// The land of the country goes to the other, its armies and fleets are disbanded, its bonds end (no checks: the annexation, a union)
+		void absorb(InstanceManager& instance_manager, CountryInstance& into, CountryInstance& country);
 
 		// The release of nations (version 102, the tab "release nations" of the politics window): a nation that does not exist, whose core is the
 		// capital of a state of the country (not the state of its capital), gets these states, whole; it may stay a subject of the country (a
