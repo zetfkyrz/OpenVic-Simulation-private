@@ -161,7 +161,8 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 		if (order.training_line != 0) {
 			hasher.add(order.id);
 			hasher.add(order.goods_paid);
-			hasher.add(static_cast<std::uint64_t>(static_cast<std::uint32_t>(order.days_left)) + (order.stalled ? 1ULL << 40 : 0));
+			hasher.add(static_cast<std::uint64_t>(static_cast<std::uint32_t>(order.days_left)) + (order.stalled ? 1ULL << 40 : 0)
+				+ (order.early_release ? 1ULL << 41 : 0));
 			continue;
 		}
 		if (!order.mobilisation && !order.waiting && order.priority == 0) {

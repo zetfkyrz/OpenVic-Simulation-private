@@ -5907,12 +5907,41 @@ namespace {
 		std::size_t poor_orders = 0;
 		for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
 			poor_orders += order.country == country && order.mobilisation && order.pop != nullptr
-				&& UnitInstanceManager::is_mobilisation_pop_type(order.pop->get_type()) && &order.pop->get_location() == order.province;
+				&& UnitInstanceManager::is_mobilisation_pop_type(order.pop->get_type()) && order.division_id != 0
+				&& order.province->get_owner() == country;
 		}
+		// (stage A3) the regiments of a division gather in one province, of the cheapest template without cavalry and artillery
+		DivisionTemplate const* const mobilisation_template = unit_manager.find_mobilisation_template(*country);
+		std::vector<std::pair<std::uint32_t, ProvinceInstance const*>> mobilised_divisions;
+		bool one_place = true;
+		bool infantry = true;
+		for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+			if (order.country != country || !order.mobilisation) {
+				continue;
+			}
+			const std::string_view scope = get_unit_category_scope(*order.regiment_type);
+			infantry = infantry && scope != "cavalry" && scope != "artillery";
+			auto it = std::find_if(mobilised_divisions.begin(), mobilised_divisions.end(), [&order](auto const& e) { return e.first == order.division_id; });
+			if (it == mobilised_divisions.end()) {
+				mobilised_divisions.emplace_back(order.division_id, order.province);
+			} else {
+				one_place = one_place && it->second == order.province;
+			}
+		}
+		std::size_t division_size = 0;
+		if (mobilisation_template != nullptr) {
+			for (const std::uint8_t cell : mobilisation_template->cells) {
+				division_size += cell != 0;
+			}
+		}
+		r.check(one_place && infantry && !mobilised_divisions.empty()
+				&& (division_size == 0 || mobilised_divisions.size() == (pool.pool_regiments + division_size - 1) / division_size),
+			"mobilisation: the regiments are raised in divisions of the cheapest template without cavalry and artillery, a division in one province",
+			fmt::format("{} divisions of {} regiments ({} a division)", mobilised_divisions.size(), pool.pool_regiments, division_size));
 		const Manpower soldiers_ordered = unit_manager.get_manpower(*country);
 		r.check(unit_manager.get_recruitment_orders().size() == orders_before + pool.pool_regiments && poor_orders == pool.pool_regiments
 				&& soldiers_ordered.queued_men == soldiers_before.queued_men && soldiers_ordered.free_men == soldiers_before.free_men,
-			"mobilisation: the regiments of the pool are ordered from the poor pops in their provinces, the manpower of the soldiers does not change",
+			"mobilisation: the regiments of the pool are ordered from the poor pops of the country, the manpower of the soldiers does not change",
 			fmt::format("{} orders of {} regiments, {} from poor pops; free soldiers {} -> {}", unit_manager.get_recruitment_orders().size() - orders_before,
 				pool.pool_regiments, poor_orders, soldiers_before.free_men, soldiers_ordered.free_men));
 		for (std::int32_t day = 0; day <= pool.days_max; ++day) {
@@ -7383,6 +7412,42 @@ namespace {
 		r.check(line_orders().empty() && back <= spent / 100 && back >= -spent / 100 && men_back,
 			"training: a removed line cancels its division in training, the goods paid and the men come back",
 			fmt::format("not back {} of {}", back, spent));
+
+		// the early release (stage A3): a second division of the template comes out the next day with the equipment and the training it got
+		if (unit_manager.add_training_line(*country, division_template->id, capital, 1)) {
+			const std::uint32_t release_line = unit_manager.get_training_lines().back().id;
+			unit_manager.update_training();
+			std::uint32_t release_division = 0;
+			fixed_point_t paid = fixed_point_t::_0;
+			for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+				if (order.training_line == release_line) {
+					release_division = order.division_id;
+					paid = order.goods_paid;
+				}
+			}
+			const bool released = release_division != 0 && unit_manager.release_training_division(*country, release_division);
+			im.force_tick_and_update();
+			std::size_t out = 0;
+			bool weak = true;
+			std::vector<ArmyInstance const*> armies;
+			for (ArmyInstance const& army : country->get_armies()) {
+				for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+					if (regiment.get_division_id() == release_division) {
+						out++;
+						if (std::find(armies.begin(), armies.end(), &army) == armies.end()) { armies.push_back(&army); }
+						weak = weak && regiment.get_strength() < regiment.get_max_strength() && regiment.get_strength() > fixed_point_t::_0
+							&& regiment.get_unapplied_losses() == fixed_point_t::_0;
+					}
+				}
+			}
+			bool left = false;
+			for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+				left = left || order.division_id == release_division;
+			}
+			r.check(released && out > 0 && weak && armies.size() == 1 && !left,
+				"training: a division released early comes out whole the next day, weaker by the equipment it did not get (nobody dies)",
+				fmt::format("{} regiments in {} armies, goods paid {}", out, armies.size(), paid));
+		}
 	}
 
 	// Stage A1 of docs/PLAN_ARMY_TRAINING.md: the divisions are whole

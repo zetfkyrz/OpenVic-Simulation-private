@@ -812,7 +812,7 @@ void UnitInstanceManager::tick(const Date today) {
 
 		// A regiment of a division recruited by a template: into the army of its division in the province (a new army for the first one)
 		ArmyInstance* target = nullptr;
-		if (order.mobilisation) {
+		if (order.mobilisation && order.division_id == 0) {
 			// A mobilised regiment joins the mobilised army of the province that stands there (every regiment mobilised) or makes a new one: the
 			// divisions (update_all_divisions) are made of the mobilised regiments only, the demobilisation does not tear the regular ones apart
 			for (ArmyInstance& army : province.get_armies()) {
@@ -844,7 +844,9 @@ void UnitInstanceManager::tick(const Date today) {
 			}
 			if (target == nullptr) {
 				const unique_id_t army_id = unique_id_counter++;
-				target = &*armies.emplace(army_id, fmt::format("Army {}", army_id), country, province);
+				target = &*armies.emplace(
+					army_id, order.mobilisation ? fmt::format("Мобилизованные {}", army_id) : fmt::format("Army {}", army_id), country, province
+				);
 				unit_instance_group_map.emplace(target->unique_id, *target);
 				target->get_mutable_divisions().push_back(DivisionInstance { order.division_id, order.template_id });
 			}
@@ -866,6 +868,12 @@ void UnitInstanceManager::tick(const Date today) {
 			unit_instance_group_map.emplace(target->unique_id, *target);
 		}
 		target->add_unit(regiment);
+		if (order.early_release) {
+			// released early (stage A3): the equipment and the training it got, the reinforcement adds the rest (nobody died)
+			const auto [strength_share, organisation_share] = get_release_shares(order);
+			regiment.set_strength_moved(regiment.get_max_strength() * strength_share);
+			regiment.set_organisation_moved(regiment.get_max_organisation() * organisation_share);
+		}
 		target->update_gamestate();
 	}
 	for (NavyInstance& navy : navies) {
@@ -2075,6 +2083,28 @@ bool UnitInstanceManager::move_training_line(CountryInstance const& country, con
 	return false;
 }
 
+std::pair<fixed_point_t, fixed_point_t> UnitInstanceManager::get_release_shares(RecruitmentOrder const& order) const {
+	const fixed_point_t minimum = fixed_point_t::_1 / 10;
+	const fixed_point_t progress = order.early_release ? order.release_progress
+		: fixed_point_t(std::max(0, order.days_total - order.days_left)) / std::max(1, order.days_total);
+	return { std::clamp(order.goods_paid, minimum, fixed_point_t::_1), std::clamp(progress, minimum, fixed_point_t::_1) };
+}
+
+bool UnitInstanceManager::release_training_division(CountryInstance& country, const std::uint32_t division_id) {
+	bool found = false;
+	for (RecruitmentOrder& order : recruitment_orders) {
+		if (order.country != &country || order.division_id != division_id || order.training_line == 0 || order.early_release) {
+			continue;
+		}
+		order.release_progress = fixed_point_t(std::max(0, order.days_total - order.days_left)) / std::max(1, order.days_total);
+		order.early_release = true;
+		order.stalled = false;
+		order.days_left = 1;
+		found = true;
+	}
+	return found;
+}
+
 std::uint32_t UnitInstanceManager::get_training_divisions(CountryInstance const& country) const {
 	std::uint32_t divisions = 0;
 	for (TrainingLine const& line : training_lines) {
@@ -2154,7 +2184,7 @@ void UnitInstanceManager::update_training() {
 				break;
 			}
 		}
-		if (first == nullptr) {
+		if (first == nullptr || first->early_release) {
 			continue;
 		}
 		for (RecruitmentOrder& order : recruitment_orders) {
@@ -2242,7 +2272,7 @@ void UnitInstanceManager::update_training_goods_wanted() {
 	}
 	training_goods_countries.clear();
 	for (RecruitmentOrder const& order : recruitment_orders) {
-		if (order.training_line == 0 || order.regiment_type == nullptr || order.goods_paid >= fixed_point_t::_1) {
+		if (order.training_line == 0 || order.regiment_type == nullptr || order.goods_paid >= fixed_point_t::_1 || order.early_release) {
 			continue;
 		}
 		const fixed_point_t share = std::min(fixed_point_t::_1 - order.goods_paid, fixed_point_t(7) / std::max(1, order.days_total));
@@ -3048,21 +3078,50 @@ std::string_view UnitInstanceManager::get_demobilise_block_reason(CountryInstanc
 	return {};
 }
 
+DivisionTemplate const* UnitInstanceManager::find_mobilisation_template(CountryInstance const& country) const {
+	if (unit_type_manager == nullptr) {
+		return nullptr;
+	}
+	DivisionTemplate const* best = nullptr;
+	fixed_point_t best_cost = fixed_point_t::_0;
+	for (DivisionTemplate const& division_template : country.get_division_templates()) {
+		const std::vector<RegimentType const*> types = template_regiment_types(*unit_type_manager, division_template);
+		bool allowed = !types.empty();
+		fixed_point_t cost = fixed_point_t::_0;
+		for (RegimentType const* type : types) {
+			const std::string_view scope = get_unit_category_scope(*type);
+			allowed = allowed && country.is_unit_type_unlocked(*type) && scope != "cavalry" && scope != "artillery";
+			for (auto const& [good, quantity] : type->get_build_cost()) {
+				cost += quantity * good->base_price;
+			}
+		}
+		if (allowed && (best == nullptr || cost < best_cost)) {
+			best = &division_template;
+			best_cost = cost;
+		}
+	}
+	return best;
+}
+
 bool UnitInstanceManager::mobilise(CountryInstance& country) {
 	if (!get_mobilise_block_reason(country).empty() || unit_type_manager == nullptr) {
 		return false;
 	}
 	const Mobilisation mobilisation = get_mobilisation(country);
-	// The types: the cells of the first template of the country in their order (the regiments take them in turn), else the infantry
+	// The divisions (stage A3 of docs/PLAN_ARMY_TRAINING.md): the cheapest template of the country (its goods at their base prices) without
+	// cavalry and artillery, its regiments in the order of its cells; without one, divisions of the infantry of the size of the first template,
+	// out of the templates
 	std::vector<RegimentType const*> types;
-	if (!country.get_division_templates().empty()) {
-		for (RegimentType const* type : template_regiment_types(*unit_type_manager, country.get_division_templates().front())) {
-			if (country.is_unit_type_unlocked(*type)) {
-				types.push_back(type);
-			}
-		}
+	DivisionTemplate const* division_template = find_mobilisation_template(country);
+	if (division_template != nullptr) {
+		types = template_regiment_types(*unit_type_manager, *division_template);
 	}
+	std::size_t division_size = types.size();
 	if (types.empty()) {
+		division_size = 1;
+		if (!country.get_division_templates().empty()) {
+			division_size = std::max<std::size_t>(1, template_regiment_types(*unit_type_manager, country.get_division_templates().front()).size());
+		}
 		RegimentType const* fallback = unit_type_manager->get_regiment_type_by_identifier("line_infantry");
 		if (fallback == nullptr || !country.is_unit_type_unlocked(*fallback)) {
 			fallback = nullptr;
@@ -3085,7 +3144,7 @@ bool UnitInstanceManager::mobilise(CountryInstance& country) {
 		if (fallback == nullptr) {
 			return false;
 		}
-		types.push_back(fallback);
+		types.assign(division_size, fallback);
 	}
 	// Every pop of the pool gets the regiments of its share: the whole ones first, the rest by the largest remainder (the order of the pops on a tie)
 	struct Quota {
@@ -3122,15 +3181,39 @@ bool UnitInstanceManager::mobilise(CountryInstance& country) {
 			}
 		}
 	}
-	std::size_t next_type = 0;
+	// The regiments of the pops in their order, a division of division_size of them after the other (the last one may be smaller): it gathers in
+	// the province of its first regiment, when the men of all its provinces are there (the longest of their days)
+	std::vector<Pop*> slots;
 	for (Quota const& quota : quotas) {
-		ProvinceInstance& province = quota.pop->get_location();
-		const std::int32_t days = get_mobilisation_days(country, province);
 		for (std::uint32_t i = 0; i < quota.regiments; ++i) {
-			RegimentType const* const type = types[next_type++ % types.size()];
-			quota.pop->add_recruit();
-			RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, &province, quota.pop, days, days };
+			slots.push_back(quota.pop);
+		}
+	}
+	std::vector<std::pair<ProvinceInstance const*, std::int32_t>> province_days;
+	const auto days_of = [&](ProvinceInstance const& province) -> std::int32_t {
+		for (auto const& [known, days] : province_days) {
+			if (known == &province) {
+				return days;
+			}
+		}
+		const std::int32_t days = get_mobilisation_days(country, province);
+		province_days.emplace_back(&province, days);
+		return days;
+	};
+	for (std::size_t first = 0; first < slots.size(); first += division_size) {
+		const std::size_t last = std::min(slots.size(), first + division_size);
+		ProvinceInstance& place = slots[first]->get_location();
+		std::int32_t days = 1;
+		for (std::size_t i = first; i < last; ++i) {
+			days = std::max(days, days_of(slots[i]->get_location()));
+		}
+		const std::uint32_t division_id = next_division_id++;
+		for (std::size_t i = first; i < last; ++i) {
+			slots[i]->add_recruit();
+			RecruitmentOrder order { unique_id_counter++, &country, types[(i - first) % types.size()], nullptr, &place, slots[i], days, days };
 			order.mobilisation = true;
+			order.division_id = division_id;
+			order.template_id = division_template != nullptr ? division_template->id : 0;
 			recruitment_orders.push_back(order);
 		}
 	}

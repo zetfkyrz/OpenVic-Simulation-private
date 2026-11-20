@@ -490,6 +490,14 @@ bool GameActionManager::VariantVisitor::operator() (remove_training_line_argumen
 	);
 }
 
+// The early release of a division in training (stage A3 of docs/PLAN_ARMY_TRAINING.md)
+bool GameActionManager::VariantVisitor::operator() (release_training_division_argument_t const& argument) const {
+	const auto [country_index, division_id] = argument;
+	return instance_manager.get_unit_instance_manager().release_training_division(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), division_id
+	);
+}
+
 bool GameActionManager::VariantVisitor::operator() (move_training_line_argument_t const& argument) const {
 	const auto [country_index, line_id, up] = argument;
 	return instance_manager.get_unit_instance_manager().move_training_line(

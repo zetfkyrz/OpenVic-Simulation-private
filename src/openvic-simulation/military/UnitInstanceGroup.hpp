@@ -360,6 +360,10 @@ namespace OpenVic {
 		std::int32_t week_days = 0;
 		fixed_point_t goods_paid;
 		bool stalled = false;
+		// The early release (stage A3): the division comes out the next day, the strength of its regiments by the share of the goods paid (the
+		// equipment it got), the organisation by release_progress (the share of the days of its training done), both at least a tenth
+		bool early_release = false;
+		fixed_point_t release_progress;
 	};
 
 	// A line of the queue of the training of a country (stage A2 of docs/PLAN_ARMY_TRAINING.md): the divisions of a template to train and the
@@ -561,6 +565,11 @@ namespace OpenVic {
 		bool add_training_line(CountryInstance& country, std::uint32_t template_id, ProvinceInstance& province, std::uint32_t count);
 		bool remove_training_line(CountryInstance& country, std::uint32_t line_id);
 		bool move_training_line(CountryInstance const& country, std::uint32_t line_id, bool up);
+		// The early release of a division in training (stage A3 of docs/PLAN_ARMY_TRAINING.md): it comes out the next day with the equipment and
+		// the training it got; the reinforcement adds the rest
+		bool release_training_division(CountryInstance& country, std::uint32_t division_id);
+		// The strength and the organisation (shares of the maximum) a division released now would have: {strength, organisation}
+		[[nodiscard]] std::pair<fixed_point_t, fixed_point_t> get_release_shares(RecruitmentOrder const& order) const;
 		// The divisions of the country in the queue: not started and in training
 		[[nodiscard]] std::uint32_t get_training_divisions(CountryInstance const& country) const;
 		// The lines start their divisions, the divisions pay their goods once a week (a part of tick; public for the self-tests)
@@ -591,10 +600,14 @@ namespace OpenVic {
 		// Empty if the country can mobilise (demobilise), otherwise the reason (Russian text for the player)
 		[[nodiscard]] std::string_view get_mobilise_block_reason(CountryInstance const& country) const;
 		[[nodiscard]] std::string_view get_demobilise_block_reason(CountryInstance const& country) const;
-		// The mobilisation: orders of mobilised regiments (the types of the first template of the country, else the infantry) linked to the poor pops of
-		// the pool, ready in the days of their provinces; no goods. The demobilisation disbands every mobilised regiment and cancels the orders: the men
-		// go back to their pops, nobody dies
+		// The mobilisation: orders of mobilised regiments linked to the poor pops of the pool, in divisions (stage A3 of docs/PLAN_ARMY_TRAINING.md) of
+		// find_mobilisation_template (else of the infantry, as many regiments as the first template), each ready in the province of its first
+		// regiment after the longest days of its provinces; no goods. The demobilisation disbands every mobilised regiment and cancels the orders:
+		// the men go back to their pops, nobody dies
 		bool mobilise(CountryInstance& country);
+		// The cheapest template of the country (the goods of its regiments at their base prices) without cavalry and artillery, all its types
+		// unlocked (nullptr: none)
+		[[nodiscard]] DivisionTemplate const* find_mobilisation_template(CountryInstance const& country) const;
 		bool demobilise(CountryInstance& country);
 		// Every day: the output multiplier of the economy, the demobilisation DEMOBILISE_DAYS after the last war (one thread)
 		void update_mobilisation(CountryInstance& country);

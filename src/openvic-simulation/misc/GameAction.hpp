@@ -200,7 +200,8 @@ X(crisis_back, country_index_t, bool) \
 X(crisis_concede, country_index_t) \
 X(add_training_line, country_index_t, std::uint32_t, province_index_t, std::uint32_t) \
 X(remove_training_line, country_index_t, std::uint32_t) \
-X(move_training_line, country_index_t, std::uint32_t, bool)
+X(move_training_line, country_index_t, std::uint32_t, bool) \
+X(release_training_division, country_index_t, std::uint32_t)
 // <--- ADD NEW GAME ACTIONS HERE (copy/edit an X(...) line)
 
 //the argument type alias for each game action
