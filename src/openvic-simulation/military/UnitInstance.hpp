@@ -56,6 +56,13 @@ namespace OpenVic {
 		}
 
 		void set_name(std::string_view new_name);
+		// The strength is moved between the regiments of a division (stage A1 of docs/PLAN_ARMY_TRAINING.md): nobody dies, no losses
+		void set_strength_moved(const fixed_point_t new_strength) {
+			strength = std::clamp(new_strength, fixed_point_t::_0, unit_type.max_strength);
+		}
+		void set_organisation_moved(const fixed_point_t new_organisation) {
+			organisation = std::clamp(new_organisation, fixed_point_t::_0, max_organisation);
+		}
 
 		// Combat helpers, values are clamped to [0, max]
 		void take_damage(fixed_point_t organisation_loss, fixed_point_t strength_loss);

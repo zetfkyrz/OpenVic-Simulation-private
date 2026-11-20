@@ -537,12 +537,15 @@ namespace {
 					}
 				}
 				if (biggest != nullptr) {
-					const std::size_t take = std::min(most_room, biggest->get_unit_count() - 1);
+					// whole divisions (stage A1 of docs/PLAN_ARMY_TRAINING.md: a regiment never walks alone), while they fit the ships
 					ArmyInstance* force = nullptr;
-					for (std::size_t taken = 0; taken < take && biggest->get_unit_count() > 1; ++taken) {
-						RegimentInstance& regiment = biggest->get_regiment_instances().back().get();
-						ArmyInstance* const piece = unit_manager.split_regiment(*biggest, regiment);
+					while ((force == nullptr || force->get_unit_count() < needed) && count_division_units(*biggest) > 1) {
+						ArmyInstance* const piece = split_division_unit(unit_manager, *biggest);
 						if (piece == nullptr) {
+							break;
+						}
+						if (force != nullptr && force->get_unit_count() + piece->get_unit_count() > most_room) {
+							unit_manager.merge_armies(*biggest, *piece);
 							break;
 						}
 						if (force == nullptr) {

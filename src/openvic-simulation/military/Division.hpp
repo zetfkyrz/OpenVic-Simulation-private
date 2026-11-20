@@ -123,8 +123,14 @@ namespace OpenVic {
 		InstanceManager& instance_manager, CountryInstance& country, std::uint32_t template_id, DivisionGrid const& grid
 	);
 	bool delete_division_template(CountryInstance& country, std::uint32_t template_id);
+	// The division fits its template (stage A1 of docs/PLAN_ARMY_TRAINING.md): the regiments that do not fit go to the reserve of the army,
+	// the free cells are filled from the reserve, the cells still free get new regiments with no men, and then the men of the division are
+	// shared among all its regiments (the same share of the full strength each: 4 full regiments that become 6 are 67 % each); the
+	// reinforcement adds the men that are missing. Nothing happens to a division out of the template
+	void fit_division_to_template(InstanceManager& instance_manager, ArmyInstance& army, std::uint32_t division_id);
 	// The regiments of the divisions out of the template (of one division if division_id is not 0) of the army make as many whole divisions of
-	// the template as they can; what is left stays where it was
+	// the template as they can; what is left stays where it was. A division of a template takes the other template (stage A1): it fits it, the
+	// regiments it lacks come with no men and the men are shared
 	bool reform_army_to_template(
 		InstanceManager& instance_manager, ArmyInstance& army,
 		std::uint32_t division_id, std::uint32_t template_id

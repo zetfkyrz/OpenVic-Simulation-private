@@ -3322,7 +3322,9 @@ namespace {
 			out_of_template += !templated;
 			in_divisions += templated;
 		}
-		r.check(in_divisions + out_of_template == regiments && out_of_template >= expected_divisions,
+		// (the free cells of the infantry get new regiments without men, stage A1 of docs/PLAN_ARMY_TRAINING.md: the army has more regiments)
+		const std::size_t regiments_after = army->get_unit_count();
+		r.check(in_divisions + out_of_template == regiments_after && regiments_after >= regiments && out_of_template >= expected_divisions,
 			"divisions: the regiments that left wait in the reserve of the army", fmt::format("{} {}", in_divisions, out_of_template));
 		bad_division = 0;
 		for (DivisionInstance const& division : army->get_divisions()) {
@@ -3339,7 +3341,7 @@ namespace {
 		// The template is deleted: its divisions stay, out of the template
 		im.queue_game_action<delete_division_template_argument_t>(country->index, pair_id);
 		im.force_tick_and_update();
-		r.check(country->find_division_template(pair_id) == nullptr && count_templated(pair_id) == 0 && army->get_unit_count() == regiments,
+		r.check(country->find_division_template(pair_id) == nullptr && count_templated(pair_id) == 0 && army->get_unit_count() == regiments_after,
 			"divisions: the divisions of a deleted template do not belong to any template");
 
 		// Without the technology there are no templates, and generals command armies only with it
@@ -7268,6 +7270,140 @@ namespace {
 		}
 	}
 
+	// Stage A1 of docs/PLAN_ARMY_TRAINING.md: the divisions are whole
+	void test_whole_divisions(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		// an army of two divisions or more, out of battle
+		ArmyInstance* army = nullptr;
+		for (CountryInstance& country : im.get_country_instance_manager().get_country_instances()) {
+			for (ArmyInstance& candidate : country.get_armies()) {
+				if (!candidate.is_in_combat() && !candidate.is_moving() && count_division_units(candidate) >= 2) {
+					army = &candidate;
+					break;
+				}
+			}
+			if (army != nullptr) {
+				break;
+			}
+		}
+		if (army == nullptr) {
+			fmt::println("TEST INFO whole divisions: no army of two divisions, not checked");
+			return;
+		}
+		// the division of a regiment leaves as a whole
+		RegimentInstance& regiment = army->get_regiment_instances().back().get();
+		const std::uint32_t division_id = regiment.get_division_id();
+		std::size_t in_division = 0;
+		for (RegimentInstance const& other : army->get_regiment_instances()) {
+			in_division += other.get_division_id() == division_id;
+		}
+		ArmyInstance* const split = split_division(unit_manager, *army, division_id);
+		bool whole = split != nullptr && split->get_unit_count() == in_division;
+		if (split != nullptr) {
+			for (RegimentInstance const& other : split->get_regiment_instances()) {
+				whole = whole && other.get_division_id() == division_id;
+			}
+		}
+		r.check(whole, "whole divisions: a division leaves its army as a whole, not a regiment", fmt::format("{} regiments", in_division));
+
+		// a division of a template that gets one more regiment: the men of the division are shared among all its regiments
+		// (a division whose regiments all fit its template, with men)
+		ArmyInstance* target = nullptr;
+		DivisionInstance const* division = nullptr;
+		for (CountryInstance& owner : im.get_country_instance_manager().get_country_instances()) {
+			for (ArmyInstance& candidate_army : owner.get_armies()) {
+				for (DivisionInstance const& candidate : candidate_army.get_divisions()) {
+					DivisionTemplate const* const candidate_template = candidate.template_id != 0 ? owner.find_division_template(candidate.template_id) : nullptr;
+					if (candidate_template == nullptr || candidate_army.is_in_combat()) {
+						continue;
+					}
+					std::array<std::uint32_t, DIVISION_MAX_TYPES> have {};
+					bool fits = true;
+					std::size_t members = 0;
+					for (RegimentInstance const& member : candidate_army.get_regiment_instances()) {
+						if (member.get_division_id() != candidate.id) {
+							continue;
+						}
+						const std::size_t member_kind = get_division_slot_kind(member.get_regiment_type());
+						fits = fits && member_kind < DIVISION_MAX_TYPES && ++have[member_kind] <= candidate_template->counts[member_kind]
+							&& member.get_strength() > fixed_point_t::_0;
+						members++;
+					}
+					if (fits && members >= 2) {
+						target = &candidate_army;
+						division = &candidate;
+						break;
+					}
+				}
+				if (division != nullptr) {
+					break;
+				}
+			}
+			if (division != nullptr) {
+				break;
+			}
+		}
+		if (division == nullptr) {
+			fmt::println("TEST INFO whole divisions: no division of a template, the sharing of the men is not checked");
+			return;
+		}
+		const std::uint32_t grown_id = division->id;
+		CountryInstance& country = target->get_country();
+		DivisionTemplate* division_template = nullptr;
+		for (DivisionTemplate& candidate : country.get_mutable_division_templates()) {
+			if (candidate.id == division->template_id) {
+				division_template = &candidate;
+			}
+		}
+		std::uint8_t kind = 0;
+		std::size_t free_cell = DIVISION_GRID_SIZE;
+		for (std::size_t cell = 0; cell < DIVISION_GRID_SIZE && division_template != nullptr; ++cell) {
+			if (division_template->cells[cell] != 0 && kind == 0) {
+				kind = division_template->cells[cell];
+			}
+			if (division_template->cells[cell] == 0 && free_cell == DIVISION_GRID_SIZE) {
+				free_cell = cell;
+			}
+		}
+		if (division_template == nullptr || kind == 0 || free_cell == DIVISION_GRID_SIZE) {
+			fmt::println("TEST INFO whole divisions: no free cell in the template");
+			return;
+		}
+		fixed_point_t strength = fixed_point_t::_0;
+		std::size_t regiments = 0;
+		for (RegimentInstance const& other : target->get_regiment_instances()) {
+			if (other.get_division_id() == grown_id) {
+				strength += other.get_strength();
+				regiments++;
+			}
+		}
+		division_template->cells[free_cell] = kind;
+		division_template->rebuild_counts();
+		fit_division_to_template(im, *target, grown_id);
+		fixed_point_t after = fixed_point_t::_0;
+		std::size_t after_regiments = 0;
+		fixed_point_t lowest_share = fixed_point_t(10);
+		fixed_point_t highest_share = fixed_point_t::_0;
+		fixed_point_t losses = fixed_point_t::_0;
+		for (RegimentInstance const& other : target->get_regiment_instances()) {
+			if (other.get_division_id() != grown_id) {
+				continue;
+			}
+			after += other.get_strength();
+			after_regiments++;
+			losses += other.get_unapplied_losses();
+			const fixed_point_t share = other.get_strength() / other.get_max_strength();
+			lowest_share = std::min(lowest_share, share);
+			highest_share = std::max(highest_share, share);
+		}
+		const fixed_point_t tolerance = fixed_point_t::_1 / 100;
+		// (every cell of the template has a regiment now: the one added and the ones that were empty)
+		r.check(after_regiments == division_template->get_total_slots() && after_regiments > regiments && after <= strength + tolerance && after + tolerance >= strength
+				&& highest_share - lowest_share <= tolerance && losses == fixed_point_t::_0,
+			"whole divisions: a template with one more regiment shares the men of the division among all its regiments (nobody dies)",
+			fmt::format("{} -> {} regiments, strength {} -> {}, shares {}..{}", regiments, after_regiments, strength, after, lowest_share, highest_share));
+	}
+
 	void test_sphere_principles(Results& r, InstanceManager& im) {
 		CountryInstanceManager& countries = im.get_country_instance_manager();
 		SphereManager& spheres = im.get_sphere_manager();
@@ -9349,7 +9485,8 @@ namespace {
 		test_diplomacy_d6(r, *im); // it annexes a country
 		test_release_nations(r, *im); // it releases a nation and ticks days
 		test_unions(r, *im); // Prussia forms Germany
-		test_crises(r, *im); // last: a crisis gives a state away
+		test_crises(r, *im); // a crisis gives a state away
+		test_whole_divisions(r, *im); // last: it changes a template
 		game.end();
 
 		// ---- run 10: the mobilisation, the monthly limit of the recruitment and the priorities (docs/RECRUITMENT.md)

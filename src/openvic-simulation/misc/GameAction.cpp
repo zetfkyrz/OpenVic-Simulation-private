@@ -1232,7 +1232,8 @@ bool GameActionManager::VariantVisitor::operator() (split_regiment_argument_t co
 	if (regiment == nullptr || army->is_in_combat()) {
 		return false;
 	}
-	return instance_manager.get_unit_instance_manager().split_regiment(*army, *regiment) != nullptr;
+	// the division of the regiment leaves the army as a whole (stage A1 of docs/PLAN_ARMY_TRAINING.md): a regiment never walks alone
+	return split_division(instance_manager.get_unit_instance_manager(), *army, regiment->get_division_id()) != nullptr;
 }
 
 bool GameActionManager::VariantVisitor::operator() (merge_armies_argument_t const& argument) const {

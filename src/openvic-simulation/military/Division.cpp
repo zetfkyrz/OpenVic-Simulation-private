@@ -522,40 +522,98 @@ bool OpenVic::update_division_template(
 			continue;
 		}
 
-		// The regiments that do not fit go to the reserve
+		// Every division of the template fits it (stage A1): the regiments that do not fit go to the reserve, the free cells take the reserve
+		// and then new regiments, the men are shared
 		for (const std::uint32_t division_id : division_ids) {
-			std::array<std::uint32_t, DIVISION_MAX_TYPES> kept {};
-			for (RegimentInstance& regiment : army.get_regiment_instances()) {
-				if (regiment.get_division_id() != division_id) {
-					continue;
-				}
-				const std::size_t kind = get_division_slot_kind(regiment.get_regiment_type());
-				if (kind < DIVISION_MAX_TYPES && kept[kind] < counts[kind]) {
-					kept[kind]++;
-				} else {
-					regiment.set_division_id(reserve_division_id(unit_manager, army));
-				}
-			}
+			fit_division_to_template(instance_manager, army, division_id);
 		}
-		// The free slots are filled from the reserve (the regiments that are not in a division of a template)
-		for (const std::uint32_t division_id : division_ids) {
-			for (std::size_t kind = 0; kind < DIVISION_MAX_TYPES; ++kind) {
-				std::size_t have = count_kind(army, division_id, kind);
-				for (RegimentInstance& regiment : army.get_regiment_instances()) {
-					if (have >= counts[kind]) {
-						break;
-					}
-					DivisionInstance const* const from = find_division(army, regiment.get_division_id());
-					if (from != nullptr && from->template_id == 0 && get_division_slot_kind(regiment.get_regiment_type()) == kind) {
-						regiment.set_division_id(division_id);
-						have++;
-					}
-				}
-			}
-		}
-		remove_empty_divisions(army);
 	}
 	return true;
+}
+
+void OpenVic::fit_division_to_template(InstanceManager& instance_manager, ArmyInstance& army, const std::uint32_t division_id) {
+	DivisionInstance const* const division = find_division(army, division_id);
+	if (division == nullptr || division->template_id == 0) {
+		return;
+	}
+	CountryInstance& country = army.get_country();
+	DivisionTemplate const* const division_template = country.find_division_template(division->template_id);
+	if (division_template == nullptr) {
+		return;
+	}
+	UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+	UnitTypeManager const& unit_type_manager = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+	const std::array<std::uint32_t, DIVISION_MAX_TYPES> counts = division_template->counts;
+	// the regiments that do not fit go to the reserve
+	std::array<std::uint32_t, DIVISION_MAX_TYPES> kept {};
+	for (RegimentInstance& regiment : army.get_regiment_instances()) {
+		if (regiment.get_division_id() != division_id) {
+			continue;
+		}
+		const std::size_t kind = get_division_slot_kind(regiment.get_regiment_type());
+		if (kind < DIVISION_MAX_TYPES && kept[kind] < counts[kind]) {
+			kept[kind]++;
+		} else {
+			regiment.set_division_id(reserve_division_id(unit_manager, army));
+		}
+	}
+	// the free cells: from the reserve, then new regiments with no men
+	Pop* pop = nullptr;
+	for (RegimentInstance& regiment : army.get_regiment_instances()) {
+		if (regiment.get_division_id() == division_id && regiment.get_pop() != nullptr) {
+			pop = regiment.get_pop();
+			break;
+		}
+	}
+	bool added = false;
+	for (std::size_t kind = 0; kind < DIVISION_MAX_TYPES; ++kind) {
+		std::size_t have = count_kind(army, division_id, kind);
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (have >= counts[kind]) {
+				break;
+			}
+			DivisionInstance const* const from = find_division(army, regiment.get_division_id());
+			if (from != nullptr && from->template_id == 0 && get_division_slot_kind(regiment.get_regiment_type()) == kind) {
+				regiment.set_division_id(division_id);
+				have++;
+			}
+		}
+		if (have < counts[kind] && kind < unit_type_manager.get_regiment_type_count()) {
+			RegimentType const& regiment_type = unit_type_manager.get_regiment_types()[kind];
+			for (; have < counts[kind]; ++have) {
+				unit_manager.add_empty_regiment(army, regiment_type, pop, division_id);
+				added = true;
+			}
+		}
+	}
+	// the men (and the organisation) of the division shared among its regiments: the same share of the full strength each
+	if (added) {
+		fixed_point_t strength = fixed_point_t::_0;
+		fixed_point_t max_strength = fixed_point_t::_0;
+		fixed_point_t organisation = fixed_point_t::_0;
+		fixed_point_t max_organisation = fixed_point_t::_0;
+		for (RegimentInstance const& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() == division_id) {
+				strength += regiment.get_strength();
+				max_strength += regiment.get_max_strength();
+				organisation += regiment.get_organisation();
+				max_organisation += regiment.get_max_organisation();
+			}
+		}
+		for (RegimentInstance& regiment : army.get_regiment_instances()) {
+			if (regiment.get_division_id() != division_id) {
+				continue;
+			}
+			if (max_strength > fixed_point_t::_0) {
+				regiment.set_strength_moved(regiment.get_max_strength() * strength / max_strength);
+			}
+			if (max_organisation > fixed_point_t::_0) {
+				regiment.set_organisation_moved(regiment.get_max_organisation() * organisation / max_organisation);
+			}
+		}
+	}
+	remove_empty_divisions(army);
+	army.update_gamestate();
 }
 
 bool OpenVic::delete_division_template(CountryInstance& country, const std::uint32_t template_id) {
@@ -594,8 +652,21 @@ bool OpenVic::reform_army_to_template(
 	}
 	if (division_id != 0) {
 		DivisionInstance const* const division = find_division(army, division_id);
-		if (division == nullptr || division->template_id != 0) {
+		if (division == nullptr) {
 			return false;
+		}
+		// a division of a template takes the other template (stage A1)
+		if (division->template_id != 0) {
+			if (division->template_id == template_id) {
+				return false;
+			}
+			for (DivisionInstance& mutable_division : army.get_mutable_divisions()) {
+				if (mutable_division.id == division_id) {
+					mutable_division.template_id = template_id;
+				}
+			}
+			fit_division_to_template(instance_manager, army, division_id);
+			return true;
 		}
 	}
 

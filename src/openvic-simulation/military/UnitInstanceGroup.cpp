@@ -2248,6 +2248,20 @@ bool UnitInstanceManager::upgrade_regiment(CountryInstance& country, ArmyInstanc
 	return true;
 }
 
+RegimentInstance& UnitInstanceManager::add_empty_regiment(
+	ArmyInstance& army, RegimentType const& regiment_type, Pop* const pop, const std::uint32_t division_id
+) {
+	const unique_id_t regiment_id = unique_id_counter++;
+	RegimentInstance& regiment = *regiments.insert(RegimentInstance {
+		regiment_id, fmt::format("{} {}", regiment_type.get_identifier(), regiment_id), regiment_type, pop, false
+	});
+	unit_instance_map.emplace(regiment.unique_id, regiment);
+	regiment.set_division_id(division_id);
+	regiment.set_strength_moved(fixed_point_t::_0);
+	army.add_unit(regiment);
+	return regiment;
+}
+
 void UnitInstanceManager::disband_regiment(ArmyInstance& army, RegimentInstance& regiment) {
 	destroy_unit(regiment, army);
 }

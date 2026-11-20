@@ -594,6 +594,9 @@ namespace OpenVic {
 
 		// Moves a regiment out of its army into a new army in the same province
 		ArmyInstance* split_regiment(ArmyInstance& army, RegimentInstance& regiment);
+		// A new regiment of the type in the army, in the division, from the pop, with no strength (stage A1: a division that gets more
+		// regiments than it has men shares its men among them)
+		RegimentInstance& add_empty_regiment(ArmyInstance& army, RegimentType const& regiment_type, Pop* pop, std::uint32_t division_id);
 		// Moves all the regiments of the source army into the target army (same country and province), deletes the source
 		bool merge_armies(ArmyInstance& target, ArmyInstance& source);
 		// A paid upgrade of one regiment to the type its type upgrades to (upgrades_to, upgrade_cost in the unit file): the goods are taken from the
