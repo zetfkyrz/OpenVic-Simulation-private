@@ -17,6 +17,7 @@
 #include "openvic-simulation/population/Culture.hpp"
 #include "openvic-simulation/population/PopSum.hpp"
 #include "openvic-simulation/population/Religion.hpp"
+#include "openvic-simulation/politics/Ideology.hpp"
 #include "openvic-simulation/types/OrderedContainersMath.hpp"
 
 using namespace OpenVic;
@@ -185,6 +186,16 @@ static colour_argb_t get_relation_colour(const std::int32_t relation) {
 	return colour_argb_t { 0x14, 0x6B, 0x2A, ALPHA_VALUE };
 }
 
+// A colour between two (0xRRGGBB) by value of the most (the map modes of a scale)
+static colour_argb_t get_scale_colour(const std::int32_t value, const std::int32_t most, const std::uint32_t from, const std::uint32_t to) {
+	const std::int32_t v = std::clamp(value, 0, std::max(1, most));
+	const std::int32_t m = std::max(1, most);
+	const auto mix = [v, m](const std::uint32_t a, const std::uint32_t b) -> colour_argb_t::value_type {
+		return static_cast<colour_argb_t::value_type>(static_cast<std::int32_t>(a) + (static_cast<std::int32_t>(b) - static_cast<std::int32_t>(a)) * v / m);
+	};
+	return colour_argb_t { mix((from >> 16) & 0xFF, (to >> 16) & 0xFF), mix((from >> 8) & 0xFF, (to >> 8) & 0xFF), mix(from & 0xFF, to & 0xFF), ALPHA_VALUE };
+}
+
 static constexpr colour_argb_t CRISIS_CALM = (0xBDBDB0_argb).with_alpha(ALPHA_VALUE); // nobody else claims the land
 static constexpr colour_argb_t CRISIS_NATION = (0xE6C84A_argb).with_alpha(ALPHA_VALUE); // a core of a nation without a country
 static constexpr colour_argb_t CRISIS_CLAIM = (0xE0702A_argb).with_alpha(ALPHA_VALUE); // a core of another country
@@ -282,7 +293,9 @@ static constexpr auto shaded_mapmode(ordered_map<KeyType const*, ValueType> cons
 	};
 }
 
-bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, BuildingTypeManager const& building_type_manager) {
+bool MapmodeManager::setup_mapmodes(
+	MapDefinition const& map_definition, BuildingTypeManager const& building_type_manager, IdeologyManager const& ideology_manager
+) {
 	if (mapmodes_are_locked()) {
 		spdlog::error_s("Cannot setup mapmodes - already locked!");
 		return false;
@@ -308,7 +321,24 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 	ret &= add_mapmode("mapmode_political", get_colour_mapmode(
 		&ProvinceInstance::get_owner, &ProvinceInstance::get_controller
 	), "MAPMODE_2");
-	ret &= add_mapmode("mapmode_militancy", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_3");
+	// The militancy (the map modes of Vic2 that were missing, 2026-11-20): the average militancy of the pops, from pale (0) to dark red (10)
+	ret &= add_mapmode(
+		"mapmode_militancy",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			if (type_safe::get(province.get_total_population()) <= 0) {
+				return MAP_NOBODY;
+			}
+			const std::int32_t tenths = std::clamp<std::int32_t>((province.get_average_militancy() * 10).floor<std::int32_t>(), 0, 100);
+			return get_scale_colour(tenths, 100, 0xE8E0C8, 0x6E0A0A);
+		},
+		"MAPMODE_3"
+	);
 	// The diplomacy (version 104): the country of the selected province (else the player) green, its subjects light green, its overlord
 	// teal, its enemies red, its allies blue, its sphere violet, the land it may cross light blue; the land it holds of another or another
 	// holds of it is striped with the colour of the holder, its cores on the land of the others are striped green
@@ -377,7 +407,36 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 			"MAPMODE_6"
 		);
 	}
-	ret &= add_mapmode("mapmode_colonial", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_7");
+	// The colonies: the land of nobody (to colonise) green, the colonies yellow, the protectorates orange, the states pale; the colonies and
+	// protectorates of the player are striped blue
+	ret &= add_mapmode(
+		"mapmode_colonial",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return (0x4FA84A_argb).with_alpha(ALPHA_VALUE);
+			}
+			colour_argb_t base = (0xC9C4B4_argb).with_alpha(ALPHA_VALUE);
+			if (province.get_colony_status() == colony_status_t::COLONY) {
+				base = (0xE6C84A_argb).with_alpha(ALPHA_VALUE);
+			} else if (province.get_colony_status() == colony_status_t::PROTECTORATE) {
+				base = (0xE08A3A_argb).with_alpha(ALPHA_VALUE);
+			} else {
+				return base;
+			}
+			if (owner == player_country) {
+				return { base, DIPLOMATIC_ALLY };
+			}
+			return base;
+		},
+		"MAPMODE_7"
+	);
 	// The administration (version 88, docs/ADMINISTRATION.md): the share of the taxes the bureaucrats of the state collect, from red (none) to
 	// green (all); the land of nobody is grey
 	ret &= add_mapmode(
@@ -402,8 +461,60 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 		},
 		"MAPMODE_8"
 	);
-	ret &= add_mapmode("mapmode_recruitment", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_9");
-	ret &= add_mapmode("mapmode_national_focus", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_10");
+	// The recruitment: the regiments the provinces of the player can raise (their soldiers), from pale to dark green; the other land grey
+	const std::shared_ptr<std::size_t> most_regiments = std::make_shared<std::size_t>(1);
+	ret &= add_mapmode(
+		"mapmode_recruitment",
+		[most_regiments](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			if (player_country == nullptr || province.get_owner() != player_country) {
+				return DIPLOMATIC_OTHER;
+			}
+			const std::size_t regiments = province.get_max_supported_regiment_count();
+			if (regiments == 0) {
+				return (0xD8D0B8_argb).with_alpha(ALPHA_VALUE);
+			}
+			return get_scale_colour(static_cast<std::int32_t>(regiments), static_cast<std::int32_t>(std::max<std::size_t>(1, *most_regiments)), 0xC8E6B0, 0x145A28);
+		},
+		"MAPMODE_9", true,
+		[most_regiments](MapInstance const& map_instance, CountryInstance const* player_country) -> void {
+			*most_regiments = 1;
+			if (player_country != nullptr) {
+				for (ProvinceInstance const* province : player_country->get_owned_provinces()) {
+					*most_regiments = std::max(*most_regiments, province->get_max_supported_regiment_count());
+				}
+			}
+		}
+	);
+	// The national focus of Vic2 is the priority of the administration here (version 88, docs/ADMINISTRATION.md): the state of the priority
+	// of every country gold, the rest of its land pale; the land of the player striped blue
+	ret &= add_mapmode(
+		"mapmode_national_focus",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return MAP_NOBODY;
+			}
+			const bool focus = province.get_state() != nullptr && owner->get_admin_focus_state() == province.get_state();
+			const colour_argb_t base = focus ? (0xE0B030_argb).with_alpha(ALPHA_VALUE) : (0xC9C4B4_argb).with_alpha(ALPHA_VALUE);
+			if (owner == player_country) {
+				return { base, DIPLOMATIC_ALLY };
+			}
+			return base;
+		},
+		"MAPMODE_10"
+	);
 	ret &= add_mapmode("mapmode_rgo", get_colour_mapmode(&ProvinceInstance::get_rgo_good), "MAPMODE_11");
 	ret &= add_mapmode(
 		"mapmode_population",
@@ -511,9 +622,102 @@ bool MapmodeManager::setup_mapmodes(MapDefinition const& map_definition, Buildin
 			*supply_friends = player_country != nullptr ? SupplyContext::build_friends(*player_country) : SupplyFriends {};
 		}
 	);
-	ret &= add_mapmode("mapmode_party_loyalty", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_16");
-	ret &= add_mapmode("mapmode_ranking", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_17");
-	ret &= add_mapmode("mapmode_migration", Mapmode::ERROR_MAPMODE.get_colour_func(), "MAPMODE_18");
+	// The party loyalty: the ideology with the most supporters in the province (the colours of the ideologies), the second one striped when it
+	// has a third of the support
+	ret &= add_mapmode(
+		"mapmode_party_loyalty",
+		[&ideology_manager](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			auto const& supporters = province.get_supporter_equivalents_by_ideology();
+			Ideology const* first = nullptr;
+			Ideology const* second = nullptr;
+			fixed_point_t first_value = fixed_point_t::_0;
+			fixed_point_t second_value = fixed_point_t::_0;
+			fixed_point_t total = fixed_point_t::_0;
+			for (Ideology const& ideology : ideology_manager.get_ideologies()) {
+				if (type_safe::get(ideology.index) >= type_safe::get(supporters.size())) {
+					continue;
+				}
+				const fixed_point_t value = supporters[ideology.index];
+				total += value;
+				if (first == nullptr || value > first_value) {
+					second = first;
+					second_value = first_value;
+					first = &ideology;
+					first_value = value;
+				} else if (second == nullptr || value > second_value) {
+					second = &ideology;
+					second_value = value;
+				}
+			}
+			if (first == nullptr || total <= fixed_point_t::_0) {
+				return MAP_NOBODY;
+			}
+			const colour_argb_t base { first->get_colour(), ALPHA_VALUE };
+			if (second != nullptr && second_value * 3 >= total) {
+				return { base, colour_argb_t { second->get_colour(), ALPHA_VALUE } };
+			}
+			return base;
+		},
+		"MAPMODE_16"
+	);
+	// The ranking: the great powers gold, the secondary powers silver, the other civilised countries olive, the uncivilised brown
+	ret &= add_mapmode(
+		"mapmode_ranking",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			CountryInstance const* const owner = province.get_owner();
+			if (owner == nullptr) {
+				return MAP_NOBODY;
+			}
+			if (owner->is_great_power()) {
+				return (0xE0B030_argb).with_alpha(ALPHA_VALUE);
+			}
+			if (owner->is_secondary_power()) {
+				return (0xB8C0C8_argb).with_alpha(ALPHA_VALUE);
+			}
+			if (owner->is_civilised()) {
+				return (0x8FA86A_argb).with_alpha(ALPHA_VALUE);
+			}
+			return (0x6E5038_argb).with_alpha(ALPHA_VALUE);
+		},
+		"MAPMODE_17"
+	);
+	// The migration: the change of the population in the month before (growth and migration), red where it fell, green where it grew (two
+	// percent a month is the darkest)
+	ret &= add_mapmode(
+		"mapmode_migration",
+		[](
+			MapInstance const& map_instance, ProvinceInstance const& province,
+			CountryInstance const* player_country, ProvinceInstance const* selected_province
+		) -> Mapmode::base_stripe_t {
+			if (province.province_definition.is_water()) {
+				return colour_argb_t::null();
+			}
+			const std::int64_t start = static_cast<std::int64_t>(type_safe::get(province.get_population_month_start()));
+			if (start <= 0) {
+				return MAP_NOBODY;
+			}
+			const std::int64_t change = static_cast<std::int64_t>(type_safe::get(province.get_population_last_monthly_change()));
+			// in hundredths of a percent, up to 2 %
+			const std::int32_t basis = static_cast<std::int32_t>(std::clamp<std::int64_t>(change * 10000 / start, -200, 200));
+			if (basis >= 0) {
+				return get_scale_colour(basis, 200, 0xE8E0C8, 0x146B2A);
+			}
+			return get_scale_colour(-basis, 200, 0xE8E0C8, 0xA0201C);
+		},
+		"MAPMODE_18"
+	);
 	// The literacy (version 89, docs/LITERACY.md; the button of the civilisation level of Vic2, which had no map): the average literacy of the
 	// province, from dark (none) to bright (all)
 	ret &= add_mapmode(

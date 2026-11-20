@@ -1401,7 +1401,8 @@ bool Dataloader::load_defines(
 	}
 	if (!definition_manager.get_mapmode_manager().setup_mapmodes(
 		definition_manager.get_map_definition(),
-		definition_manager.get_economy_manager().get_building_type_manager()
+		definition_manager.get_economy_manager().get_building_type_manager(),
+		definition_manager.get_politics_manager().get_ideology_manager()
 	)) {
 		spdlog::critical_s("Failed to set up mapmodes!");
 		ret = false;

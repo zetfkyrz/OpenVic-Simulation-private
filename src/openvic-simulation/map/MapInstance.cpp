@@ -214,9 +214,19 @@ void MapInstance::update_gamestate(InstanceManager const& instance_manager) {
 		thread_pool.process_province_update_gamestate(instance_manager);
 	}
 
+	// the month of the population of the provinces (after the totals of the day), as the countries do
+	const Date today = instance_manager.get_today();
+	const bool roll_month = today.get_day() == 1 && population_rolled_month != static_cast<std::uint8_t>(today.get_month());
+	const bool first_roll = population_rolled_month == 0;
+	if (roll_month) {
+		population_rolled_month = static_cast<std::uint8_t>(today.get_month());
+	}
 	for (ProvinceInstance& province : get_province_instances()) {
 		if (!thread_pool.is_initialised()) {
 			province.update_gamestate(instance_manager);
+		}
+		if (roll_month) {
+			province.roll_population_month(first_roll);
 		}
 
 		// Update population stats

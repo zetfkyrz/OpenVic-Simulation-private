@@ -35,6 +35,8 @@ namespace OpenVic {
 		OV_IFLATMAP_PROPERTY(ProvinceDefinition, ProvinceInstance, province_instance_by_definition);
 
 		pop_sum_t PROPERTY(highest_province_population, 0);
+		// the month the population of the provinces was rolled in (the change of the month before: the map of the migration)
+		std::uint8_t population_rolled_month = 0;
 		pop_sum_t PROPERTY(total_map_population, 0);
 
 		StateManager PROPERTY_REF(state_manager);

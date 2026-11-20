@@ -14,6 +14,7 @@
 
 namespace OpenVic {
 	struct BuildingTypeManager;
+	struct IdeologyManager;
 	struct MapmodeManager;
 	struct MapDefinition;
 	struct MapInstance;
@@ -97,6 +98,8 @@ namespace OpenVic {
 			uint8_t* target
 		) const;
 
-		bool setup_mapmodes(MapDefinition const& map_definition, BuildingTypeManager const& building_type_manager);
+		bool setup_mapmodes(
+			MapDefinition const& map_definition, BuildingTypeManager const& building_type_manager, IdeologyManager const& ideology_manager
+		);
 	};
 }
