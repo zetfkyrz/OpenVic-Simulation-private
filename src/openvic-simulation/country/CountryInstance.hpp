@@ -541,6 +541,11 @@ namespace OpenVic {
 		fixed_point_t PROPERTY(canned_food_from_grain_yesterday);
 		// The ship the AI saves the goods for (its transports, version 81): the government buys its build cost for the stockpile; nullptr: none
 		ShipType const* PROPERTY_RW(ai_ship_order, nullptr);
+		// The goods of the next week of the divisions of the country in training (stage A2 of docs/PLAN_ARMY_TRAINING.md): the government buys
+		// them for the stockpile; set every day by UnitInstanceManager::update_training
+	public:
+		memory::vector<std::pair<GoodDefinition const*, fixed_point_t>> training_goods_wanted;
+	private:
 		// The kind of the mobilisation (decision of the owner 2026-11-10): 0 small, 1 standard, 2 extended, 3 full; the share of the pool it raises
 		// is ov_war.MOBILISATION_LEVEL_LIMITED / _STANDARD / _EXTENDED / _FULL
 		std::uint8_t PROPERTY_RW(mobilisation_level, 1);

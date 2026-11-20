@@ -181,7 +181,7 @@ namespace OpenVic {
 		//     levels by the years; the output of the military goods, the research, the literacy, the freight, the loans, the militancy; new
 		//     action set_sphere_principle
 		// 95: the icons of the spheres, stage S5 (docs/PLAN_SPHERES.md): new action set_sphere_icon (the simulation keeps two numbers of the icon)
-		inline constexpr int SIMULATION_VERSION = 105;
+		inline constexpr int SIMULATION_VERSION = 106;
 
 		// What the version and the defines hash of a save say about loading it on this build
 		struct Compatibility {

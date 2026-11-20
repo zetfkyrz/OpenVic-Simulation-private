@@ -471,6 +471,32 @@ bool GameActionManager::VariantVisitor::operator() (crisis_concede_argument_t co
 	);
 }
 
+// The queue of the training (stage A2 of docs/PLAN_ARMY_TRAINING.md): a line of divisions of a template in a province, its removal, its move
+bool GameActionManager::VariantVisitor::operator() (add_training_line_argument_t const& argument) const {
+	const auto [country_index, template_id, province_index, count] = argument;
+	ProvinceInstance* const province = instance_manager.get_map_instance().get_province_instance_by_index(province_index);
+	if (province == nullptr) {
+		return false;
+	}
+	return instance_manager.get_unit_instance_manager().add_training_line(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), template_id, *province, count
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (remove_training_line_argument_t const& argument) const {
+	const auto [country_index, line_id] = argument;
+	return instance_manager.get_unit_instance_manager().remove_training_line(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), line_id
+	);
+}
+
+bool GameActionManager::VariantVisitor::operator() (move_training_line_argument_t const& argument) const {
+	const auto [country_index, line_id, up] = argument;
+	return instance_manager.get_unit_instance_manager().move_training_line(
+		instance_manager.get_country_instance_manager().get_country_instance_by_index(country_index), line_id, up
+	);
+}
+
 // The decision to form the union of the nations (version 103)
 bool GameActionManager::VariantVisitor::operator() (form_union_argument_t const& argument) const {
 	return Unions::form_union(

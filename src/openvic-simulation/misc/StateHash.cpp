@@ -152,7 +152,18 @@ std::uint64_t StateHash::compute(InstanceManager& instance_manager) {
 	}
 
 	// The recruitment orders of the mobilisation, the waiting ones and the ones with a priority (the others are not in the hash, as before)
+	// the queue of the training (stage A2)
+	for (TrainingLine const& line : instance_manager.get_unit_instance_manager().get_training_lines()) {
+		hasher.add(static_cast<std::uint64_t>(line.id) + (static_cast<std::uint64_t>(line.template_id) << 32));
+		hasher.add(static_cast<std::uint64_t>(line.remaining) + (static_cast<std::uint64_t>(type_safe::get(line.province->index)) << 32));
+	}
 	for (RecruitmentOrder const& order : instance_manager.get_unit_instance_manager().get_recruitment_orders()) {
+		if (order.training_line != 0) {
+			hasher.add(order.id);
+			hasher.add(order.goods_paid);
+			hasher.add(static_cast<std::uint64_t>(static_cast<std::uint32_t>(order.days_left)) + (order.stalled ? 1ULL << 40 : 0));
+			continue;
+		}
 		if (!order.mobilisation && !order.waiting && order.priority == 0) {
 			continue;
 		}

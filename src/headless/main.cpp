@@ -361,64 +361,53 @@ static bool test_armies(InstanceManager& instance_manager, DefinitionManager con
 	}
 	check(regiment_type != nullptr && recruit_pop != nullptr, "found a pop that can recruit");
 	if (regiment_type != nullptr && recruit_pop != nullptr) {
-		// Without goods the order is refused
-		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
-			country.get_good_data(*good).stockpile_amount = 0;
-		}
-		if (!regiment_type->get_build_cost().empty()) {
-			check(!unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "recruitment refused without goods");
-		}
-		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
-			country.get_good_data(*good).stockpile_amount = quantity * 2;
-		}
-		const size_t pop_regiments = recruit_pop->get_regiment_count();
-		const size_t orders_before = unit_manager.get_recruitment_orders().size();
-		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment");
-		check(unit_manager.get_recruitment_orders().size() == orders_before + 1, "order queued");
-		check(recruit_pop->get_regiment_count() == pop_regiments + 1, "pop slot taken");
-
-		// Cancel returns the goods and the slot
-		const unique_id_t order_id = unit_manager.get_recruitment_orders().back().id;
-		check(unit_manager.cancel_recruitment(country, order_id) && recruit_pop->get_regiment_count() == pop_regiments, "cancel_recruitment");
-		for (auto const& [good, quantity] : regiment_type->get_build_cost()) {
-			check(country.get_good_data(*good).stockpile_amount == quantity * 2, "goods refunded");
-			break;
-		}
-
-		check(unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "start_recruitment again");
-		const int32_t days = UnitInstanceManager::get_recruitment_days(country, *regiment_type);
-		size_t regiments_in_province_before = 0;
-		for (ArmyInstance const& a : recruit_province->get_armies()) {
-			if (&a.get_country() == &country) {
-				regiments_in_province_before += a.get_unit_count();
+		// (stage A2 of docs/PLAN_ARMY_TRAINING.md) a regiment of its own is not recruited: the divisions of the templates are trained
+		check(!unit_manager.start_recruitment(country, *regiment_type, *recruit_province, *recruit_pop), "a regiment of its own is refused");
+		DivisionTemplate const* division_template = nullptr;
+		for (DivisionTemplate const& candidate : country.get_division_templates()) {
+			if (unit_manager.get_training_block_reason(country, candidate.id, *recruit_province).empty()) {
+				division_template = &candidate;
+				break;
 			}
 		}
-		for (int32_t day = 0; day <= days; ++day) {
-			instance_manager.force_tick_and_update();
+		check(division_template != nullptr, "a template that can be trained");
+		if (division_template == nullptr) {
+			return ok;
 		}
-		size_t regiments_in_province_after = 0;
-		for (ArmyInstance const& a : recruit_province->get_armies()) {
-			if (&a.get_country() == &country) {
-				regiments_in_province_after += a.get_unit_count();
-			}
+		std::size_t template_regiments = 0;
+		for (const std::uint8_t cell : division_template->cells) {
+			template_regiments += cell != 0;
 		}
-		fmt::println("ARMY recruit days={} regiments in province {} -> {}", days, regiments_in_province_before, regiments_in_province_after);
-		check(regiments_in_province_after >= regiments_in_province_before + 1, "regiment appeared in the province");
-
-		// Disband the new regiment: the pop slot is free again
-		for (ArmyInstance& a : recruit_province->get_armies()) {
-			if (&a.get_country() == &country) {
-				for (UnitInstance& unit : a.get_units()) {
-					RegimentInstance& r = static_cast<RegimentInstance&>(unit);
-					if (r.get_pop() == recruit_pop) {
-						unit_manager.disband_regiment(a, r);
-						check(recruit_pop->get_regiment_count() == pop_regiments, "disband frees the pop slot");
-						return ok;
-					}
+		// (the economy spends the stockpile too: the goods are refilled every day)
+		const auto fill_goods = [&]() -> void {
+			for (RegimentType const& type : definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+				for (auto const& [good, quantity] : type.get_build_cost()) {
+					country.get_good_data(*good).stockpile_amount = std::max(country.get_good_data(*good).stockpile_amount, quantity * 100);
 				}
 			}
+		};
+		fill_goods();
+		const auto regiments_here = [&]() -> std::size_t {
+			std::size_t regiments = 0;
+			for (ArmyInstance const& a : recruit_province->get_armies()) {
+				regiments += &a.get_country() == &country ? a.get_unit_count() : 0;
+			}
+			return regiments;
+		};
+		const std::size_t regiments_before = regiments_here();
+		const std::uint32_t training_before = unit_manager.get_training_divisions(country);
+		check(unit_manager.add_training_line(country, division_template->id, *recruit_province, 1), "add_training_line");
+		check(unit_manager.get_training_divisions(country) == training_before + 1, "the division is in the queue");
+		int32_t days = 1;
+		for (int32_t day = 0; day < 400 && unit_manager.get_training_divisions(country) > training_before; ++day) {
+			instance_manager.force_tick_and_update();
+			fill_goods();
+			days++;
 		}
-		check(false, "recruited regiment found for disband");
+		const std::size_t regiments_after = regiments_here();
+		fmt::println("ARMY training days={} regiments in province {} -> {} (template of {})", days, regiments_before, regiments_after, template_regiments);
+		check(unit_manager.get_training_divisions(country) == training_before && regiments_after >= regiments_before + template_regiments,
+			"the trained division appeared in the province");
 	}
 	return ok;
 }
@@ -3453,3 +3442,4 @@ int main(int argc, char const* argv[]) {
 
 	return ret ? 0 : -1;
 }
+

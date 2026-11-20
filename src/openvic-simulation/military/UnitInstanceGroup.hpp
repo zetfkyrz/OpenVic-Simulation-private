@@ -353,6 +353,23 @@ namespace OpenVic {
 		bool waiting = false;
 		// The priority of the order (0 normal, 1 high, 2 urgent): the waiting orders of the higher priority start first
 		std::uint32_t priority = 0;
+		// The training (stage A2 of docs/PLAN_ARMY_TRAINING.md): the line of the queue the division of the order belongs to (0: none), the days
+		// since the last payment of its goods, the share of the build cost of its regiment paid (0..1) and whether its division stands for
+		// want of goods (its days do not run)
+		std::uint32_t training_line = 0;
+		std::int32_t week_days = 0;
+		fixed_point_t goods_paid;
+		bool stalled = false;
+	};
+
+	// A line of the queue of the training of a country (stage A2 of docs/PLAN_ARMY_TRAINING.md): the divisions of a template to train and the
+	// province they appear in; the lines start their divisions from the top, as the men of the country allow
+	struct TrainingLine {
+		std::uint32_t id = 0;
+		CountryInstance* country = nullptr;
+		std::uint32_t template_id = 0;
+		ProvinceInstance* province = nullptr;
+		std::uint32_t remaining = 0; // the divisions that have not started yet
 	};
 
 	inline constexpr std::uint32_t RECRUITMENT_PRIORITY_MAX = 2;
@@ -442,6 +459,14 @@ namespace OpenVic {
 		OV_UNIT_BRANCHED_GETTER(get_unit_instance_groups, armies, navies);
 
 		memory::vector<RecruitmentOrder> PROPERTY(recruitment_orders);
+		memory::vector<TrainingLine> PROPERTY(training_lines);
+		std::uint32_t next_training_line_id = 1;
+		// The countries whose CountryInstance::training_goods_wanted was set (cleared the next day)
+		memory::vector<CountryInstance*> training_goods_countries;
+		// The goods of the next week of the divisions in training of every country (CountryInstance::training_goods_wanted)
+		void update_training_goods_wanted();
+		// Pays the next share (or what is left) of the build cost of the regiments of the division; false when a good is short
+		bool pay_training_week(std::uint32_t division_id, CountryInstance& country, bool rest);
 
 		// The definitions the mobilisation reads (set by the InstanceManager, they outlive all instances)
 		ModifierEffectCache const* modifier_effect_cache = nullptr;
@@ -530,6 +555,16 @@ namespace OpenVic {
 		);
 		// Cancels an order of the country, the goods are returned
 		bool cancel_recruitment(CountryInstance& country, unique_id_t order_id);
+		// The queue of the training (stage A2 of docs/PLAN_ARMY_TRAINING.md): why the line cannot be added (empty: it can), a line of count
+		// divisions of the template in the province, its removal (the divisions in training are cancelled, the goods paid come back), its move
+		std::string get_training_block_reason(CountryInstance const& country, std::uint32_t template_id, ProvinceInstance const& province) const;
+		bool add_training_line(CountryInstance& country, std::uint32_t template_id, ProvinceInstance& province, std::uint32_t count);
+		bool remove_training_line(CountryInstance& country, std::uint32_t line_id);
+		bool move_training_line(CountryInstance const& country, std::uint32_t line_id, bool up);
+		// The divisions of the country in the queue: not started and in training
+		[[nodiscard]] std::uint32_t get_training_divisions(CountryInstance const& country) const;
+		// The lines start their divisions, the divisions pay their goods once a week (a part of tick; public for the self-tests)
+		void update_training();
 		// Days the regiment takes to recruit for the country
 		static int32_t get_recruitment_days(CountryInstance const& country, UnitType const& unit_type);
 

@@ -761,9 +761,12 @@ void UnitInstanceManager::tick(const Date today) {
 	// (the orders that waited for the monthly limit started at the beginning of the day, InstanceManager::tick)
 	(void) today;
 
-	// Recruitment: the regiment appears in the province when the time is up
+	// The training of the divisions (stage A2): the lines start divisions, the divisions pay their goods every week
+	update_training();
+
+	// Recruitment: the regiment appears in the province when the time is up (a division in training without its goods stands)
 	for (size_t i = 0; i < recruitment_orders.size();) {
-		if (recruitment_orders[i].waiting || --recruitment_orders[i].days_left > 0) {
+		if (recruitment_orders[i].waiting || recruitment_orders[i].stalled || --recruitment_orders[i].days_left > 0) {
 			++i;
 			continue;
 		}
@@ -1698,6 +1701,12 @@ std::int64_t UnitInstanceManager::get_regiment_men(RegimentType const& regiment_
 	return strength_men(regiment_type.max_strength);
 }
 
+namespace {
+	std::vector<RegimentType const*> template_regiment_types(UnitTypeManager const& unit_type_manager, DivisionTemplate const& division_template);
+	std::vector<Pop*> division_pops(CountryInstance& country, ProvinceInstance& province);
+	Pop* pick_division_pop(std::vector<Pop*> const& pops, ProvinceInstance const& province, const std::int64_t men_per_regiment);
+}
+
 Manpower UnitInstanceManager::get_manpower(CountryInstance const& country) const {
 	Manpower manpower;
 	manpower.men_per_regiment = static_cast<std::int32_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
@@ -1986,6 +1995,272 @@ bool UnitInstanceManager::start_division_recruitment(
 	return true;
 }
 
+
+// ---- The training of the divisions (stage A2 of docs/PLAN_ARMY_TRAINING.md)
+
+std::string UnitInstanceManager::get_training_block_reason(
+	CountryInstance const& country, const std::uint32_t template_id, ProvinceInstance const& province
+) const {
+	if (country.is_disarmed()) {
+		return "Страна разоружена по условиям мира: набор запрещён";
+	}
+	if (province.get_owner() != &country || province.get_controller() != &country) {
+		return "Развернуть можно только в своей, не оккупированной провинции";
+	}
+	DivisionTemplate const* const division_template = country.find_division_template(template_id);
+	if (division_template == nullptr || unit_type_manager == nullptr) {
+		return "Нет такого шаблона";
+	}
+	const std::vector<RegimentType const*> types = template_regiment_types(*unit_type_manager, *division_template);
+	if (types.empty()) {
+		return "В шаблоне нет полков";
+	}
+	for (RegimentType const* type : types) {
+		if (!country.is_unit_type_unlocked(*type)) {
+			return "Тип полка шаблона ещё не открыт";
+		}
+	}
+	return {};
+}
+
+bool UnitInstanceManager::add_training_line(
+	CountryInstance& country, const std::uint32_t template_id, ProvinceInstance& province, const std::uint32_t count
+) {
+	if (count == 0 || count > 100 || !get_training_block_reason(country, template_id, province).empty()) {
+		return false;
+	}
+	training_lines.push_back({ next_training_line_id++, &country, template_id, &province, count });
+	return true;
+}
+
+bool UnitInstanceManager::remove_training_line(CountryInstance& country, const std::uint32_t line_id) {
+	const auto it = std::find_if(training_lines.begin(), training_lines.end(), [&country, line_id](TrainingLine const& line) -> bool {
+		return line.id == line_id && line.country == &country;
+	});
+	if (it == training_lines.end()) {
+		return false;
+	}
+	training_lines.erase(it);
+	// its divisions in training are cancelled (the men are free again, the goods paid come back)
+	std::vector<unique_id_t> ids;
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.training_line == line_id && order.country == &country) {
+			ids.push_back(order.id);
+		}
+	}
+	for (const unique_id_t id : ids) {
+		cancel_recruitment(country, id);
+	}
+	return true;
+}
+
+bool UnitInstanceManager::move_training_line(CountryInstance const& country, const std::uint32_t line_id, const bool up) {
+	// (the lines of other countries in between do not count: the order of the lines of a country is what matters)
+	std::vector<std::size_t> mine;
+	for (std::size_t index = 0; index < training_lines.size(); ++index) {
+		if (training_lines[index].country == &country) {
+			mine.push_back(index);
+		}
+	}
+	for (std::size_t i = 0; i < mine.size(); ++i) {
+		if (training_lines[mine[i]].id != line_id) {
+			continue;
+		}
+		if ((up && i == 0) || (!up && i + 1 == mine.size())) {
+			return false;
+		}
+		std::swap(training_lines[mine[i]], training_lines[mine[up ? i - 1 : i + 1]]);
+		return true;
+	}
+	return false;
+}
+
+std::uint32_t UnitInstanceManager::get_training_divisions(CountryInstance const& country) const {
+	std::uint32_t divisions = 0;
+	for (TrainingLine const& line : training_lines) {
+		divisions += line.country == &country ? line.remaining : 0;
+	}
+	std::vector<std::uint32_t> seen;
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.country == &country && order.training_line != 0 && std::find(seen.begin(), seen.end(), order.division_id) == seen.end()) {
+			seen.push_back(order.division_id);
+			divisions++;
+		}
+	}
+	return divisions;
+}
+
+bool UnitInstanceManager::pay_training_week(const std::uint32_t division_id, CountryInstance& country, const bool rest) {
+	// the share of the build cost of every regiment of the division: 7 days of its days, or what is left
+	std::vector<std::pair<RecruitmentOrder*, fixed_point_t>> shares;
+	std::vector<std::pair<GoodDefinition const*, fixed_point_t>> needed;
+	for (RecruitmentOrder& order : recruitment_orders) {
+		if (order.division_id != division_id || order.country != &country || order.training_line == 0 || order.regiment_type == nullptr) {
+			continue;
+		}
+		const fixed_point_t left = fixed_point_t::_1 - order.goods_paid;
+		const fixed_point_t share = rest ? left : std::min(left, fixed_point_t(7) / std::max(1, order.days_total));
+		if (share <= fixed_point_t::_0) {
+			continue;
+		}
+		shares.emplace_back(&order, share);
+		for (auto const& [good, quantity] : order.regiment_type->get_build_cost()) {
+			auto it = std::find_if(needed.begin(), needed.end(), [good](auto const& entry) -> bool { return entry.first == good; });
+			if (it == needed.end()) {
+				needed.emplace_back(good, quantity * share);
+			} else {
+				it->second += quantity * share;
+			}
+		}
+	}
+	for (auto const& [good, quantity] : needed) {
+		if (country.get_good_data(*good).stockpile_amount < quantity) {
+			return false;
+		}
+	}
+	for (auto const& [good, quantity] : needed) {
+		CountryInstance::good_data_t& good_data = country.get_good_data(*good);
+		good_data.stockpile_amount -= quantity;
+		good_data.stockpile_change_yesterday -= quantity;
+	}
+	for (auto const& [order, share] : shares) {
+		order->goods_paid += share;
+	}
+	return true;
+}
+
+void UnitInstanceManager::update_training() {
+	if (unit_type_manager == nullptr) {
+		return;
+	}
+	// the divisions in training: a payment every 7 days of training (the first at the start); without the goods the division stands and
+	// tries again every day
+	std::vector<std::pair<std::uint32_t, CountryInstance*>> divisions;
+	for (RecruitmentOrder& order : recruitment_orders) {
+		if (order.training_line == 0) {
+			continue;
+		}
+		if (std::find_if(divisions.begin(), divisions.end(), [&order](auto const& entry) -> bool {
+				return entry.first == order.division_id && entry.second == order.country;
+			}) == divisions.end()) {
+			divisions.emplace_back(order.division_id, order.country);
+		}
+	}
+	for (auto const& [division_id, country] : divisions) {
+		RecruitmentOrder* first = nullptr;
+		for (RecruitmentOrder& order : recruitment_orders) {
+			if (order.division_id == division_id && order.country == country && order.training_line != 0) {
+				first = &order;
+				break;
+			}
+		}
+		if (first == nullptr) {
+			continue;
+		}
+		for (RecruitmentOrder& order : recruitment_orders) {
+			if (order.division_id == division_id && order.country == country && order.training_line != 0) {
+				order.week_days++;
+			}
+		}
+		// (a division that stands tries again every day: the goods the government bought for it come in by the day)
+		const bool due = first->stalled || first->week_days >= 7 || (first->days_left <= 1 && first->goods_paid < fixed_point_t::_1);
+		if (due) {
+			const bool paid = pay_training_week(division_id, *country, first->days_left <= 1);
+			for (RecruitmentOrder& order : recruitment_orders) {
+				if (order.division_id == division_id && order.country == country && order.training_line != 0) {
+					order.stalled = !paid;
+					order.week_days = 0;
+				}
+			}
+		}
+	}
+	// the lines start their divisions from the top while the men of the country allow (the goods do not stop the start)
+	const std::int64_t men_per_regiment = static_cast<std::int64_t>(type_safe::get(military_defines.get_pop_size_per_regiment()));
+	std::vector<CountryInstance*> blocked;
+	for (std::size_t index = 0; index < training_lines.size();) {
+		TrainingLine& line = training_lines[index];
+		CountryInstance& country = *line.country;
+		DivisionTemplate const* const division_template = country.find_division_template(line.template_id);
+		if (division_template == nullptr || !country.exists() || line.province->get_owner() != &country) {
+			training_lines.erase(training_lines.begin() + static_cast<std::ptrdiff_t>(index));
+			continue;
+		}
+		const std::vector<RegimentType const*> types = template_regiment_types(*unit_type_manager, *division_template);
+		std::int64_t needed_men = 0;
+		for (RegimentType const* type : types) {
+			needed_men += get_regiment_men(*type);
+		}
+		while (line.remaining > 0 && !types.empty() && std::find(blocked.begin(), blocked.end(), &country) == blocked.end()) {
+			if (country.is_disarmed() || get_manpower(country).free_men < needed_men) {
+				blocked.push_back(&country);
+				break;
+			}
+			const std::vector<Pop*> pops = division_pops(country, *line.province);
+			if (pops.empty()) {
+				blocked.push_back(&country);
+				break;
+			}
+			int32_t days = 1;
+			for (RegimentType const* type : types) {
+				days = std::max(days, get_recruitment_days(country, *type));
+			}
+			const std::uint32_t division_id = next_division_id++;
+			for (RegimentType const* type : types) {
+				Pop* const pop = pick_division_pop(pops, *line.province, men_per_regiment);
+				pop->add_recruit();
+				RecruitmentOrder order { unique_id_counter++, &country, type, nullptr, line.province, pop, days, days };
+				order.division_id = division_id;
+				order.template_id = line.template_id;
+				order.training_line = line.id;
+				recruitment_orders.push_back(order);
+			}
+			// the first week is paid at the start
+			const bool paid = pay_training_week(division_id, country, false);
+			for (RecruitmentOrder& order : recruitment_orders) {
+				if (order.division_id == division_id && order.country == &country) {
+					order.stalled = !paid;
+				}
+			}
+			line.remaining--;
+		}
+		// (the line stays while its divisions train: it can be removed with them)
+		if (line.remaining == 0 && std::none_of(recruitment_orders.begin(), recruitment_orders.end(), [&line](RecruitmentOrder const& order) -> bool {
+				return order.training_line == line.id;
+			})) {
+			training_lines.erase(training_lines.begin() + static_cast<std::ptrdiff_t>(index));
+			continue;
+		}
+		++index;
+	}
+	update_training_goods_wanted();
+}
+
+void UnitInstanceManager::update_training_goods_wanted() {
+	// the goods of the next week of every division in training, for the purchases of the government (in the order of the orders)
+	for (CountryInstance* country : training_goods_countries) {
+		country->training_goods_wanted.clear();
+	}
+	training_goods_countries.clear();
+	for (RecruitmentOrder const& order : recruitment_orders) {
+		if (order.training_line == 0 || order.regiment_type == nullptr || order.goods_paid >= fixed_point_t::_1) {
+			continue;
+		}
+		const fixed_point_t share = std::min(fixed_point_t::_1 - order.goods_paid, fixed_point_t(7) / std::max(1, order.days_total));
+		auto& wanted = order.country->training_goods_wanted;
+		if (wanted.empty() && std::find(training_goods_countries.begin(), training_goods_countries.end(), order.country) == training_goods_countries.end()) {
+			training_goods_countries.push_back(order.country);
+		}
+		for (auto const& [good, quantity] : order.regiment_type->get_build_cost()) {
+			auto it = std::find_if(wanted.begin(), wanted.end(), [good](auto const& entry) -> bool { return entry.first == good; });
+			if (it == wanted.end()) {
+				wanted.emplace_back(good, quantity * share);
+			} else {
+				it->second += quantity * share;
+			}
+		}
+	}
+}
+
 int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country, UnitType const& unit_type) {
 	// The build time of the unit scaled by the recruitment time modifier of the country, at least a day
 	const fixed_point_t days = fixed_point_t::parse_unsafe(static_cast<int32_t>(unit_type.build_time.to_int()))
@@ -1996,6 +2271,10 @@ int32_t UnitInstanceManager::get_recruitment_days(CountryInstance const& country
 std::string_view UnitInstanceManager::get_recruitment_block_reason(
 	CountryInstance const& country, RegimentType const& regiment_type, ProvinceInstance const& province, Pop const& pop
 ) const {
+	// (stage A2 of docs/PLAN_ARMY_TRAINING.md: regiments come only in divisions of the templates, the queue of the training)
+	if (UnitInstanceGroup::war_defines != nullptr) {
+		return "Полки набираются только дивизиями по шаблонам: очередь обучения";
+	}
 	if (country.is_disarmed()) {
 		return "Страна разоружена по условиям мира: набор запрещён";
 	}
@@ -2088,10 +2367,12 @@ bool UnitInstanceManager::cancel_recruitment(CountryInstance& country, const uni
 
 		UnitType const& unit_type = it->ship_type != nullptr ? static_cast<UnitType const&>(*it->ship_type)
 			: static_cast<UnitType const&>(*it->regiment_type);
+		// (in training only the share paid comes back, stage A2)
+		const fixed_point_t share = it->training_line != 0 ? it->goods_paid : fixed_point_t::_1;
 		for (auto const& [good, quantity] : unit_type.get_build_cost()) {
 			CountryInstance::good_data_t& good_data = country.get_good_data(*good);
-			good_data.stockpile_amount += quantity;
-			good_data.stockpile_change_yesterday += quantity;
+			good_data.stockpile_amount += quantity * share;
+			good_data.stockpile_change_yesterday += quantity * share;
 		}
 		if (it->pop != nullptr) {
 			it->pop->release_recruit();

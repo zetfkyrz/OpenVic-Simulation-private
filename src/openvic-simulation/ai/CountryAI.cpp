@@ -613,11 +613,41 @@ namespace {
 			static_cast<size_t>(ai.min_war_regiments),
 			static_cast<size_t>(ai.war_regiments_per_province.of_int(static_cast<std::int64_t>(country.get_owned_provinces().size())))
 		);
+		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
+		// The training (stage A2 of docs/PLAN_ARMY_TRAINING.md): a division of the first template in the queue a month, at most
+		// AI_DIVISIONS_PER_MONTH in training at a time, when the free men of the country are enough for it (the goods of its weeks are bought
+		// for the stockpile while it trains; the regiments in training count as the army)
+		if (!country.get_division_templates().empty()) {
+			DivisionTemplate const& division_template = country.get_division_templates().front();
+			const std::uint32_t queued = unit_manager.get_training_divisions(country);
+			if (regiments + static_cast<std::size_t>(queued) * division_template.get_total_slots() >= wanted
+				|| queued >= static_cast<std::uint32_t>(std::max(0, ai.ai_divisions_per_month))) {
+				return;
+			}
+			ProvinceInstance* place = country.get_capital() != nullptr && country.get_capital()->get_controller() == &country ? country.get_capital() : nullptr;
+			for (ProvinceInstance* province : country.get_owned_provinces()) {
+				if (place == nullptr && province->get_controller() == &country) {
+					place = province;
+				}
+			}
+			UnitTypeManager const& unit_type_manager = instance_manager.definition_manager.get_military_manager().get_unit_type_manager();
+			std::int64_t needed_men = 0;
+			for (const std::uint8_t cell : division_template.cells) {
+				RegimentType const* const type = cell != 0 ? unit_type_manager.get_regiment_type_by_index(regiment_type_index_t(cell - 1)) : nullptr;
+				if (type != nullptr) {
+					needed_men += unit_manager.get_regiment_men(*type);
+				}
+			}
+			if (place != nullptr && needed_men > 0 && unit_manager.get_manpower(country).free_men >= needed_men
+				&& unit_manager.get_training_block_reason(country, division_template.id, *place).empty()
+				&& unit_manager.add_training_line(country, division_template.id, *place, 1)) {
+				SPDLOG_INFO("AI: {} trains a division", country.get_identifier());
+			}
+			return;
+		}
 		if (regiments >= wanted) {
 			return;
 		}
-
-		UnitInstanceManager& unit_manager = instance_manager.get_unit_instance_manager();
 		// Over the monthly limit of the recruitment (ov_war.RECRUIT_MAX_REGIMENTS_PER_MONTH) the AI does not queue orders that would wait
 		if (unit_manager.get_recruitment_limit_left(country) == 0) {
 			return;

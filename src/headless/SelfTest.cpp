@@ -6739,6 +6739,9 @@ namespace {
 			fmt::format("prestige {} -> {}", prestige, helper->get_prestige_untracked()));
 
 		// the war subsidies: WARSUBSIDIES_PERCENT of the military spending of the receiver every day, from the treasury of the sender
+		// (the receiver pays its army: a treasury and a day of it, whatever the tests before did with its money)
+		defender->add_cash(fixed_point_t(100000));
+		im.force_tick_and_update();
 		helper->set_diplomatic_points(fixed_point_t(5));
 		helper->add_cash(fixed_point_t(100000));
 		const bool paying = actions.execute_diplomatic_action(*subsidies, helper, defender, {}, im) && helper->is_sending_war_subsidy_to(*defender);
@@ -7268,6 +7271,118 @@ namespace {
 		if (great != nullptr) {
 			im.get_war_manager().end_war(im, great->id);
 		}
+	}
+
+	// Stage A2 of docs/PLAN_ARMY_TRAINING.md: the queue of the training
+	void test_training(Results& r, InstanceManager& im) {
+		UnitInstanceManager& unit_manager = im.get_unit_instance_manager();
+		CountryInstance* country = nullptr;
+		DivisionTemplate const* division_template = nullptr;
+		for (CountryInstance& candidate : im.get_country_instance_manager().get_country_instances()) {
+			// (a country with nothing else in training: its stockpile pays only the division of the test)
+			if (!candidate.exists() || candidate.get_capital() == nullptr || unit_manager.get_training_divisions(candidate) != 0) {
+				continue;
+			}
+			for (DivisionTemplate const& t : candidate.get_division_templates()) {
+				if (unit_manager.get_training_block_reason(candidate, t.id, *candidate.get_capital()).empty()) {
+					division_template = &t;
+					break;
+				}
+			}
+			if (division_template != nullptr) {
+				country = &candidate;
+				break;
+			}
+		}
+		if (country == nullptr) {
+			fmt::println("TEST INFO training: no country with a template to train, not checked");
+			return;
+		}
+		ProvinceInstance& capital = *country->get_capital();
+		// a regiment of its own is not recruited any more
+		bool single_refused = true;
+		for (RegimentType const& type : im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+			if (country->is_unit_type_unlocked(type)) {
+				for (Pop& pop : capital.get_mutable_pops()) {
+					single_refused = single_refused && !unit_manager.start_recruitment(*country, type, capital, pop);
+				}
+				break;
+			}
+		}
+		r.check(single_refused, "training: a regiment of its own is not recruited, the divisions of the templates are trained");
+
+		// without the goods the division starts (the men are taken) and stands
+		std::vector<GoodDefinition const*> goods;
+		for (RegimentType const& type : im.definition_manager.get_military_manager().get_unit_type_manager().get_regiment_types()) {
+			for (auto const& [good, quantity] : type.get_build_cost()) {
+				if (std::find(goods.begin(), goods.end(), good) == goods.end()) {
+					goods.push_back(good);
+				}
+			}
+		}
+		for (GoodDefinition const* good : goods) {
+			country->get_good_data(*good).stockpile_amount = fixed_point_t::_0;
+		}
+		if (!unit_manager.add_training_line(*country, division_template->id, capital, 1)) {
+			r.check(false, "training: add_training_line");
+			return;
+		}
+		const std::uint32_t line_id = unit_manager.get_training_lines().back().id;
+		unit_manager.update_training();
+		const auto line_orders = [&]() -> std::vector<RecruitmentOrder const*> {
+			std::vector<RecruitmentOrder const*> orders;
+			for (RecruitmentOrder const& order : unit_manager.get_recruitment_orders()) {
+				if (order.training_line == line_id) {
+					orders.push_back(&order);
+				}
+			}
+			return orders;
+		};
+		std::vector<std::pair<Pop const*, std::size_t>> pops;
+		bool stands = !line_orders().empty();
+		for (RecruitmentOrder const* order : line_orders()) {
+			stands = stands && order->stalled && order->goods_paid == fixed_point_t::_0 && order->pop != nullptr;
+			if (order->pop != nullptr && std::find_if(pops.begin(), pops.end(), [order](auto const& e) { return e.first == order->pop; }) == pops.end()) {
+				pops.emplace_back(order->pop, order->pop->get_regiment_count());
+			}
+		}
+		r.check(stands, "training: without the goods the division starts, its men are taken, it stands and pays nothing",
+			fmt::format("{} regiments", line_orders().size()));
+		r.check(!country->training_goods_wanted.empty(), "training: the government buys the goods of the next week of its divisions in training for the stockpile",
+			fmt::format("{} goods", country->training_goods_wanted.size()));
+
+		// with the goods it pays a week of its days at the next week and goes on
+		for (GoodDefinition const* good : goods) {
+			country->get_good_data(*good).stockpile_amount = fixed_point_t(100000);
+		}
+		for (int day = 0; day < 7; ++day) {
+			unit_manager.update_training();
+		}
+		bool paying = !line_orders().empty();
+		for (RecruitmentOrder const* order : line_orders()) {
+			const fixed_point_t week = std::min(fixed_point_t::_1, fixed_point_t(7) / std::max(1, order->days_total));
+			paying = paying && !order->stalled && order->goods_paid == week;
+		}
+		fixed_point_t spent = fixed_point_t::_0;
+		for (GoodDefinition const* good : goods) {
+			spent += fixed_point_t(100000) - country->get_good_data(*good).stockpile_amount;
+		}
+		r.check(paying && spent > fixed_point_t::_0, "training: with the goods the division that stood pays a week of its build cost the next day and goes on",
+			fmt::format("spent {}", spent));
+
+		// the line removed: the division in training is cancelled, the goods paid and the men come back
+		unit_manager.remove_training_line(*country, line_id);
+		fixed_point_t back = fixed_point_t::_0;
+		for (GoodDefinition const* good : goods) {
+			back += fixed_point_t(100000) - country->get_good_data(*good).stockpile_amount;
+		}
+		bool men_back = true;
+		for (auto const& [pop, count] : pops) {
+			men_back = men_back && pop->get_regiment_count() + 1 <= count;
+		}
+		r.check(line_orders().empty() && back <= spent / 100 && back >= -spent / 100 && men_back,
+			"training: a removed line cancels its division in training, the goods paid and the men come back",
+			fmt::format("not back {} of {}", back, spent));
 	}
 
 	// Stage A1 of docs/PLAN_ARMY_TRAINING.md: the divisions are whole
@@ -9486,6 +9601,7 @@ namespace {
 		test_release_nations(r, *im); // it releases a nation and ticks days
 		test_unions(r, *im); // Prussia forms Germany
 		test_crises(r, *im); // a crisis gives a state away
+		test_training(r, *im);
 		test_whole_divisions(r, *im); // last: it changes a template
 		game.end();
 
